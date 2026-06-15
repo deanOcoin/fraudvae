@@ -1,0 +1,34 @@
+# data + model artifacts never go in the repo
+data/raw/
+data/processed/
+data/prepared/
+data/manifest.lock.json
+runs/
+*.pt
+*.npy
+*.npz
+*.parquet
+
+# ssh keys / local app state
+.fraudvae/
+*.pem
+id_ed25519*
+
+# python
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# env + editor
+.env
+.vscode/
+.idea/
+.DS_Store
+*.log
+notebooks/scratch/
