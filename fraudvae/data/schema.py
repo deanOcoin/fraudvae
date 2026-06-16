@@ -7,12 +7,15 @@ Three kinds of columns:
 
 Anything a source can't fill is left NaN / 0 and the model's likelihood is
 masked on it.
+
+merchant_category is one shared taxonomy; taxonomy.py maps raw MCCs and the
+sources' own category strings onto MERCHANT_CATEGORIES.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SOURCES = ["fdh", "capone", "tabformer"]
 # index 0 is reserved for "generic" (unknown bank/domain) at inference time
@@ -65,10 +68,15 @@ NUMERIC: list[NumericFeature] = [
     NumericFeature("num_cards", "none", "ext", "Cards held by customer"),
 ]
 
+MERCHANT_CATEGORIES = (
+    "unknown", "grocery", "retail", "online_retail", "restaurants", "entertainment",
+    "travel", "transport", "fuel", "health", "personal_care", "home", "utilities",
+    "financial", "digital", "kids_pets", "hotel", "misc")
+
 CATEGORICAL: list[CategoricalFeature] = [
     CategoricalFeature("channel", ("unknown", "card_present", "card_not_present", "online"), "core", "Channel"),
     CategoricalFeature("txn_type", ("unknown", "purchase", "debit", "payment", "transfer", "reversal", "address_verification"), "core", "Transaction type"),
-    CategoricalFeature("merchant_category", ("unknown", "grocery", "retail", "restaurants", "travel", "fuel", "online", "misc"), "core", "Merchant category"),
+    CategoricalFeature("merchant_category", MERCHANT_CATEGORIES, "core", "Merchant category"),
     CategoricalFeature("card_brand", ("unknown", "visa", "mastercard", "amex", "discover", "other"), "core", "Card brand"),
     CategoricalFeature("card_kind", ("unknown", "credit", "debit", "prepaid"), "core", "Card kind"),
     CategoricalFeature("is_foreign", ("unknown", "no", "yes"), "core", "Cross border"),
@@ -123,6 +131,8 @@ def finalize(df, source: str):
         df[f.name] = df[f.name].astype(np.float32)
     for f in CATEGORICAL:
         df[f.name] = df[f.name].fillna(0).astype(np.int8)
+        if df[f.name].max() >= len(f.values):
+            raise ValueError(f"{source}: {f.name} has codes outside the vocab")
     df["is_fraud"] = df["is_fraud"].astype(np.int8)
     df["fraud_scenario"] = df["fraud_scenario"].fillna(0).astype(np.int8)
     df["txn_id"] = df["txn_id"].astype(str)
