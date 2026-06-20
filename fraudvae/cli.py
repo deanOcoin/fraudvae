@@ -1,6 +1,7 @@
 """`fraudvae <command>` - one entry point for the whole pipeline.
 
   fraudvae paths     show where data, raw files and runs live
+  fraudvae fetch     download / locate raw datasets
 """
 from __future__ import annotations
 
@@ -14,8 +15,15 @@ def _paths(argv):
         print(f"{name:<6} {getattr(paths, name)}")
 
 
+def _fetch(argv):
+    from .data import fetch
+
+    return fetch.main(argv)
+
+
 COMMANDS = {
     "paths": _paths,
+    "fetch": _fetch,
 }
 
 
@@ -26,10 +34,10 @@ def main(argv=None):
         return 0
     cmd = argv[0]
     if cmd not in COMMANDS:
-        print(f"unknown command {cmd!r}", file=sys.stderr)
+        print(f"unknown command {cmd!r}\n{__doc__}", file=sys.stderr)
         return 2
-    COMMANDS[cmd](argv[1:])
-    return 0
+    rc = COMMANDS[cmd](argv[1:])
+    return rc or 0
 
 
 if __name__ == "__main__":
