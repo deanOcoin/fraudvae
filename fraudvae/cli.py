@@ -1,29 +1,16 @@
 """`fraudvae <command>` - one entry point for the whole pipeline.
 
-  fraudvae paths     show where data, raw files and runs live
-  fraudvae fetch     download / locate raw datasets
+  fraudvae fetch            download / locate raw datasets
+  fraudvae build            raw -> unified parquet
 """
 from __future__ import annotations
 
 import sys
 
-from . import paths
-
-
-def _paths(argv):
-    for name in ("ROOT", "DATA", "RAW", "RUNS"):
-        print(f"{name:<6} {getattr(paths, name)}")
-
-
-def _fetch(argv):
-    from .data import fetch
-
-    return fetch.main(argv)
-
 
 COMMANDS = {
-    "paths": _paths,
-    "fetch": _fetch,
+    "fetch": lambda argv: __import__("fraudvae.data.fetch", fromlist=["main"]).main(argv),
+    "build": lambda argv: __import__("fraudvae.data.build", fromlist=["main"]).main(argv),
 }
 
 
