@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SOURCES = ["fdh", "capone", "tabformer", "ulb", "paysim", "sparkov", "banksim", "ieee"]
 # index 0 is reserved for "generic" (unknown bank/domain) at inference time
@@ -27,7 +27,7 @@ GENERIC_SOURCE = 0
 class NumericFeature:
     name: str
     transform: str = "none"   # none | log1p | signed_log1p
-    group: str = "core"       # core | account | ext | ulb_pca
+    group: str = "core"       # core | velocity | account | ext | ulb_pca
     label: str = ""
     unit: str = ""
 
@@ -53,6 +53,13 @@ NUMERIC: list[NumericFeature] = [
     NumericFeature("amount", "log1p", "core", "Amount", "source currency"),
     NumericFeature("hour", "none", "core", "Hour of day"),
     NumericFeature("dow", "none", "core", "Day of week (0=Mon)"),
+    # customer history, computed causally per source
+    NumericFeature("secs_since_prev_txn", "log1p", "velocity", "Seconds since customer's previous txn", "s"),
+    NumericFeature("cust_txn_count_24h", "log1p", "velocity", "Customer txns, last 24h"),
+    NumericFeature("cust_amount_sum_24h", "log1p", "velocity", "Customer spend, last 24h"),
+    NumericFeature("cust_txn_count_7d", "log1p", "velocity", "Customer txns, last 7d"),
+    NumericFeature("cust_amount_mean_30d", "log1p", "velocity", "Customer mean amount, last 30d"),
+    NumericFeature("amount_over_cust_mean", "log1p", "velocity", "Amount / customer 30d mean"),
     # account / customer context
     NumericFeature("cust_age", "none", "account", "Customer age", "years"),
     NumericFeature("credit_limit", "log1p", "account", "Credit limit"),
@@ -138,18 +145,25 @@ def finalize(df, source: str):
     """Order columns, fix dtypes, sanity check. Every adapter ends with this.
     Works in place, the big sources can't afford a copy."""
     import numpy as np
+    import pandas as pd
 
     assert source in SOURCES, source
     df["source"] = source
     for f in NUMERIC:
-        if df[f.name].dtype != np.float32:
-            df[f.name] = df[f.name].astype(np.float32)
+        if f.name not in df:
+            df[f.name] = np.float32(np.nan)
+        elif df[f.name].dtype != np.float32:
+            df[f.name] = pd.to_numeric(df[f.name], errors="coerce").astype(np.float32)
     for f in CATEGORICAL:
+        if f.name not in df:
+            df[f.name] = np.int8(0)
         codes = df[f.name].fillna(0).to_numpy()
         if codes.min() < 0 or codes.max() >= len(f.values):
             raise ValueError(f"{source}: {f.name} has codes outside the vocab")
         df[f.name] = codes.astype(np.int8)
     df["is_fraud"] = df["is_fraud"].astype(np.int8)
+    if "fraud_scenario" not in df:
+        df["fraud_scenario"] = np.int8(0)
     df["fraud_scenario"] = df["fraud_scenario"].fillna(0).astype(np.int8)
     df["txn_id"] = df["txn_id"].astype("string[pyarrow]")
     df["ts"] = df["ts"].astype("float64")
