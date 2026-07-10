@@ -1,0 +1,28 @@
+# what i run on the laptop / a small box. prepared set should be capped
+# (fraudvae prepare --max-rows-per-source 1500000) or this takes forever
+name: cpu_small
+device: auto
+model:
+  latent_dim: 16
+  hidden: [384, 384, 192]
+  dropout: 0.05
+  history:            # v5 customer-history transformer; the cheap size for a cpu
+    enabled: true
+    window: 16
+    d_model: 64
+    layers: 2
+    heads: 4
+train:
+  epochs: 12
+  batch_size: 2048
+  lr: 0.0015
+  beta_warmup_epochs: 3
+  patience: 4
+  score_samples: 4
+  amp: false
+boost:
+  num_leaves: 63
+  max_legit_per_source: 150000
+  val_legit_per_source: 60000
+  max_rounds: 800
+notes: subsampled corpus, roughly an hour on 2 cpu cores at 1.5M rows/source

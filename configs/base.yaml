@@ -1,0 +1,30 @@
+# defaults, see fraudvae/config.py for every knob
+name: base
+device: auto
+model:
+  latent_dim: 20
+  hidden: [512, 512, 256]
+  cat_embed_dim: 8
+  source_embed_dim: 6
+  dropout: 0.05
+train:
+  epochs: 20
+  batch_size: 2048
+  lr: 0.001
+  weight_decay: 0.000001
+  beta: 1.0
+  beta_warmup_epochs: 4
+  free_bits: 0.0
+  grad_clip: 5.0
+  source_dropout: 0.1
+  patience: 5
+  score_samples: 8
+boost:
+  enabled: true
+  num_leaves: 127
+  learning_rate: 0.05
+  max_rounds: 2000
+  early_stopping: 100
+  max_legit_per_source: 200000     # more buys sharper fits of time-local patterns, not generalisation
+  generic_fraction: 0.25
+  legit_weight_cap: 3.0

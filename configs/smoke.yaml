@@ -1,0 +1,25 @@
+# ci / sanity: tiny model, 2 epochs, run on whatever is there
+name: smoke
+model:
+  latent_dim: 8
+  hidden: [64, 64]
+  history:
+    enabled: true
+    window: 4
+    d_model: 16
+    layers: 1
+    heads: 2
+train:
+  epochs: 2
+  batch_size: 1024
+  beta_warmup_epochs: 1
+  score_samples: 2
+  amp: false
+boost:
+  num_leaves: 15
+  min_data_in_leaf: 20
+  max_rounds: 60
+  early_stopping: 20
+  max_legit_per_source: 3000
+  val_legit_per_source: 2000
+  specialist_min_fraud: 100
