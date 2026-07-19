@@ -3,7 +3,7 @@
     python -m fraudvae.train --config configs/cpu_small.yaml
 
 Writes runs/<name>/{run.json, metrics.jsonl, status.json, train.log, model.pt,
-calibration.json, latent_map.npz}
+calibration.json, eval.json, latent_map.npz}
 """
 from __future__ import annotations
 
@@ -108,13 +108,14 @@ def train(cfg: Config, prepared="default", run_dir: Path | None = None, name: st
     run_dir = Path(run_dir) if run_dir else RUNS_DIR / name
     run_dir.mkdir(parents=True, exist_ok=True)
     log = Logger(run_dir)
-    log(f"fraudvae {__version__} | run {run_dir.name} | device {device} | torch {torch.__version__}")
+    log(f"fraudvae {__version__} | run {run_dir.name} | device {device} | torch {torch.__version__} | host {socket.gethostname()}")
 
-    data = PreparedSet(prepared)
+    data = PreparedSet(prepared, splits=("train", "val"))
     meta = data.meta
     tr, va = data["train"], data["val"]
     legit_idx = tr.legit_indices()
-    log(f"prepared set '{prepared}': train {len(tr):,} rows ({len(legit_idx):,} legit), val {len(va):,}")
+    log(f"prepared set '{prepared}': train {len(tr):,} rows ({len(legit_idx):,} legit), val {len(va):,}; "
+        f"sources {list(meta['source_index'])}")
 
     model = build_model(meta, cfg.model).to(device)
     n_params = sum(p.numel() for p in model.parameters())
@@ -133,7 +134,8 @@ def train(cfg: Config, prepared="default", run_dir: Path | None = None, name: st
 
     run_info = {
         "name": run_dir.name, "started": time.strftime("%Y-%m-%dT%H:%M:%S"), "config": to_dict(cfg),
-        "prepared": prepared, "device": str(device), "host": socket.gethostname(), "torch": torch.__version__,
+        "prepared": prepared, "prepared_meta": {k: meta[k] for k in ("name", "created", "counts", "fraud_counts", "sources", "max_rows_per_source")},
+        "device": str(device), "host": socket.gethostname(), "torch": torch.__version__,
         "params": n_params, "pid": os.getpid(), "fraudvae": __version__,
     }
     (run_dir / "run.json").write_text(json.dumps(run_info, indent=1))
@@ -241,6 +243,10 @@ def train(cfg: Config, prepared="default", run_dir: Path | None = None, name: st
     write_status(run_dir, state="calibrating")
     from .calibrate import calibrate_run
     calibrate_run(run_dir, prepared=prepared, device=device, n_samples=cfg.train.score_samples, log=log)
+    log("evaluating on test ...")
+    write_status(run_dir, state="evaluating")
+    from .evaluate import evaluate_run
+    evaluate_run(run_dir, prepared=prepared, device=device, n_samples=cfg.train.score_samples, log=log)
     write_status(run_dir, state="finished", elapsed=time.time() - t_start, best=best)
     log(f"done. total {(time.time() - t_start) / 60:.1f} min")
     return run_dir
