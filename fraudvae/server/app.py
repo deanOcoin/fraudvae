@@ -1,0 +1,114 @@
+"""FastAPI app. `fraudvae serve` or `uvicorn fraudvae.server.app:app`."""
+from __future__ import annotations
+
+import faulthandler
+import os
+import platform
+import socket
+import time
+from contextlib import asynccontextmanager
+
+import torch
+from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+
+from .. import __version__
+from ..paths import DATA_DIR, RUNS_DIR, SERVER_LOG, WEB_DIR, ensure_dirs
+from ..data import schema
+from . import api_data, api_model, api_remote, inference
+
+_started = time.time()
+
+
+def _log(msg: str):
+    """terminal + the server log file. the file is what's left when the process dies
+    somewhere the terminal scrollback doesn't explain."""
+    line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}"
+    print(line, flush=True)
+    try:
+        with open(SERVER_LOG, "a") as f:
+            f.write(line + "\n")
+    except OSError:
+        pass
+
+
+try:
+    SERVER_LOG.parent.mkdir(parents=True, exist_ok=True)
+    _crash_log = open(SERVER_LOG, "a")   # noqa: SIM115 - must outlive the process
+    # a segfault / abort in a native library (openmp runtimes fighting, a torch op)
+    # leaves no python traceback. this writes the python stack of every thread to
+    # the log at that moment, which turns "the server vanished" into a file:line.
+    faulthandler.enable(file=_crash_log, all_threads=True)
+except OSError:
+    pass
+
+
+@asynccontextmanager
+async def _lifespan(app):
+    ensure_dirs()
+    _log(f"fraudvae {__version__} starting: python {platform.python_version()}, torch {torch.__version__}, "
+         f"{platform.platform()}, pid {os.getpid()}")
+    try:
+        from ..model.booster import _lgb
+        _log(f"lightgbm {_lgb().__version__}")
+    except Exception as e:  # noqa: BLE001
+        _log(f"lightgbm unavailable, boosters will not load: {e}")
+    name = os.environ.get("FRAUDVAE_RUN") or inference.pick_default_run()
+    if name:
+        _log(f"loading run '{name}'")
+        try:
+            m = inference.load_run(name)
+            _log(f"loaded run '{m.name}' ({m.score_type} score, booster {'yes' if m.booster is not None else 'no'}, "
+                 f"blend {'yes' if m.has_blend else 'no'})" + (f"; booster error: {m.booster_error}" if m.booster_error else ""))
+        except Exception as e:  # noqa: BLE001
+            _log(f"could not load run {name}: {e}")
+    else:
+        _log("no trained run found yet, inference disabled until one exists")
+    _log("ready")
+    yield
+    _log("shutting down")
+
+
+app = FastAPI(title="fraudvae", version=__version__, docs_url="/api/docs", redoc_url=None, lifespan=_lifespan)
+app.include_router(api_data.router)
+app.include_router(api_model.router)
+app.include_router(api_remote.router)
+
+
+@app.get("/api/meta")
+def meta():
+    m = inference.active()
+    dev = "cuda" if torch.cuda.is_available() else ("mps" if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available() else "cpu")
+    return {
+        "version": __version__, "host": socket.gethostname(), "platform": platform.platform(),
+        "python": platform.python_version(), "torch": torch.__version__, "device": dev, "uptime": time.time() - _started,
+        "data_dir": str(DATA_DIR), "runs_dir": str(RUNS_DIR), "server_log": str(SERVER_LOG),
+        "schema_version": schema.SCHEMA_VERSION,
+        "active_run": None if m is None else {
+            "name": m.name, "score_type": m.score_type, "n_samples": m.n_samples,
+            "sources": list(m.meta.get("source_index", {})), "params": m.run.get("params"),
+            "device_name": m.run.get("device_name"), "mean_test_auroc": (m.eval or {}).get("mean_auroc"),
+            "mean": (m.eval or {}).get("mean"), "generic_test_auroc": ((m.eval or {}).get("generic") or {}).get("auroc"),
+            "has_calibration": m.cal is not None, "has_booster": m.booster is not None, "has_blend": m.has_blend,
+            "booster_trees": (m.booster.info.get("best_iteration") if m.booster is not None else None),
+            "booster_error": m.booster_error,
+            "schema_version": m.schema_version,
+            # v5: what the run can take next to the transaction
+            "history_window": m.window, "has_seqhead": m.seqhead is not None,
+            "heads": {name: {"label": info.get("label", name), "fields": (info.get("numeric") or []) + (info.get("categorical") or []),
+                             "val_auroc": info.get("val_auroc")} for name, info in m.head_info.items()},
+            "graph": m.graph.describe() if m.graph is not None else None,
+            "specialists": m.specialists.describe() if m.specialists is not None else None,
+            "text": m.text.describe() if m.text is not None else None,
+            "behaviour": m.behaviour.describe() if m.behaviour is not None else None,
+        },
+    }
+
+
+@app.get("/")
+def index():
+    return FileResponse(WEB_DIR / "index.html")
+
+
+app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
