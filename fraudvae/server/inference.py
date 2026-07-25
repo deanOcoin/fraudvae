@@ -1,12 +1,13 @@
 """Loaded-model state + turning a raw transaction dict into a scored result.
 
 One run is "active" at a time. Everything the UI needs for a prediction
-(standardisation stats, vocab, thresholds) is read from the run directory,
-so switching runs is just load_run(name).
+(standardisation stats, vocab, thresholds, PCA for the latent map) is read
+from the run directory, so switching runs is just load_run(name).
 """
 from __future__ import annotations
 
 import json
+import math
 import threading
 import time
 from pathlib import Path
@@ -16,7 +17,7 @@ import torch
 
 from ..data import schema
 from ..data.prepare import DERIVED_CATS, transform_numeric
-from ..model.scoring import score_batch
+from ..model.scoring import Scorer, score_batch
 from ..model.vae import load_checkpoint
 from ..paths import RUNS_DIR
 
@@ -40,6 +41,9 @@ class ActiveModel:
         self.num_index = {f["name"]: i for i, f in enumerate(self.numeric)}
         self.cat_index = {c["name"]: i for i, c in enumerate(self.categorical)}
         self.n_samples = (self.cal or {}).get("n_samples", 8)
+        self.score_type = (self.cal or {}).get("score_type", "raw")
+        n_feat = len(self.numeric) + len(self.categorical)
+        self.scorer = Scorer(self.cal["baselines"], n_feat) if self.cal and "baselines" in self.cal else None
         self.loaded_at = time.time()
 
     # -- encoding -------------------------------------------------------------------
@@ -74,6 +78,15 @@ class ActiveModel:
         return (torch.from_numpy(num).to(dev), torch.from_numpy(mask).to(dev),
                 torch.from_numpy(cat).to(dev), torch.tensor([src_idx], dtype=torch.long, device=dev), src_idx)
 
+    def decode_numeric(self, j: int, standardized: float) -> float:
+        f = self.numeric[j]
+        t = standardized * f["std"] + f["mean"]
+        if f["transform"] == "log1p":
+            return float(math.expm1(max(min(t, 60), -60)))
+        if f["transform"] == "signed_log1p":
+            return float(math.copysign(math.expm1(min(abs(t), 60)), t))
+        return float(t)
+
     # -- scoring ------------------------------------------------------------------------
 
     def _calibration_for(self, source: str | None):
@@ -88,43 +101,70 @@ class ActiveModel:
         num, mask, cat, src, src_idx = self.encode(features, source)
         with _lock:
             r = score_batch(self.model, num, mask, cat, src, n_samples=self.n_samples)
-        score = float(r["raw"][0])
+        raw = float(r["raw"][0])
         kl = float(r["kl"][0])
-        out = {"score": score, "kl": kl, "source": source if src_idx else "generic", "n_samples": self.n_samples,
-               "fpr_target": fpr_target}
+        nll_num, nll_cat = r["nll_num"][0], r["nll_cat"][0]
+        norm = float(self.scorer.norm(r, np.array([src_idx]))[0]) if self.scorer else None
+        feat_z = self.scorer.feature_z(r, src_idx)[0] if self.scorer else np.zeros(len(nll_num) + len(nll_cat))
+        score = norm if (self.score_type == "norm" and norm is not None) else raw
+
+        out = {"score": score, "score_type": self.score_type, "score_raw": raw, "score_norm": norm, "kl": kl,
+               "source": source if src_idx else "generic", "n_samples": self.n_samples, "fpr_target": fpr_target}
         cal, kind = self._calibration_for(source if src_idx else None)
         out["calibration"] = kind
         if cal:
             thr = cal["thresholds"]
-            chosen = thr.get(fpr_target) or thr.get("fpr_0.01")
+            op = fpr_target if fpr_target in thr else "fpr_0.01"
+            chosen = thr.get(op)
             out.update({
                 "z_score": (score - cal["legit_mean"]) / cal["legit_std"],
                 "legit_percentile": _percentile(cal["legit_quantiles"], score),
-                "threshold": chosen["threshold"] if chosen else None,
+                "operating_point": op, "threshold": chosen["threshold"] if chosen else None,
                 "flag": bool(chosen and score > chosen["threshold"]),
+                "expected_recall": chosen.get("recall") if chosen else None,
+                "expected_precision": chosen.get("precision") if chosen else None,
                 "thresholds": thr,
             })
         else:
             out.update({"z_score": None, "legit_percentile": None, "flag": None, "thresholds": None})
 
-        nll_num, nll_cat = r["nll_num"][0], r["nll_cat"][0]
         contribs = []
         for j, f in enumerate(self.numeric):
             if mask[0, j].item() == 0:
                 continue
-            contribs.append({"feature": f["name"], "kind": "numeric", "nll": float(nll_num[j])})
+            x = float(num[0, j].item())
+            exp_std = float(r["dec_mu"][0, j])
+            contribs.append({
+                "feature": f["name"], "label": f.get("label") or f["name"], "kind": "numeric", "group": f.get("group"),
+                "nll": float(nll_num[j]), "z": float(feat_z[j]),
+                "observed": self.decode_numeric(j, x), "expected": self.decode_numeric(j, exp_std),
+                "unit": f.get("unit", ""),
+            })
+        D = len(self.numeric)
         for j, c in enumerate(self.categorical):
             k = int(cat[0, j].item())
             if k == 0:
                 continue
-            contribs.append({"feature": c["name"], "kind": "categorical", "nll": float(nll_cat[j]), "observed": c["values"][k]})
-        contribs.sort(key=lambda d: -d["nll"])
+            contribs.append({
+                "feature": c["name"], "label": c.get("label") or c["name"], "kind": "categorical", "group": c.get("group"),
+                "nll": float(nll_cat[j]), "z": float(feat_z[D + j]),
+                "observed": c["values"][k], "prob_observed": float(r["cat_prob"][0, j]),
+            })
+        contribs.sort(key=lambda d: -d["z"])
         out["contributions"] = contribs
+        out["observed_features"] = len(contribs)
+
+        if self.cal and "latent_pca" in self.cal:
+            pca = self.cal["latent_pca"]
+            mu_vec = r["mu"][0] - np.array(pca["mean"])
+            xy = np.array(pca["components"]) @ mu_vec
+            out["latent_xy"] = [float(xy[0]), float(xy[1])]
+        out["latent_mu"] = r["mu"][0].round(4).tolist()
         return out
 
     def score_frame(self, df, source_col="source", fpr_target="fpr_0.01", batch_size=4096):
         """vectorised scoring of a unified-schema DataFrame (raw units). returns a DataFrame with
-        score, z and flag per row"""
+        score, z, percentile and flag per row"""
         import pandas as pd
 
         n = len(df)
@@ -152,27 +192,36 @@ class ActiveModel:
         src = df[source_col].astype(str).map(lambda s: schema.SOURCE_INDEX.get(s, 0)).fillna(0).to_numpy().astype(np.int64)
 
         raw = np.zeros(n, dtype=np.float32)
+        norm = np.zeros(n, dtype=np.float32)
         with _lock:
             for s in range(0, n, batch_size):
                 sl = slice(s, min(s + batch_size, n))
-                r = score_batch(self.model, torch.from_numpy(num[sl]).to(self.device), torch.from_numpy(mask[sl]).to(self.device),
-                                torch.from_numpy(cat[sl]).to(self.device), torch.from_numpy(src[sl]).to(self.device),
-                                n_samples=self.n_samples)
+                num_t, mask_t = torch.from_numpy(num[sl]).to(self.device), torch.from_numpy(mask[sl]).to(self.device)
+                cat_t, src_t = torch.from_numpy(cat[sl]).to(self.device), torch.from_numpy(src[sl]).to(self.device)
+                r = score_batch(self.model, num_t, mask_t, cat_t, src_t, n_samples=self.n_samples)
                 raw[sl] = r["raw"]
-        out = pd.DataFrame({"score": raw})
+                if self.scorer:
+                    norm[sl] = self.scorer.norm(r, src[sl])
+        score = norm if (self.score_type == "norm" and self.scorer) else raw
+        out = pd.DataFrame({"score": score, "score_raw": raw})
+        if self.scorer:
+            out["score_norm"] = norm
         inv = {v: k for k, v in schema.SOURCE_INDEX.items()}
         z = np.full(n, np.nan, dtype=np.float32)
         flag = np.zeros(n, dtype=bool)
+        pct = np.full(n, np.nan, dtype=np.float32)
         for code in np.unique(src):
             m = src == code
             cal, _ = self._calibration_for(inv.get(int(code)) if code else None)
             if not cal:
                 continue
-            z[m] = (raw[m] - cal["legit_mean"]) / cal["legit_std"]
+            z[m] = (score[m] - cal["legit_mean"]) / cal["legit_std"]
             thr = cal["thresholds"].get(fpr_target) or cal["thresholds"].get("fpr_0.01")
             if thr:
-                flag[m] = raw[m] > thr["threshold"]
+                flag[m] = score[m] > thr["threshold"]
+            pct[m] = [_percentile(cal["legit_quantiles"], float(v)) for v in score[m]]
         out["z"] = z
+        out["percentile"] = pct
         out["flag"] = flag
         return out
 
@@ -205,6 +254,7 @@ def list_runs() -> list[dict]:
             ev = json.loads((d / "eval.json").read_text())
             info["mean_test_auroc"] = ev.get("mean_auroc")
             info["test_sources"] = {k: v["auroc"] for k, v in ev.get("sources", {}).items()}
+            info["score_type"] = ev.get("score_type")
         out.append(info)
     return out
 

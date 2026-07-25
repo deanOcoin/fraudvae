@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fraudvae</title>
+<link rel="stylesheet" href="/static/css/fonts.css">
+<link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+<div class="shell">
+  <nav class="rail" aria-label="Sections">
+    <a class="brand" href="#score"><span class="brand-mark" aria-hidden="true"></span>fraudvae</a>
+    <a href="#score" data-tab="score" class="rail-link">Score a transaction</a>
+    <div class="rail-foot">
+      <div id="rail-model" class="rail-model">loading…</div>
+      <a href="/docs" class="rail-dim" target="_blank" rel="noopener">API docs</a>
+    </div>
+  </nav>
+
+  <main class="content">
+    <!-- ================= SCORE ================= -->
+    <section id="tab-score" class="tab">
+      <header class="page-head">
+        <h1>Score a transaction</h1>
+        <p class="lede" id="score-lede">A VAE trained on legitimate traffic reconstructs the transaction. High reconstruction error means unusual.</p>
+      </header>
+      <div class="score-grid">
+        <form id="score-form" class="score-form" autocomplete="off">
+          <div class="form-top">
+            <label class="field">
+              <span>Bank / data context</span>
+              <select name="source" id="source-select"></select>
+              <small id="source-hint">Which dataset's "normal" to compare against.</small>
+            </label>
+            <label class="field">
+              <span>Alert budget</span>
+              <select name="fpr" id="fpr-select">
+                <option value="0.001">0.1%</option>
+                <option value="0.01" selected>1%</option>
+                <option value="0.05">5%</option>
+              </select>
+            </label>
+          </div>
+          <div class="example-row">
+            <span>Examples:</span>
+            <button type="button" class="btn ghost" data-example="0">legit example</button>
+            <button type="button" class="btn ghost" data-example="1">fraud example</button>
+          </div>
+          <div id="field-groups"></div>
+          <div class="form-actions">
+            <button type="submit" class="btn primary" id="score-btn">Score transaction</button>
+            <span id="score-status" class="dim"></span>
+          </div>
+          <details class="about">
+            <summary>What does the score mean?</summary>
+            <p class="dim">The score is the negative log-likelihood of the transaction under the VAE, summed over the observed fields. Each field's share of it is shown on the receipt, so you can see which fields the model could not explain.</p>
+          </details>
+        </form>
+
+        <aside class="receipt-col">
+          <div id="receipt" class="receipt empty">
+            <div class="receipt-empty">
+              <p>Nothing scored yet.</p>
+              <p class="dim">Fill in what you know and press <b>Score transaction</b>.</p>
+            </div>
+          </div>
+          <p class="receipt-legend dim">Bars: each field's share of the reconstruction error.</p>
+          <div class="latent-card">
+            <div class="card-head"><h3>Latent space</h3><span class="dim" id="latent-note"></span></div>
+            <canvas id="latent-chart" height="300"></canvas>
+          </div>
+        </aside>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script type="module" src="/static/js/app.js"></script>
+</body>
+</html>
