@@ -12,6 +12,8 @@
   <nav class="rail" aria-label="Sections">
     <a class="brand" href="#score"><span class="brand-mark" aria-hidden="true"></span>fraudvae</a>
     <a href="#score" data-tab="score" class="rail-link">Score a transaction</a>
+    <a href="#data" data-tab="data" class="rail-link">Training data</a>
+    <a href="#model" data-tab="model" class="rail-link">Model &amp; training</a>
     <div class="rail-foot">
       <div id="rail-model" class="rail-model">loading…</div>
       <a href="/docs" class="rail-dim" target="_blank" rel="noopener">API docs</a>
@@ -23,7 +25,7 @@
     <section id="tab-score" class="tab">
       <header class="page-head">
         <h1>Score a transaction</h1>
-        <p class="lede" id="score-lede">A VAE trained on legitimate traffic reconstructs the transaction. High reconstruction error means unusual.</p>
+        <p class="lede" id="score-lede">The model reconstructs the transaction from a 20-dimensional summary of what normal traffic looks like. What it fails to reconstruct is what it finds suspicious.</p>
       </header>
       <div class="score-grid">
         <form id="score-form" class="score-form" autocomplete="off">
@@ -31,21 +33,26 @@
             <label class="field">
               <span>Bank / data context</span>
               <select name="source" id="source-select"></select>
-              <small id="source-hint">Which dataset's "normal" to compare against.</small>
+              <small id="source-hint">Which dataset's "normal" to compare against. Generic uses the shared representation only.</small>
             </label>
             <label class="field">
-              <span>Alert budget</span>
-              <select name="fpr" id="fpr-select">
-                <option value="0.001">0.1%</option>
-                <option value="0.01" selected>1%</option>
-                <option value="0.05">5%</option>
+              <span>Alert budget (false positive rate)</span>
+              <select name="fpr_target" id="fpr-select">
+                <option value="fpr_0.001">0.1% of legit traffic</option>
+                <option value="fpr_0.005">0.5%</option>
+                <option value="fpr_0.01" selected>1%</option>
+                <option value="fpr_0.02">2%</option>
+                <option value="fpr_0.05">5%</option>
               </select>
+              <small>Threshold chosen so this share of legitimate validation transactions gets flagged.</small>
             </label>
           </div>
           <div class="example-row">
-            <span>Examples:</span>
-            <button type="button" class="btn ghost" data-example="0">legit example</button>
-            <button type="button" class="btn ghost" data-example="1">fraud example</button>
+            <span>Load an example from the held-out data:</span>
+            <button type="button" class="btn ghost" data-example="0">legitimate</button>
+            <button type="button" class="btn ghost" data-example="1">fraud</button>
+            <button type="button" class="btn ghost" id="clear-form">clear</button>
+            <span id="example-note" class="dim"></span>
           </div>
           <div id="field-groups"></div>
           <div class="form-actions">
@@ -61,17 +68,82 @@
         <aside class="receipt-col">
           <div id="receipt" class="receipt empty">
             <div class="receipt-empty">
-              <p>Nothing scored yet.</p>
+              <p>No transaction scored yet.</p>
               <p class="dim">Fill in what you know and press <b>Score transaction</b>.</p>
             </div>
           </div>
           <p class="receipt-legend dim">Bars: each field's share of the reconstruction error.</p>
           <div class="latent-card">
-            <div class="card-head"><h3>Latent space</h3><span class="dim" id="latent-note"></span></div>
-            <canvas id="latent-chart" height="300"></canvas>
+            <div class="card-head"><h3>Where it lands in latent space</h3><span class="dim" id="latent-note">validation sample, PCA of the posterior means</span></div>
+            <div class="chart-wrap" style="height:300px"><canvas id="latent-chart"></canvas></div>
           </div>
         </aside>
       </div>
+
+      <details class="batch">
+        <summary>Score a whole file instead</summary>
+        <p class="dim">A CSV using the unified column names (see the README). Rows get a score, a percentile and a flag at the alert budget above. If an <code>is_fraud</code> column is present you also get AUROC / recall for the file.</p>
+        <form id="batch-form" class="batch-form">
+          <input type="file" name="file" accept=".csv" required>
+          <button type="submit" class="btn">Score file</button>
+          <span id="batch-status" class="dim"></span>
+        </form>
+      </details>
+    </section>
+
+    <!-- ================= DATA ================= -->
+    <section id="tab-data" class="tab hidden">
+      <header class="page-head">
+        <h1>Training data</h1>
+        <p class="lede" id="data-lede">Eleven public transaction datasets mapped onto one schema. Where a source has no notion of a field, the field is marked unobserved and the model's likelihood skips it.</p>
+      </header>
+      <div id="corpus-summary" class="corpus-summary"></div>
+      <div class="data-layout">
+        <div class="source-list" id="source-list"></div>
+        <div class="source-detail" id="source-detail">
+          <p class="dim">Pick a source on the left.</p>
+        </div>
+      </div>
+      <section class="coverage-section">
+        <div class="card-head"><h2>Which fields each source fills</h2><span class="dim">share of rows with the field observed</span></div>
+        <div id="coverage-grid" class="coverage-grid"></div>
+      </section>
+      <section class="pipeline-section">
+        <div class="card-head"><h2>Rebuild</h2><span class="dim">runs the same scripts as <code>fraudvae fetch / build / prepare</code></span></div>
+        <div class="pipeline-row">
+          <button class="btn" id="btn-fetch">Fetch raw data</button>
+          <button class="btn" id="btn-build">Build unified parquet</button>
+          <label class="inline-field">prepared set <input id="prepare-name" value="default" size="10"></label>
+          <label class="inline-field">cap train rows / source <input id="prepare-cap" type="number" placeholder="none" size="9"></label>
+          <button class="btn" id="btn-prepare">Prepare model arrays</button>
+        </div>
+        <pre id="pipeline-log" class="log small"></pre>
+      </section>
+    </section>
+
+    <!-- ================= MODEL ================= -->
+    <section id="tab-model" class="tab hidden">
+      <header class="page-head">
+        <h1>Model &amp; training</h1>
+        <p class="lede">Every run lives in <code>runs/&lt;name&gt;</code>: checkpoint, per-epoch metrics, calibration and held-out evaluation. Load any of them into the scorer.</p>
+      </header>
+      <div class="runs-layout">
+        <div class="runs-list" id="runs-list"></div>
+        <div class="run-detail" id="run-detail"><p class="dim">Select a run.</p></div>
+      </div>
+      <section class="train-section">
+        <div class="card-head"><h2>Train on this machine</h2><span class="dim">runs as a background task; the log streams below</span></div>
+        <form id="train-form" class="train-form">
+          <label class="inline-field">config <select name="config" id="train-config"></select></label>
+          <label class="inline-field">prepared set <select name="prepared" id="train-prepared"></select></label>
+          <label class="inline-field">epochs <input name="epochs" type="number" min="1" placeholder="from config" size="5"></label>
+          <label class="inline-field">device <select name="device"><option value="auto">auto</option><option value="cpu">cpu</option><option value="cuda">cuda</option></select></label>
+          <label class="inline-field">run name <input name="name" placeholder="auto" size="18"></label>
+          <button type="submit" class="btn primary">Start training</button>
+        </form>
+        <p class="dim">Training runs in the background; you can leave this tab. The full 36M-row corpus takes days on a laptop CPU.</p>
+        <pre id="train-log" class="log"></pre>
+      </section>
     </section>
   </main>
 </div>
