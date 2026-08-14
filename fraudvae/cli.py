@@ -8,9 +8,13 @@
   fraudvae calibrate RUN    (re)compute thresholds for a run
   fraudvae evaluate RUN     test metrics for a run
   fraudvae serve            web ui
+  fraudvae key              print the app's ssh public key
+  fraudvae advise           local vs remote compute recommendation
+  fraudvae remote ...       probe / provision / launch / status / fetch on a gpu box over ssh
 """
 from __future__ import annotations
 
+import os
 import sys
 
 
@@ -20,12 +24,44 @@ def _serve(argv):
     import uvicorn
 
     ap = argparse.ArgumentParser(prog="fraudvae serve")
-    ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--host", default=os.environ.get("FRAUDVAE_HOST", "127.0.0.1"))
+    ap.add_argument("--port", type=int, default=int(os.environ.get("FRAUDVAE_PORT", "8765")))
+    ap.add_argument("--run", default=None, help="run to load (default: best by test auroc)")
     ap.add_argument("--reload", action="store_true")
     a = ap.parse_args(argv)
+    if a.run:
+        os.environ["FRAUDVAE_RUN"] = a.run
     print(f"fraudvae ui -> http://{a.host}:{a.port}")
-    uvicorn.run("fraudvae.server.app:app", host=a.host, port=a.port, reload=a.reload)
+    uvicorn.run("fraudvae.server.app:app", host=a.host, port=a.port, reload=a.reload, log_level="info")
+
+
+def _key(argv):
+    from .remote import keys
+
+    print(keys.public_key_text())
+    print(f"# {keys.fingerprint()}  ({keys.PUBLIC})", file=sys.stderr)
+
+
+def _advise(argv):
+    import argparse
+    import json
+
+    from .remote.advisor import advise
+
+    ap = argparse.ArgumentParser(prog="fraudvae advise")
+    ap.add_argument("--config", default="gpu_full")
+    ap.add_argument("--json", action="store_true")
+    a = ap.parse_args(argv)
+    rec = advise(a.config)
+    if a.json:
+        print(json.dumps(rec, indent=1))
+        return
+    loc = rec["local"]
+    print(f"train rows: {rec['train_rows']:,}  epochs: {rec['epochs']}")
+    print(f"local ({loc['device']}): {loc['rows_per_sec']:,.0f} rows/s -> ~{loc['est_hours']:.1f} h")
+    print("recommendation:", "RENT A GPU" if rec["recommend_remote"] else "train locally")
+    for t in rec["gpu_tiers"]:
+        print(f"  {t['name']:<32} ~{t['est_hours']:.2f} h  ~${t['est_cost_usd']:.2f}")
 
 
 COMMANDS = {
@@ -37,6 +73,9 @@ COMMANDS = {
     "calibrate": lambda argv: __import__("fraudvae.calibrate", fromlist=["main"]).main(argv),
     "evaluate": lambda argv: __import__("fraudvae.evaluate", fromlist=["main"]).main(argv),
     "serve": _serve,
+    "key": _key,
+    "advise": _advise,
+    "remote": lambda argv: __import__("fraudvae.remote.cli", fromlist=["main"]).main(argv),
 }
 
 
