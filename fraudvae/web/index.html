@@ -14,9 +14,10 @@
     <a href="#score" data-tab="score" class="rail-link">Score a transaction</a>
     <a href="#data" data-tab="data" class="rail-link">Training data</a>
     <a href="#model" data-tab="model" class="rail-link">Model &amp; training</a>
+    <a href="#compute" data-tab="compute" class="rail-link">Compute &amp; remote GPU</a>
     <div class="rail-foot">
       <div id="rail-model" class="rail-model">loading…</div>
-      <a href="/docs" class="rail-dim" target="_blank" rel="noopener">API docs</a>
+      <a href="/api/docs" class="rail-dim" target="_blank" rel="noopener">API docs</a>
     </div>
   </nav>
 
@@ -132,23 +133,88 @@
         <div class="run-detail" id="run-detail"><p class="dim">Select a run.</p></div>
       </div>
       <section class="train-section">
-        <div class="card-head"><h2>Train on this machine</h2><span class="dim">runs as a background task; the log streams below</span></div>
+        <div class="card-head"><h2>Train on this machine</h2><span class="dim" id="train-device"></span></div>
         <form id="train-form" class="train-form">
           <label class="inline-field">config <select name="config" id="train-config"></select></label>
           <label class="inline-field">prepared set <select name="prepared" id="train-prepared"></select></label>
           <label class="inline-field">epochs <input name="epochs" type="number" min="1" placeholder="from config" size="5"></label>
-          <label class="inline-field">device <select name="device"><option value="auto">auto</option><option value="cpu">cpu</option><option value="cuda">cuda</option></select></label>
           <label class="inline-field">run name <input name="name" placeholder="auto" size="18"></label>
           <button type="submit" class="btn primary">Start training</button>
         </form>
-        <p class="dim">Training runs in the background; you can leave this tab. The full 36M-row corpus takes days on a laptop CPU.</p>
+        <p class="dim">For the full 36M-row corpus use the <a href="#compute">Compute</a> tab instead; a laptop CPU takes days for what an A100 does in an hour.</p>
         <pre id="train-log" class="log"></pre>
+      </section>
+    </section>
+
+    <!-- ================= COMPUTE ================= -->
+    <section id="tab-compute" class="tab hidden">
+      <header class="page-head">
+        <h1>Compute &amp; remote GPU</h1>
+        <p class="lede">Benchmarks the real model on this machine, estimates the full run, and if that is unreasonable walks you through renting a GPU (vast.ai or any box you can ssh into) and training there with one click.</p>
+      </header>
+      <div class="compute-grid">
+        <section class="advisor" id="advisor">
+          <div class="card-head"><h2>Should this run here?</h2><button class="btn ghost" id="btn-advise">Benchmark this machine</button></div>
+          <div id="advisor-body"><p class="dim">Press the button; it times ~30 training steps of the configured model.</p></div>
+        </section>
+        <section class="keybox">
+          <div class="card-head"><h2>The app's ssh key</h2><span class="dim">add this public key to the server (vast.ai: Account → SSH keys)</span></div>
+          <pre id="pubkey" class="pubkey">…</pre>
+          <div class="row">
+            <button class="btn ghost" id="copy-key">Copy public key</button>
+            <span id="key-fp" class="dim"></span>
+          </div>
+        </section>
+      </div>
+
+      <section class="remote">
+        <div class="card-head"><h2>Remote server</h2><span class="dim">paste the ssh line from the instance card: <code>ssh -p PORT root@IP</code></span></div>
+        <form id="host-form" class="host-form">
+          <label class="inline-field">host / IP <input name="host" required placeholder="123.45.67.89" size="18"></label>
+          <label class="inline-field">port <input name="port" type="number" value="22" size="6"></label>
+          <label class="inline-field">user <input name="user" value="root" size="8"></label>
+          <label class="inline-field">remote dir <input name="remote_dir" value="~/fraudvae" size="14"></label>
+          <label class="inline-field">remembered <select id="host-select"><option value="">—</option></select></label>
+          <button type="button" class="btn" id="btn-probe">Connect &amp; inspect</button>
+          <button type="button" class="btn ghost" id="btn-paste-ssh">Paste ssh line</button>
+        </form>
+        <div id="probe-result" class="probe"></div>
+
+        <div class="remote-steps">
+          <div class="step">
+            <h3>1. Provision</h3>
+            <p class="dim">Installs dependencies, uploads the code and the processed parquet files, runs <code>prepare</code> on the server.</p>
+            <label class="inline-field">prepared set name <input id="prov-prepared" value="full" size="8"></label>
+            <label class="inline-field"><input type="checkbox" id="prov-data" checked> upload processed data</label>
+            <button class="btn" id="btn-provision">Provision server</button>
+          </div>
+          <div class="step">
+            <h3>2. Launch training</h3>
+            <label class="inline-field">config <select id="launch-config"></select></label>
+            <label class="inline-field">prepared <input id="launch-prepared" value="full" size="8"></label>
+            <label class="inline-field">epochs <input id="launch-epochs" type="number" placeholder="cfg" size="4"></label>
+            <label class="inline-field">run name <input id="launch-name" placeholder="auto" size="16"></label>
+            <button class="btn primary" id="btn-launch">Launch</button>
+          </div>
+          <div class="step">
+            <h3>3. Watch &amp; collect</h3>
+            <label class="inline-field">run <select id="remote-run-select"></select></label>
+            <button class="btn ghost" id="btn-status">Refresh status</button>
+            <label class="inline-field"><input type="checkbox" id="auto-status"> auto refresh</label>
+            <button class="btn ghost" id="btn-stop">Stop</button>
+            <button class="btn" id="btn-fetch-run">Fetch results &amp; load model</button>
+            <button class="btn ghost" id="btn-fetch-processed">Pull processed data</button>
+          </div>
+        </div>
+        <div id="remote-status" class="remote-status"></div>
+        <pre id="remote-log" class="log"></pre>
       </section>
     </section>
   </main>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<!-- vendored so the ui works on a box with no internet (which a training server often is) -->
+<script src="/static/vendor/chart.umd.js"></script>
 <script type="module" src="/static/js/app.js"></script>
 </body>
 </html>
