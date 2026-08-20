@@ -24,6 +24,27 @@ from ..paths import RUNS_DIR
 _lock = threading.Lock()
 
 
+class IncompatibleRun(RuntimeError):
+    pass
+
+
+def compatible_schema(v) -> bool:
+    return v is not None and int(v) == schema.SCHEMA_VERSION
+
+
+def run_schema_version(run_dir: Path) -> int | None:
+    """runs record the schema they were trained on in run.json (v4+); older runs have nothing"""
+    p = Path(run_dir) / "run.json"
+    if not p.exists():
+        return None
+    try:
+        r = json.loads(p.read_text())
+    except json.JSONDecodeError:
+        return None
+    v = r.get("schema_version") or (r.get("prepared_meta") or {}).get("schema_version")
+    return int(v) if v else 3
+
+
 class ActiveModel:
     def __init__(self, run_dir: Path, device="cpu"):
         self.run_dir = Path(run_dir)
@@ -32,16 +53,23 @@ class ActiveModel:
         self.model, ck = load_checkpoint(self.run_dir / "model.pt", device=self.device)
         self.meta = ck["prepared_meta"]
         self.train_config = ck.get("train_config", {})
+        self.extra = ck.get("extra", {})
         cal_p = self.run_dir / "calibration.json"
         self.cal = json.loads(cal_p.read_text()) if cal_p.exists() else None
         ev_p = self.run_dir / "eval.json"
         self.eval = json.loads(ev_p.read_text()) if ev_p.exists() else None
+        run_p = self.run_dir / "run.json"
+        self.run = json.loads(run_p.read_text()) if run_p.exists() else {}
         self.numeric = self.meta["numeric"]
         self.categorical = self.meta["categorical"]
         self.num_index = {f["name"]: i for i, f in enumerate(self.numeric)}
         self.cat_index = {c["name"]: i for i, c in enumerate(self.categorical)}
         self.n_samples = (self.cal or {}).get("n_samples", 8)
         self.score_type = (self.cal or {}).get("score_type", "raw")
+        self.schema_version = run_schema_version(self.run_dir)
+        if not compatible_schema(self.schema_version):
+            raise IncompatibleRun(f"run {self.name} was trained on schema v{self.schema_version}, "
+                                  f"this code is v{schema.SCHEMA_VERSION}; retrain (or check out the matching version)")
         n_feat = len(self.numeric) + len(self.categorical)
         self.scorer = Scorer(self.cal["baselines"], n_feat) if self.cal and "baselines" in self.cal else None
         self.loaded_at = time.time()
@@ -56,23 +84,35 @@ class ActiveModel:
         cat = np.zeros((1, C), dtype=np.int64)
         for f in self.numeric:
             v = features.get(f["name"])
-            if v is None:
+            if v is None or v == "":
+                continue
+            try:
+                x = float(v)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(x):
                 continue
             j = self.num_index[f["name"]]
-            t = transform_numeric(np.array([float(v)]), f["transform"])[0]
+            t = transform_numeric(np.array([x]), f["transform"])[0]
             num[0, j] = (t - f["mean"]) / f["std"]
             mask[0, j] = 1.0
         for c in self.categorical:
             v = features.get(c["name"])
             j = self.cat_index[c["name"]]
-            if v is None:
+            if v is None or v == "":
                 continue
             if c["name"] in DERIVED_CATS:
-                k = int(v)
+                try:
+                    k = int(float(v))
+                except (TypeError, ValueError):
+                    continue
                 if 0 <= k < DERIVED_CATS[c["name"]]:
                     cat[0, j] = k + 1
             else:
-                cat[0, j] = c["values"].index(str(v)) if str(v) in c["values"] else 0
+                if isinstance(v, (int, np.integer)) and not isinstance(v, bool):
+                    cat[0, j] = int(v) if 0 <= int(v) < c["size"] else 0
+                else:
+                    cat[0, j] = c["values"].index(str(v)) if str(v) in c["values"] else 0
         src_idx = schema.SOURCE_INDEX.get(source, 0) if source else 0
         dev = self.device
         return (torch.from_numpy(num).to(dev), torch.from_numpy(mask).to(dev),
@@ -95,7 +135,9 @@ class ActiveModel:
             return None, "none"
         if source and source in self.cal.get("sources", {}):
             return self.cal["sources"][source], source
-        return self.cal.get("generic"), "generic"
+        if self.cal.get("generic"):
+            return self.cal["generic"], "generic"
+        return None, "none"
 
     def score(self, features: dict, source: str | None = None, fpr_target: str = "fpr_0.01") -> dict:
         num, mask, cat, src, src_idx = self.encode(features, source)
@@ -123,6 +165,7 @@ class ActiveModel:
                 "flag": bool(chosen and score > chosen["threshold"]),
                 "expected_recall": chosen.get("recall") if chosen else None,
                 "expected_precision": chosen.get("precision") if chosen else None,
+                "context_auroc": cal.get("auroc"),
                 "thresholds": thr,
             })
         else:
@@ -172,6 +215,8 @@ class ActiveModel:
         num = np.zeros((n, D), dtype=np.float32)
         mask = np.zeros((n, D), dtype=np.float32)
         for f in self.numeric:
+            if f["name"] not in df:
+                continue
             v = pd.to_numeric(df[f["name"]], errors="coerce").to_numpy(dtype=np.float64)
             ok = np.isfinite(v)
             j = self.num_index[f["name"]]
@@ -180,16 +225,24 @@ class ActiveModel:
             mask[:, j] = ok
         cat = np.zeros((n, C), dtype=np.int64)
         for c in self.categorical:
+            if c["name"] not in df:
+                continue
             j = self.cat_index[c["name"]]
             col = df[c["name"]]
             if c["name"] in DERIVED_CATS:
                 v = pd.to_numeric(col, errors="coerce").to_numpy()
                 ok = np.isfinite(v) & (v >= 0) & (v < DERIVED_CATS[c["name"]])
                 cat[:, j] = np.where(ok, np.nan_to_num(v).astype(int) + 1, 0)
+            elif pd.api.types.is_numeric_dtype(col):
+                v = col.fillna(0).to_numpy().astype(int)
+                cat[:, j] = np.where((v >= 0) & (v < c["size"]), v, 0)
             else:
                 lut = {name: i for i, name in enumerate(c["values"])}
                 cat[:, j] = col.astype(str).map(lut).fillna(0).astype(int).to_numpy()
-        src = df[source_col].astype(str).map(lambda s: schema.SOURCE_INDEX.get(s, 0)).fillna(0).to_numpy().astype(np.int64)
+        if source_col in df:
+            src = df[source_col].astype(str).map(lambda s: schema.SOURCE_INDEX.get(s, 0)).fillna(0).to_numpy().astype(np.int64)
+        else:
+            src = np.zeros(n, dtype=np.int64)
 
         raw = np.zeros(n, dtype=np.float32)
         norm = np.zeros(n, dtype=np.float32)
@@ -245,22 +298,42 @@ _active: ActiveModel | None = None
 
 def list_runs() -> list[dict]:
     out = []
+    if not RUNS_DIR.exists():
+        return out
     for d in sorted(RUNS_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+        if not d.is_dir():
+            continue
+        v = run_schema_version(d)
         info = {"name": d.name, "has_model": (d / "model.pt").exists(), "has_calibration": (d / "calibration.json").exists(),
-                "has_eval": (d / "eval.json").exists()}
-        if (d / "run.json").exists():
-            info["run"] = json.loads((d / "run.json").read_text())
+                "has_eval": (d / "eval.json").exists(), "schema_version": v, "compatible": compatible_schema(v)}
+        for f in ("run.json", "status.json"):
+            p = d / f
+            if p.exists():
+                try:
+                    info[f.split(".")[0]] = json.loads(p.read_text())
+                except json.JSONDecodeError:
+                    pass
         if (d / "eval.json").exists():
-            ev = json.loads((d / "eval.json").read_text())
-            info["mean_test_auroc"] = ev.get("mean_auroc")
-            info["test_sources"] = {k: v["auroc"] for k, v in ev.get("sources", {}).items()}
-            info["score_type"] = ev.get("score_type")
+            try:
+                ev = json.loads((d / "eval.json").read_text())
+                info["mean_test_auroc"] = ev.get("mean_auroc")
+                info["generic_test_auroc"] = (ev.get("generic") or {}).get("auroc")
+                info["test_sources"] = {k: v["auroc"] for k, v in ev.get("sources", {}).items()}
+                info["score_type"] = ev.get("score_type")
+            except json.JSONDecodeError:
+                pass
+        if "run" in info:
+            full = info["run"]
+            cfg = full.get("config", {})
+            info["run"] = {k: full.get(k) for k in ("name", "started", "device", "device_name", "host", "params", "prepared", "prepared_meta")}
+            info["config_name"] = cfg.get("name")
+            info["epochs"] = cfg.get("train", {}).get("epochs")
         out.append(info)
     return out
 
 
 def pick_default_run() -> str | None:
-    runs = [r for r in list_runs() if r["has_model"]]
+    runs = [r for r in list_runs() if r["has_model"] and r["has_calibration"] and r["compatible"]]
     if not runs:
         return None
     runs.sort(key=lambda r: (r.get("mean_test_auroc") or 0, r["name"]), reverse=True)
@@ -269,7 +342,10 @@ def pick_default_run() -> str | None:
 
 def load_run(name: str, device="cpu") -> ActiveModel:
     global _active
-    _active = ActiveModel(RUNS_DIR / name, device=device)
+    d = RUNS_DIR / name
+    if not (d / "model.pt").exists():
+        raise FileNotFoundError(f"run {name} has no model.pt")
+    _active = ActiveModel(d, device=device)
     return _active
 
 
