@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>fraudvae</title>
+<link rel="stylesheet" href="/static/vendor/katex/katex.min.css">
 <link rel="stylesheet" href="/static/css/fonts.css">
 <link rel="stylesheet" href="/static/css/app.css">
 </head>
@@ -15,6 +16,7 @@
     <a href="#data" data-tab="data" class="rail-link">Training data</a>
     <a href="#model" data-tab="model" class="rail-link">Model &amp; training</a>
     <a href="#compute" data-tab="compute" class="rail-link">Compute &amp; remote GPU</a>
+    <a href="#explain" data-tab="explain" class="rail-link">How it works</a>
     <div class="rail-foot">
       <div id="rail-model" class="rail-model">loading…</div>
       <a href="/api/docs" class="rail-dim" target="_blank" rel="noopener">API docs</a>
@@ -60,10 +62,6 @@
             <button type="submit" class="btn primary" id="score-btn">Score transaction</button>
             <span id="score-status" class="dim"></span>
           </div>
-          <details class="about">
-            <summary>What does the score mean?</summary>
-            <p class="dim">The score is the negative log-likelihood of the transaction under the VAE, summed over the observed fields. Each field's share of it is shown on the receipt, so you can see which fields the model could not explain.</p>
-          </details>
         </form>
 
         <aside class="receipt-col">
@@ -83,7 +81,7 @@
 
       <details class="batch">
         <summary>Score a whole file instead</summary>
-        <p class="dim">A CSV using the unified column names (see the README). Rows get a score, a percentile and a flag at the alert budget above. If an <code>is_fraud</code> column is present you also get AUROC / recall for the file.</p>
+        <p class="dim">A CSV using the unified column names (see <a href="#explain">How it works</a>). Rows get a score, a percentile and a flag at the alert budget above. If an <code>is_fraud</code> column is present you also get AUROC / recall for the file.</p>
         <form id="batch-form" class="batch-form">
           <input type="file" name="file" accept=".csv" required>
           <button type="submit" class="btn">Score file</button>
@@ -210,11 +208,18 @@
         <pre id="remote-log" class="log"></pre>
       </section>
     </section>
+
+    <!-- ================= EXPLAIN ================= -->
+    <section id="tab-explain" class="tab hidden">
+      <article class="explain" id="explain-article">loading…</article>
+    </section>
   </main>
 </div>
 
 <!-- vendored so the ui works on a box with no internet (which a training server often is) -->
 <script src="/static/vendor/chart.umd.js"></script>
+<script defer src="/static/vendor/katex/katex.min.js"></script>
+<script defer src="/static/vendor/katex/auto-render.min.js"></script>
 <script type="module" src="/static/js/app.js"></script>
 </body>
 </html>
