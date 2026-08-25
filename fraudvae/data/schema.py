@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 SCHEMA_VERSION = 4
 
-SOURCES = ["fdh", "capone", "tabformer", "ulb", "paysim", "sparkov", "banksim", "ieee"]
+SOURCES = ["fdh", "capone", "tabformer", "ulb", "paysim", "sparkov", "banksim", "ieee", "amlworld"]
 # index 0 is reserved for "generic" (unknown bank/domain) at inference time
 SOURCE_INDEX = {s: i + 1 for i, s in enumerate(SOURCES)}
 GENERIC_SOURCE = 0
@@ -46,7 +46,7 @@ META_COLUMNS = {
     "ts": "float64",          # seconds; absolute epoch where the source has real dates
     "is_fraud": "int8",
     "split": "category",     # train / val / test (time ordered within a source)
-    "fraud_scenario": "int8",  # only fdh fills this
+    "fraud_scenario": "int8",  # fdh and amlworld fill this
 }
 
 NUMERIC: list[NumericFeature] = [
@@ -114,6 +114,8 @@ CATEGORICAL: list[CategoricalFeature] = [
     CategoricalFeature("dest_is_merchant", ("unknown", "no", "yes"), "ext", "Recipient is a merchant"),
     CategoricalFeature("product_code", ("unknown", "W", "C", "R", "H", "S"), "ext", "IEEE product code"),
     CategoricalFeature("email_bucket", ("unknown", "gmail", "yahoo", "microsoft", "other_free", "other"), "ext", "Payer email domain"),
+    # v4, amlworld: how the money moved between the two accounts
+    CategoricalFeature("payment_format", ("unknown", "ach", "wire", "cheque", "cash", "credit_card", "reinvestment", "crypto"), "ext", "Payment format"),
 ]
 
 NUMERIC_NAMES = [f.name for f in NUMERIC]
@@ -168,7 +170,9 @@ def finalize(df, source: str):
     for f in CATEGORICAL:
         if f.name not in df:
             df[f.name] = np.int8(0)
-        codes = df[f.name].fillna(0).to_numpy()
+        codes = df[f.name].to_numpy()
+        if codes.dtype.kind not in "iu":
+            codes = pd.Series(codes).fillna(0).astype(np.int16).to_numpy()
         if codes.min() < 0 or codes.max() >= len(f.values):
             raise ValueError(f"{source}: {f.name} has codes outside the vocab")
         df[f.name] = codes.astype(np.int8)
@@ -187,11 +191,30 @@ def finalize(df, source: str):
     return df[ALL_COLUMNS].reset_index(drop=True)
 
 
-def assign_time_splits(df, val_fraction=0.10, test_fraction=0.20):
-    """Oldest -> train, then val, newest -> test."""
-    df = df.sort_values("ts", kind="stable").reset_index(drop=True)
-    n = len(df)
+SPLIT_NAMES = ("train", "val", "test")
+
+
+def time_split_codes(ts, val_fraction=0.10, test_fraction=0.20):
+    """int8 per row: 0 train (oldest), 1 val, 2 test (newest). Stable sort so ties keep
+    file order. The array flavour, for the chunked adapters where 24M python strings hurt."""
+    import numpy as np
+
+    ts = np.asarray(ts)
+    order = np.argsort(ts, kind="stable")
+    n = len(ts)
     n_test = int(round(n * test_fraction))
     n_val = int(round(n * val_fraction))
-    df["split"] = ["train"] * (n - n_val - n_test) + ["val"] * n_val + ["test"] * n_test
+    codes = np.zeros(n, dtype=np.int8)
+    codes[order[n - n_val - n_test : n - n_test]] = 1
+    codes[order[n - n_test :]] = 2
+    return codes
+
+
+def assign_time_splits(df, val_fraction=0.10, test_fraction=0.20):
+    """Oldest -> train, then val, newest -> test."""
+    import numpy as np
+
+    codes = time_split_codes(df["ts"].to_numpy(), val_fraction, test_fraction)
+    df = df.copy()
+    df["split"] = np.array(SPLIT_NAMES, dtype=object)[codes]
     return df
