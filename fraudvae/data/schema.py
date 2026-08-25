@@ -8,14 +8,14 @@ Three kinds of columns:
 Anything a source can't fill is left NaN / 0 and the model's likelihood is
 masked on it. See docs/SCHEMA.md for the per-source coverage table.
 
-merchant_category is one shared taxonomy; taxonomy.py maps raw MCCs and the
-sources' own category strings onto MERCHANT_CATEGORIES.
+v4 adds a short burst window, the customer's own scale, the merchant side and
+first-time-seen flags to the history block, all computed causally at build.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SOURCES = ["fdh", "capone", "tabformer", "ulb", "paysim", "sparkov", "banksim", "ieee"]
 # index 0 is reserved for "generic" (unknown bank/domain) at inference time
@@ -27,7 +27,7 @@ GENERIC_SOURCE = 0
 class NumericFeature:
     name: str
     transform: str = "none"   # none | log1p | signed_log1p
-    group: str = "core"       # core | velocity | account | ext | ulb_pca
+    group: str = "core"       # core | velocity | merchant | account | ext | ulb_pca
     label: str = ""
     unit: str = ""
 
@@ -60,6 +60,15 @@ NUMERIC: list[NumericFeature] = [
     NumericFeature("cust_txn_count_7d", "log1p", "velocity", "Customer txns, last 7d"),
     NumericFeature("cust_amount_mean_30d", "log1p", "velocity", "Customer mean amount, last 30d"),
     NumericFeature("amount_over_cust_mean", "log1p", "velocity", "Amount / customer 30d mean"),
+    # v4: the short burst window, the customer's own scale, and how long we've known them
+    NumericFeature("cust_txn_count_1h", "log1p", "velocity", "Customer txns, last 1h"),
+    NumericFeature("cust_amount_sum_1h", "log1p", "velocity", "Customer spend, last 1h"),
+    NumericFeature("cust_amount_z_30d", "none", "velocity", "Amount z vs customer's 30d history"),
+    NumericFeature("cust_txn_count_prior", "log1p", "velocity", "Customer txns before this one"),
+    NumericFeature("cust_days_since_first", "log1p", "velocity", "Days since customer first seen", "days"),
+    # v4: the merchant side, where the source has a merchant / terminal id
+    NumericFeature("merch_txn_count_24h", "log1p", "merchant", "Merchant txns, last 24h"),
+    NumericFeature("merch_amount_ratio", "log1p", "merchant", "Amount / merchant's mean so far"),
     # account / customer context
     NumericFeature("cust_age", "none", "account", "Customer age", "years"),
     NumericFeature("credit_limit", "log1p", "account", "Credit limit"),
@@ -84,19 +93,21 @@ NUMERIC: list[NumericFeature] = [
     NumericFeature("ieee_d15", "signed_log1p", "ext", "IEEE D15 timedelta"),
 ] + [NumericFeature(f"ulb_v{i}", "none", "ulb_pca", f"ULB V{i}") for i in range(1, 29)]
 
-MERCHANT_CATEGORIES = (
-    "unknown", "grocery", "retail", "online_retail", "restaurants", "entertainment",
-    "travel", "transport", "fuel", "health", "personal_care", "home", "utilities",
-    "financial", "digital", "kids_pets", "hotel", "misc")
-
 CATEGORICAL: list[CategoricalFeature] = [
     CategoricalFeature("channel", ("unknown", "card_present", "card_not_present", "online", "mobile_money"), "core", "Channel"),
     CategoricalFeature("txn_type", ("unknown", "purchase", "cash_in", "cash_out", "debit", "payment", "transfer", "reversal", "address_verification"), "core", "Transaction type"),
-    CategoricalFeature("merchant_category", MERCHANT_CATEGORIES, "core", "Merchant category"),
+    CategoricalFeature("merchant_category", (
+        "unknown", "grocery", "retail", "online_retail", "restaurants", "entertainment",
+        "travel", "transport", "fuel", "health", "personal_care", "home", "utilities",
+        "financial", "digital", "kids_pets", "hotel", "misc"), "core", "Merchant category"),
     CategoricalFeature("card_brand", ("unknown", "visa", "mastercard", "amex", "discover", "other"), "core", "Card brand"),
     CategoricalFeature("card_kind", ("unknown", "credit", "debit", "prepaid"), "core", "Card kind"),
     CategoricalFeature("is_foreign", ("unknown", "no", "yes"), "core", "Cross border"),
     CategoricalFeature("cust_gender", ("unknown", "F", "M"), "account", "Customer gender"),
+    # v4 first-time-seen flags. "yes" on a customer's very first row too, cust_txn_count_prior says which
+    CategoricalFeature("cust_new_merchant", ("unknown", "no", "yes"), "velocity", "First time at this merchant"),
+    CategoricalFeature("cust_new_category", ("unknown", "no", "yes"), "velocity", "First time in this category"),
+    CategoricalFeature("cust_first_foreign", ("unknown", "no", "yes"), "velocity", "Customer's first cross-border txn"),
     CategoricalFeature("auth_error", ("unknown", "none", "insufficient_funds", "bad_pin", "bad_cvv", "bad_card_number", "bad_expiration", "bad_zipcode", "technical_glitch"), "core", "Authorization error"),
     CategoricalFeature("device_type", ("unknown", "desktop", "mobile"), "ext", "Device"),
     CategoricalFeature("is_recurring", ("unknown", "no", "yes"), "ext", "Recurring"),

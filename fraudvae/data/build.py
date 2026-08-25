@@ -31,7 +31,8 @@ from .adapters.base import MissingData, available
 from .registry import ORDER, SOURCES
 
 STATS = PROCESSED_DIR / "stats.json"
-LIGHT_COLS = ["ts", "is_fraud", "split", "amount", "hour", "merchant_category"]
+SAMPLES = PROCESSED_DIR / "samples.parquet"
+LIGHT_COLS = ["ts", "is_fraud", "split", "amount", "hour", "merchant_category", "channel", "txn_type"]
 
 
 def _arrow_schema():
@@ -60,7 +61,10 @@ def write_source(key: str, result, out: Path) -> int:
     rows = 0
     writer = None
     try:
-        chunks = [result] if isinstance(result, pd.DataFrame) else result
+        if isinstance(result, pd.DataFrame):
+            chunks = [result]
+        else:
+            chunks = result
         for i, df in enumerate(chunks):
             if "split" not in df or df["split"].isna().all():
                 if not isinstance(result, pd.DataFrame):
@@ -72,7 +76,7 @@ def write_source(key: str, result, out: Path) -> int:
             writer.write_table(tbl, row_group_size=500_000)
             rows += len(df)
             del tbl, df
-            gc.collect()
+            gc.collect()   # the 24M row sources run close to the memory limit
             if not isinstance(result, pd.DataFrame):
                 print(f"[{key}]   wrote chunk {i + 1} ({rows:,} rows so far)", flush=True)
     finally:
@@ -85,17 +89,27 @@ def write_source(key: str, result, out: Path) -> int:
 # ---- stats from the written parquet --------------------------------------
 
 def _coverage(path: Path) -> dict:
-    md = pq.ParquetFile(path).metadata
+    pf = pq.ParquetFile(path)
+    md = pf.metadata
     n = md.num_rows
-    nulls = {}
+    names = pf.schema_arrow.names
+    nulls = {name: 0 for name in names}
     for rg in range(md.num_row_groups):
         g = md.row_group(rg)
         for j in range(g.num_columns):
-            col = g.column(j)
-            st = col.statistics
+            st = g.column(j).statistics
             if st is not None and st.has_null_count:
-                nulls[col.path_in_schema] = nulls.get(col.path_in_schema, 0) + st.null_count
-    return {f.name: 1.0 - nulls.get(f.name, 0) / max(n, 1) for f in schema.NUMERIC}
+                nulls[names[j]] += st.null_count
+    cov = {f.name: 1.0 - nulls.get(f.name, n) / max(n, 1) for f in schema.NUMERIC}
+    present = [c for c in schema.CATEGORICAL_NAMES if c in names]
+    cats = pf.read(columns=present)
+    for f in schema.CATEGORICAL:
+        if f.name not in present:
+            cov[f.name] = 0.0
+            continue
+        col = cats.column(f.name).to_numpy()
+        cov[f.name] = float((col != 0).mean())
+    return cov
 
 
 def _rate_by(df: pd.DataFrame, col: str, labels=None, max_levels=30) -> dict:
@@ -143,10 +157,38 @@ def summarize(path: Path, key: str, seconds: float) -> dict:
         out["by_hour"] = _rate_by(df.dropna(subset=["hour"]).assign(hour=lambda d: d["hour"].astype(int)), "hour")
     if (df["merchant_category"] != 0).any():
         out["by_category"] = _rate_by(df, "merchant_category", schema.CAT_VOCAB["merchant_category"])
+    if (df["channel"] != 0).any():
+        out["by_channel"] = _rate_by(df, "channel", schema.CAT_VOCAB["channel"])
+    if (df["txn_type"] != 0).any():
+        out["by_txn_type"] = _rate_by(df, "txn_type", schema.CAT_VOCAB["txn_type"])
     return out
 
 
-def build_source(key: str, raw_dir: Path, max_rows=None) -> dict:
+def sample_rows(path: Path, n_legit=150, n_fraud=150, seed=0) -> pd.DataFrame:
+    """a few hundred rows for the ui, fraud oversampled. row-group aware so it's
+    cheap on the big files"""
+    pf = pq.ParquetFile(path)
+    y = pf.read(columns=["is_fraud"]).column("is_fraud").to_numpy()
+    rng = np.random.default_rng(seed)
+    legit = np.flatnonzero(y == 0)
+    fraud = np.flatnonzero(y == 1)
+    pick = np.sort(np.concatenate([
+        rng.choice(legit, min(n_legit, len(legit)), replace=False),
+        rng.choice(fraud, min(n_fraud, len(fraud)), replace=False),
+    ]))
+    frames = []
+    start = 0
+    for rg in range(pf.metadata.num_row_groups):
+        n = pf.metadata.row_group(rg).num_rows
+        lo, hi = np.searchsorted(pick, [start, start + n])
+        if hi > lo:
+            tbl = pf.read_row_group(rg)
+            frames.append(tbl.take(pa.array(pick[lo:hi] - start)).to_pandas())
+        start += n
+    return pd.concat(frames, ignore_index=True)
+
+
+def build_source(key: str, raw_dir: Path, max_rows=None):
     t0 = time.time()
     adapter = get_adapter(key)
     print(f"[{key}] loading...", flush=True)
@@ -161,8 +203,10 @@ def build_source(key: str, raw_dir: Path, max_rows=None) -> dict:
     del result
     stats = summarize(out, key, time.time() - t0)
     stats["parquet"] = out.name
+    stats["schema_version"] = schema.SCHEMA_VERSION
+    sample = sample_rows(out)
     print(f"[{key}] {rows:,} rows, {stats['fraud']:,} fraud ({stats['fraud_rate']:.3%}) in {stats['build_seconds']}s")
-    return stats
+    return stats, sample
 
 
 def load_stats() -> dict:
@@ -182,20 +226,29 @@ def main(argv=None):
     keys = args.source or ORDER
 
     stats = load_stats()
+    samples = []
+    if SAMPLES.exists():
+        old = pd.read_parquet(SAMPLES)
+        samples.append(old[~old["source"].isin(keys)])
     built = []
     for key in keys:
         if not available(raw_dir, key):
             print(f"[{key}] raw data not found, skipping ({SOURCES[key].url})")
             continue
         try:
-            stats["sources"][key] = build_source(key, raw_dir, args.max_rows)
+            s, sample = build_source(key, raw_dir, args.max_rows)
         except MissingData as e:
             print(f"[{key}] {e}")
             continue
+        stats["sources"][key] = s
+        samples.append(sample)
         built.append(key)
         # write after every source so a crash on tabformer doesn't lose the rest
         stats["generated"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        stats["schema_version"] = schema.SCHEMA_VERSION
         STATS.write_text(json.dumps(stats, indent=1))
+        if samples:
+            pd.concat(samples, ignore_index=True).to_parquet(SAMPLES, index=False)
 
     total = sum(s["rows"] for s in stats["sources"].values())
     fraud = sum(s["fraud"] for s in stats["sources"].values())
