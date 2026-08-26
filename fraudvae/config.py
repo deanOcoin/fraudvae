@@ -41,6 +41,25 @@ class TrainConfig:
 
 
 @dataclass
+class BoostConfig:
+    """the supervised half: a LightGBM model on the observable fields + customer context.
+    trained on the labelled train split after the VAE, early stopped on val auc."""
+    enabled: bool = True
+    num_leaves: int = 127
+    learning_rate: float = 0.05
+    max_rounds: int = 2000
+    early_stopping: int = 100
+    min_data_in_leaf: int = 200
+    feature_fraction: float = 0.8
+    bagging_fraction: float = 0.8
+    lambda_l2: float = 1.0
+    max_legit_per_source: int = 400_000   # legit train rows sampled per source (all fraud rows are kept)
+    val_legit_per_source: int = 100_000   # for early stopping
+    generic_fraction: float = 0.15        # share of rows duplicated with the source blanked
+    num_threads: int = 0                  # 0 = all cores
+
+
+@dataclass
 class DataConfig:
     max_rows_per_source: int | None = None   # subsample legit rows for training
     sources: list[str] | None = None         # None = everything that was built
@@ -53,6 +72,7 @@ class Config:
     name: str = "base"
     model: ModelConfig = field(default_factory=ModelConfig)
     train: TrainConfig = field(default_factory=TrainConfig)
+    boost: BoostConfig = field(default_factory=BoostConfig)
     data: DataConfig = field(default_factory=DataConfig)
     device: str = "auto"
     notes: str = ""

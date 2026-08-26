@@ -11,6 +11,7 @@ import argparse
 import json
 import math
 import os
+import platform
 import socket
 import sys
 import time
@@ -99,7 +100,7 @@ def evaluate_split(model, split, idx, source_names, device, batch_size=8192, n_s
     return out
 
 
-def train(cfg: Config, prepared="default", run_dir: Path | None = None, name: str | None = None):
+def train(cfg: Config, prepared="default", run_dir: Path | None = None, name: str | None = None, resume: Path | None = None):
     ensure_dirs()
     torch.manual_seed(cfg.train.seed)
     np.random.seed(cfg.train.seed)
@@ -115,7 +116,11 @@ def train(cfg: Config, prepared="default", run_dir: Path | None = None, name: st
     tr, va = data["train"], data["val"]
     legit_idx = tr.legit_indices()
     log(f"prepared set '{prepared}': train {len(tr):,} rows ({len(legit_idx):,} legit), val {len(va):,}; "
-        f"sources {list(meta['source_index'])}")
+        f"{len(data.numeric_names)} numerics, {len(data.categorical_names)} categoricals, sources {list(meta['source_index'])}")
+    if tr.in_memory:
+        log("train arrays loaded in RAM")
+    else:
+        log("train arrays memmapped (bigger than ~1/3 of RAM)")
 
     model = build_model(meta, cfg.model).to(device)
     n_params = sum(p.numel() for p in model.parameters())
@@ -132,26 +137,37 @@ def train(cfg: Config, prepared="default", run_dir: Path | None = None, name: st
         p = (step - warmup) / max(1, total_steps - warmup)
         return cfg.train.lr * (0.05 + 0.95 * 0.5 * (1 + math.cos(math.pi * p)))
 
+    start_epoch = 0
+    best = -float("inf")
+    if resume and Path(resume).exists():
+        ck = torch.load(resume, map_location=device, weights_only=False)
+        model.load_state_dict(ck["state_dict"])
+        start_epoch = ck["extra"].get("epoch", 0) + 1
+        best = ck["extra"].get("best", best)
+        log(f"resumed from {resume} at epoch {start_epoch}")
+
     run_info = {
         "name": run_dir.name, "started": time.strftime("%Y-%m-%dT%H:%M:%S"), "config": to_dict(cfg),
         "prepared": prepared, "prepared_meta": {k: meta[k] for k in ("name", "created", "counts", "fraud_counts", "sources", "max_rows_per_source")},
-        "device": str(device), "host": socket.gethostname(), "torch": torch.__version__,
-        "params": n_params, "pid": os.getpid(), "fraudvae": __version__,
+        "device": str(device), "device_name": torch.cuda.get_device_name(0) if device.type == "cuda" else platform.processor() or platform.machine(),
+        "host": socket.gethostname(), "torch": torch.__version__, "params": n_params, "pid": os.getpid(),
+        "schema_version": meta.get("schema_version"), "fraudvae": __version__,
     }
     (run_dir / "run.json").write_text(json.dumps(run_info, indent=1))
-    write_status(run_dir, state="running", epoch=0, epochs=cfg.train.epochs)
+    write_status(run_dir, state="running", epoch=start_epoch, epochs=cfg.train.epochs)
 
     source_names = data.source_names
     eval_idx = _eval_indices(va, per_source=300_000, seed=cfg.train.seed)
+    # bf16 where the gpu supports it, fp16+scaler otherwise. mps/cpu: no autocast, not worth the bugs
     use_amp = cfg.train.amp and device.type == "cuda"
-    scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
+    amp_dtype = torch.bfloat16 if (use_amp and torch.cuda.is_bf16_supported()) else torch.float16
+    scaler = torch.amp.GradScaler("cuda", enabled=use_amp and amp_dtype == torch.float16)
     metrics_f = open(run_dir / "metrics.jsonl", "a")
-    step = 0
-    best = -float("inf")
+    step = start_epoch * steps_per_epoch
     bad_epochs = 0
     t_start = time.time()
 
-    for epoch in range(cfg.train.epochs):
+    for epoch in range(start_epoch, cfg.train.epochs):
         model.train()
         beta = cfg.train.beta * min(1.0, (epoch + 1) / max(1, cfg.train.beta_warmup_epochs))
         t0 = time.time()
@@ -165,7 +181,7 @@ def train(cfg: Config, prepared="default", run_dir: Path | None = None, name: st
                 src = torch.where(drop, torch.zeros_like(src), src)
             for g in opt.param_groups:
                 g["lr"] = lr_at(step)
-            with torch.autocast(device.type, dtype=torch.float16, enabled=use_amp):
+            with torch.autocast(device.type, dtype=amp_dtype, enabled=use_amp):
                 out = model(num, mask, cat, src)
                 nll_num, nll_cat = model.nll_terms(out, num, mask, cat)
                 nll = nll_num.sum(1) + nll_cat.sum(1)
@@ -175,9 +191,18 @@ def train(cfg: Config, prepared="default", run_dir: Path | None = None, name: st
                 kl = kl_dims.sum(1)
                 loss = (nll + beta * kl).mean()
             if not torch.isfinite(loss):
+                # a non-finite loss must never reach the weights: one poisoned step turns every
+                # parameter into NaN and the run quietly produces garbage until the eval crashes.
+                # skip the step, say which rows did it, give up after a streak
+                bad_rows = ~torch.isfinite(nll.detach() + kl.detach())
+                bad_src = src[bad_rows].unique().tolist() if bad_rows.any() else []
                 skipped += 1
-                log(f"non-finite loss at step {step}, step skipped")
+                if skipped <= 5 or skipped % 100 == 0:
+                    log(f"non-finite loss at step {step} (nll finite {torch.isfinite(nll).float().mean().item():.3f}, "
+                        f"kl finite {torch.isfinite(kl).float().mean().item():.3f}, offending sources {bad_src}); step skipped ({skipped} so far)")
                 opt.zero_grad(set_to_none=True)
+                if skipped >= 200:
+                    raise RuntimeError(f"{skipped} non-finite training steps; lower the learning rate or turn amp off")
                 continue
             opt.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
@@ -239,7 +264,12 @@ def train(cfg: Config, prepared="default", run_dir: Path | None = None, name: st
     if not (run_dir / "model.pt").exists():
         save_checkpoint(run_dir / "model.pt", model, meta, to_dict(cfg), extra={"epoch": cfg.train.epochs - 1, "best": best})
 
-    log("calibrating thresholds + latent map on val ...")
+    if cfg.boost.enabled:
+        log("fitting the supervised booster on the labelled train split ...")
+        write_status(run_dir, state="boosting")
+        from .model.booster import train_booster
+        train_booster(run_dir, prepared, cfg.boost, log=log, seed=cfg.train.seed)
+    log("calibrating thresholds + blender + latent map on val ...")
     write_status(run_dir, state="calibrating")
     from .calibrate import calibrate_run
     calibrate_run(run_dir, prepared=prepared, device=device, n_samples=cfg.train.score_samples, log=log)
@@ -262,6 +292,7 @@ def main(argv=None):
     ap.add_argument("--batch-size", type=int)
     ap.add_argument("--lr", type=float)
     ap.add_argument("--device", default=None)
+    ap.add_argument("--resume", default=None, help="checkpoint to continue from")
     args = ap.parse_args(argv)
     cfg = load_config(args.config)
     if args.epochs:
@@ -272,7 +303,7 @@ def main(argv=None):
         cfg.train.lr = args.lr
     if args.device:
         cfg.device = args.device
-    train(cfg, prepared=args.prepared, run_dir=args.run_dir, name=args.name)
+    train(cfg, prepared=args.prepared, run_dir=args.run_dir, name=args.name, resume=args.resume)
     return 0
 
 
