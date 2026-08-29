@@ -2,8 +2,11 @@
 
 Pass 1: per-source NLL baselines from a legit subsample (and a "generic" set
         scored with the source token zeroed).
-Pass 2: score the whole split once with those baselines, pick the VAE score
-        type (raw vs normalised) on mean per-source AUROC and derive operating
+Pass 2: on a labelled subsample, pick the VAE score type (raw vs normalised)
+        and fit the blender: a logistic regression on [booster logit, VAE
+        score z, KL z, source one-hot and the three interactions], inputs
+        clipped. That is the model's final p(fraud).
+Pass 3: score the whole split once (VAE, booster, blend) and derive operating
         thresholds, legit quantiles and the PCA latent map.
 
 Writes runs/<name>/calibration.json and latent_map.npz.
@@ -19,6 +22,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from .model.booster import Booster
 from .model.dataset import PreparedSet
 from .model.scoring import Scorer, auprc, auroc, score_split
 from .model.vae import load_checkpoint
@@ -28,6 +32,7 @@ FPR_TARGETS = (0.001, 0.005, 0.01, 0.02, 0.05)
 QS = [0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99, 0.995, 0.999, 0.9999]
 BASELINE_ROWS = 100_000      # legit rows per source for pass 1
 GENERIC_ROWS = 60_000        # legit rows per source in the generic passes
+FIT_ROWS = 100_000           # legit rows per source for fitting the blender (all fraud rows are used)
 
 
 def _thresholds(y, s):
@@ -75,6 +80,21 @@ def _dist_block(y, s, extra=None):
     return block
 
 
+def _fit_logistic(X, y, C=0.5):
+    """L2 logistic regression on standardised columns. the standardisation is folded back into the
+    weights, so inference stays one dot product on the raw features."""
+    from sklearn.linear_model import LogisticRegression
+
+    mean = X.mean(0)
+    std = np.maximum(X.std(0), 1e-3)
+    clf = LogisticRegression(C=C, class_weight="balanced", max_iter=2000, solver="lbfgs")
+    clf.fit((X - mean) / std, y)
+    coef = clf.coef_[0] / std
+    intercept = float(clf.intercept_[0] - (coef * mean).sum())
+    return {"coef": coef.round(6).tolist(), "intercept": intercept, "n_features": int(X.shape[1]), "C": C,
+            "class_weight": "balanced"}
+
+
 def _subsample(src, y, rng, per_source, with_fraud=True):
     keep = []
     for s in np.unique(src):
@@ -86,9 +106,14 @@ def _subsample(src, y, rng, per_source, with_fraud=True):
     return np.sort(np.concatenate(keep))
 
 
+def _sigmoid(x):
+    return 1.0 / (1.0 + np.exp(-np.clip(x, -30, 30)))
+
+
 def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, log=print, batch_size=16384):
     run_dir = Path(run_dir)
     model, ck = load_checkpoint(run_dir / "model.pt", device=device)
+    booster = Booster.load(run_dir)
     data = PreparedSet(prepared, splits=("val",))
     va = data["val"]
     names = data.source_names
@@ -96,6 +121,8 @@ def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, 
     rng = np.random.default_rng(0)
     n_feat = len(data.numeric_names) + len(data.categorical_names)
     t0 = time.time()
+    if booster is None:
+        log("  no booster.txt in this run: the blender will be fit on the VAE features alone")
 
     # ---- pass 1: baselines --------------------------------------------------------
     base_idx = _subsample(src, y, rng, BASELINE_ROWS, with_fraud=False)
@@ -111,22 +138,64 @@ def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, 
                      keep_mu=False)
     baselines["generic"] = Scorer.fit_baselines(np.concatenate([rg["nll_num"], rg["nll_cat"]], axis=1), rg["kl"])
     scorer = Scorer(baselines, n_feat)
+    n_src = scorer.n_sources
     log(f"  pass 1: baselines from {len(base_idx):,} legit rows ({time.time() - t0:.0f}s)")
     del r1, nll1, rg
 
-    # ---- pass 2: everything, once ---------------------------------------------------------------
-    r = score_split(model, va, batch_size=batch_size, n_samples=n_samples, device=device, keep_features=False,
-                    scorer=scorer, progress=lambda n: log(f"  calibrate: scored {n:,}/{len(va):,}"))
-    log(f"  pass 2: scored {len(va):,} val rows ({time.time() - t0:.0f}s)")
+    # ---- pass 2: score type + blender on a labelled subsample --------------------------------
+    fit_idx = _subsample(src, y, rng, FIT_ROWS, with_fraud=True)
+    rf = score_split(model, va, batch_size=batch_size, n_samples=n_samples, device=device, idx=fit_idx, scorer=scorer,
+                     booster=booster, keep_features=False, keep_mu=False)
+    yf, sf = y[fit_idx], src[fit_idx]
     cands = {}
     for kind in ("raw", "norm"):
-        aucs = [auroc(y[src == s], r[kind][src == s]) for s in np.unique(src)]
+        aucs = [auroc(yf[sf == s], rf[kind][sf == s]) for s in np.unique(sf)]
         aucs = [a for a in aucs if a == a]
         cands[kind] = float(np.mean(aucs)) if aucs else float("nan")
     score_type = "norm" if cands["norm"] >= cands["raw"] - 1e-9 else "raw"
-    log(f"  mean val auroc raw={cands['raw']:.4f} norm={cands['norm']:.4f} -> using '{score_type}'")
+    log(f"  pass 2: mean val auroc raw={cands['raw']:.4f} norm={cands['norm']:.4f} -> using '{score_type}'")
+    # legit mean/std of the chosen score per source idx, for the blender's "score z" column
+    score_mean = np.zeros(n_src + 1, dtype=np.float32)
+    score_std = np.ones(n_src + 1, dtype=np.float32)
+    for s in np.unique(sf):
+        m = (sf == s) & (yf == 0)
+        score_mean[s] = rf[score_type][m].mean()
+        score_std[s] = max(float(rf[score_type][m].std()), 1e-6)
+    gen_fit = np.sort(rng.choice(gen_idx, min(len(gen_idx), 200_000), replace=False))
+    rfg = score_split(model, va, batch_size=batch_size, n_samples=n_samples, device=device, idx=gen_fit, scorer=scorer,
+                      booster=booster, src_override=0, keep_features=False, keep_mu=False)
+    yg = y[gen_fit]
+    score_mean[0] = rfg[score_type][yg == 0].mean()
+    score_std[0] = max(float(rfg[score_type][yg == 0].std()), 1e-6)
+
+    X = scorer.blend_features(rf, sf, rf.get("booster"), score_type, score_mean, score_std)
+    Xg = scorer.blend_features(rfg, np.zeros(len(gen_fit), dtype=int), rfg.get("booster"), score_type, score_mean, score_std)
+    X_all = np.concatenate([X, Xg])
+    y_all = np.concatenate([yf, yg])
+    s_all = np.concatenate([sf, np.zeros(len(gen_fit), dtype=sf.dtype)])
+    fit_mask = (np.arange(len(X_all)) % 2) == 0
+    blend = _fit_logistic(X_all[fit_mask], y_all[fit_mask])
+    blend.update({"score_type": score_type, "score_mean": score_mean.round(6).tolist(), "score_std": score_std.round(6).tolist(),
+                  "features": "booster logit, VAE score z, KL z (each clipped), source one-hot, each of the three x "
+                              "one-hot",
+                  "feature_names": Scorer.blend_feature_names(n_src),
+                  "fit_rows": int(fit_mask.sum()), "holdout_rows": int((~fit_mask).sum()), "with_booster": booster is not None})
+    scorer.set_blend(blend)
+    p_hold = _sigmoid(X_all[~fit_mask] @ scorer.blend_coef + scorer.blend_intercept)
+    hold = {"auroc": auroc(y_all[~fit_mask], p_hold), "sources": {}}
+    for s_ in np.unique(s_all[~fit_mask]):
+        m = s_all[~fit_mask] == s_
+        hold["sources"][names.get(int(s_), "generic") if s_ else "generic"] = auroc(y_all[~fit_mask][m], p_hold[m])
+    blend["holdout"] = hold
+    log(f"  blender fit on {blend['fit_rows']:,} rows; held-out half auroc {hold['auroc']:.4f} ({time.time() - t0:.0f}s)")
+    del X, Xg, X_all, rf, rfg
+
+    # ---- pass 3: everything, once ---------------------------------------------------------------
+    r = score_split(model, va, batch_size=batch_size, n_samples=n_samples, device=device, keep_features=False,
+                    scorer=scorer, booster=booster, progress=lambda n: log(f"  calibrate: scored {n:,}/{len(va):,}"))
+    log(f"  pass 3: scored {len(va):,} val rows ({time.time() - t0:.0f}s)")
     rgen = score_split(model, va, batch_size=batch_size, n_samples=n_samples, device=device, idx=gen_idx,
-                       keep_features=False, scorer=scorer, src_override=0, keep_mu=False)
+                       keep_features=False, scorer=scorer, booster=booster, src_override=0, keep_mu=False)
     gy = y[gen_idx]
     score = r[score_type]
 
@@ -136,7 +205,8 @@ def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, 
         "features": {"numeric": data.numeric_names, "categorical": data.categorical_names},
         "score_type": score_type, "score_type_candidates": cands,
         "baselines": baselines, "fpr_targets": list(FPR_TARGETS),
-        "sources": {},
+        "sources": {}, "booster": {"sources": {}} if booster is not None else None,
+        "blend": {**blend, "sources": {}},
     }
     std_score = np.zeros_like(score)
     for s in np.unique(src):
@@ -149,16 +219,31 @@ def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, 
         })
         std_score[m] = (score[m] - block["legit_mean"]) / block["legit_std"]
         cal["sources"][name] = block
-        log(f"  {name}: vae {block['auroc']:.4f} (raw {block['auroc_raw']:.4f} / norm {block['auroc_norm']:.4f}) recall@1%fpr "
-            f"{block['thresholds']['fpr_0.01']['recall']:.3f}")
+        if booster is not None:
+            cal["booster"]["sources"][name] = _dist_block(y[m], _sigmoid(r["booster"][m]))
+        cal["blend"]["sources"][name] = _dist_block(y[m], r["blend"][m])
+        log(f"  {name}: vae {block['auroc']:.4f} (raw {block['auroc_raw']:.4f} / norm {block['auroc_norm']:.4f})"
+            + (f" | booster {cal['booster']['sources'][name]['auroc']:.4f}" if booster is not None else "")
+            + f" | blend {cal['blend']['sources'][name]['auroc']:.4f} recall@1%fpr "
+            f"{cal['blend']['sources'][name]['thresholds']['fpr_0.01']['recall']:.3f}")
 
     note = "scored with the source token set to generic (0); legit rows subsampled per source"
     cal["generic"] = _dist_block(gy, rgen[score_type], extra={
         "auroc_raw": auroc(gy, rgen["raw"]), "auroc_norm": auroc(gy, rgen["norm"]), "note": note})
-    log(f"  generic context: vae {cal['generic']['auroc']:.4f} on {len(gen_idx):,} rows")
+    if booster is not None:
+        cal["booster"]["generic"] = _dist_block(gy, _sigmoid(rgen["booster"]), extra={"note": note})
+    cal["blend"]["generic"] = _dist_block(gy, rgen["blend"], extra={"note": note})
+    log(f"  generic context: vae {cal['generic']['auroc']:.4f}"
+        + (f" | booster {cal['booster']['generic']['auroc']:.4f}" if booster is not None else "")
+        + f" | blend {cal['blend']['generic']['auroc']:.4f} on {len(gen_idx):,} rows")
     cal["pooled"] = {"auroc": auroc(y, std_score), "auprc": auprc(y, std_score),
-                     "note": "all sources together on per-source standardised scores"}
-    cal["mean_val_auroc"] = float(np.mean([b["auroc"] for b in cal["sources"].values()]))
+                     "blend_auroc": auroc(y, r["blend"]), "blend_auprc": auprc(y, r["blend"]),
+                     "note": "all sources together: VAE on per-source standardised scores, blend on p(fraud)"}
+    cal["mean_val_auroc"] = {
+        "vae": float(np.mean([b["auroc"] for b in cal["sources"].values()])),
+        "booster": float(np.mean([b["auroc"] for b in cal["booster"]["sources"].values()])) if booster is not None else None,
+        "blend": float(np.mean([b["auroc"] for b in cal["blend"]["sources"].values()])),
+    }
 
     # ---- latent map ------------------------------------------------------------------------------
     legit_idx = np.flatnonzero(y == 0)
@@ -178,7 +263,8 @@ def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, 
     keep = np.concatenate(keep)
     xy = (mu_all[keep] - center) @ comps.T
     np.savez_compressed(run_dir / "latent_map.npz", xy=xy.astype(np.float32), y=y[keep].astype(np.int8),
-                        src=src[keep].astype(np.int8), score=std_score[keep].astype(np.float32))
+                        src=src[keep].astype(np.int8), score=std_score[keep].astype(np.float32),
+                        blend=r["blend"][keep].astype(np.float32))
 
     (run_dir / "calibration.json").write_text(json.dumps(cal, indent=1))
     log(f"  calibration written ({len(keep):,} latent points, pca explains {sum(explained):.0%}, {time.time() - t0:.0f}s total)")
