@@ -68,10 +68,9 @@
           <div id="receipt" class="receipt empty">
             <div class="receipt-empty">
               <p>No transaction scored yet.</p>
-              <p class="dim">Fill in what you know and press <b>Score transaction</b>.</p>
+              <p class="dim">Fill in what you know and press <b>Score transaction</b>. Fields you leave blank are treated as unobserved, not as zero.</p>
             </div>
           </div>
-          <p class="receipt-legend dim">Bars: each field's share of the reconstruction error.</p>
           <div class="latent-card">
             <div class="card-head"><h3>Where it lands in latent space</h3><span class="dim" id="latent-note">validation sample, PCA of the posterior means</span></div>
             <div class="chart-wrap" style="height:300px"><canvas id="latent-chart"></canvas></div>
@@ -192,6 +191,7 @@
             <label class="inline-field">prepared <input id="launch-prepared" value="full" size="8"></label>
             <label class="inline-field">epochs <input id="launch-epochs" type="number" placeholder="cfg" size="4"></label>
             <label class="inline-field">run name <input id="launch-name" placeholder="auto" size="16"></label>
+            <label class="inline-field" title="post = keep the VAE of an existing remote run, redo only the booster, calibration and evaluation (needs the run name)">stage <select id="launch-stage"><option value="train">train everything</option><option value="post">post only: booster + calibration + eval</option></select></label>
             <button class="btn primary" id="btn-launch">Launch</button>
           </div>
           <div class="step">
