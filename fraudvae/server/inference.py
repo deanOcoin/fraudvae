@@ -22,7 +22,7 @@ import torch
 
 from ..data import schema
 from ..data.prepare import DERIVED_CATS, transform_numeric
-from ..model.booster import Booster, Specialists
+from ..model.booster import Booster, BoosterUnavailable, Specialists
 from ..model.scoring import Scorer, score_batch
 from ..graph.build import KINDS as ENTITY_KINDS
 from ..graph.scorer import GraphScorer
@@ -88,10 +88,19 @@ class ActiveModel:
                                   f"this code is v{schema.SCHEMA_VERSION}; retrain (or check out the matching version)")
         n_feat = len(self.numeric) + len(self.categorical)
         self.scorer = Scorer(self.cal["baselines"], n_feat, blend=self.cal.get("blend")) if self.cal and "baselines" in self.cal else None
-        self.booster = Booster.load(self.run_dir) if (self.run_dir / "booster.txt").exists() else None
-        self.has_blend = bool(self.scorer and self.scorer.blend)
+        try:
+            self.booster = Booster.load(self.run_dir)
+            self.booster_error = None
+        except BoosterUnavailable as e:
+            # serve the novelty half rather than nothing; the ui says why the booster is missing
+            self.booster, self.booster_error = None, str(e)
+        # the blend needs the booster's logit, so without it the verdict falls back to novelty
+        self.has_blend = bool(self.scorer and self.scorer.blend and self.booster is not None)
         # v5: the per-source specialists ("local" signal), None for a run without any
-        self.specialists = Specialists.load(self.run_dir) if self.booster is not None else None
+        try:
+            self.specialists = Specialists.load(self.run_dir) if self.booster is not None else None
+        except BoosterUnavailable:
+            self.specialists = None
         # v5: the field heads (device ...), each a blend signal with a receipt block of its own
         self.heads = load_heads(self.run_dir, device=self.device)
         self.head_info = {}
@@ -245,7 +254,7 @@ class ActiveModel:
             num_np, mask_np, cat_np = num.cpu().numpy(), mask.cpu().numpy(), cat.cpu().numpy()
             # v5: the source's raw columns, if the caller has them ({'V1': 3.0} keyed by the raw name)
             wide_np = self.booster.wide_vector({f"{ctx}.{k}": v for k, v in (wide or {}).items()}) if self.booster.wide_names else None
-            b_logit = self.booster.logit(num_np, mask_np, cat_np, np.array([src_idx]), wide=wide_np)
+            b_logit = self.booster.logit(num_np, mask_np, cat_np, np.array([src_idx]), threads=1, wide=wide_np)
             p_sup = float(1.0 / (1.0 + math.exp(-max(min(float(b_logit[0]), 30), -30))))
             sup = {"prob": p_sup, "logit": float(b_logit[0])}
             bcal, bkind = self._calibration_for(ctx, name="booster")
@@ -258,7 +267,7 @@ class ActiveModel:
             out["supervised"] = sup
             # v5: this bank's own specialist, when it has one
             if self.specialists is not None:
-                r["local"] = self.specialists.logit(num_np, mask_np, cat_np, np.array([src_idx]), wide=wide_np)
+                r["local"] = self.specialists.logit(num_np, mask_np, cat_np, np.array([src_idx]), wide=wide_np, threads=1)
                 lb = {"present": bool(np.isfinite(r["local"][0])), "label": "Bank specialist", "fields": []}
                 if lb["present"]:
                     lg = float(r["local"][0])
@@ -311,10 +320,12 @@ class ActiveModel:
             out["blend"] = bl
             # flat copies of the headline so simple clients / the batch csv don't need to dig
             out.update({"p_fraud": p, "flag": bl.get("flag"), "legit_percentile": bl.get("legit_percentile"),
-                        "z_score": bl.get("z_score"), "calibration": blkind, "operating_point": bl.get("operating_point")})
+                        "z_score": bl.get("z_score"), "calibration": blkind, "operating_point": bl.get("operating_point"),
+                        "verdict_from": "blend"})
         else:
             out.update({"p_fraud": None, "flag": nov.get("flag"), "legit_percentile": nov.get("legit_percentile"),
-                        "z_score": nov.get("z_score"), "calibration": kind, "operating_point": nov.get("operating_point")})
+                        "z_score": nov.get("z_score"), "calibration": kind, "operating_point": nov.get("operating_point"),
+                        "verdict_from": "novelty"})
         # legacy flat fields the batch endpoint and tests still read
         out.update({"score": vae_score, "score_type": self.score_type, "score_raw": raw, "score_norm": norm, "kl": kl,
                     "thresholds": nov.get("thresholds")})

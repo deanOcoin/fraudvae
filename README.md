@@ -37,7 +37,7 @@ fraudvae fetch                 # clones the github hosted sources (fdh, capone, 
 #   kaggle ones: see scripts/kaggle_manual_download.md, drop the zips in data/raw/<key>/
 fraudvae build                 # raw -> data/processed/<source>.parquet  (unified schema)
 fraudvae prepare --max-rows-per-source 1500000     # parquet -> model arrays, train capped per source
-fraudvae train --config cpu_small                   # VAE + booster + calibration + eval
+fraudvae train --config cpu_small                   # VAE + booster + calibration + eval, ~1h on a laptop cpu
 fraudvae serve                 # http://127.0.0.1:8765
 ```
 
@@ -46,6 +46,13 @@ fraudvae serve                 # http://127.0.0.1:8765
 
 Python 3.10+, PyTorch 2.1+, LightGBM 4+. CPU is fine for the capped set, MPS
 works on Apple silicon, CUDA for the full corpus.
+
+**macOS:** LightGBM needs `brew install libomp`, and then `make fix-omp` once
+per virtualenv. The PyTorch wheel carries its own copy of the OpenMP runtime
+and LightGBM links the homebrew one; two copies in one process segfault it the
+first time the booster runs. The script points torch at the homebrew copy
+(reversible with `scripts/macos_openmp.sh --undo`). If you skip it the app
+still starts, novelty-only, and the sidebar tells you why.
 
 ## What's in the corpus
 
@@ -88,7 +95,8 @@ unobserved) plus the source token, trained on the labelled train split with
 legit rows subsampled per source and re-weighted (capped, so no bank outweighs
 the others), early-stopped on validation AUC, with a 25% source-blanked slice
 for a generic mode. It never sees a VAE output, which keeps the stacking
-honest.
+honest. If LightGBM can't be loaded the run is saved novelty-only and the app
+scores with the VAE alone.
 
 **Blend.** One logistic regression on bounded signals - booster logit,
 VAE score z, KL z - with a source one-hot and the signals × one-hot, fit on
@@ -130,7 +138,7 @@ the customer's ordinary traffic.
 ## Remote training
 
 The full corpus is ~29M legitimate rows per epoch; a laptop does it in days,
-a rented GPU in a few hours. The *Compute* tab benchmarks the real model on your machine,
+an RTX 4090 in a few minutes per epoch. The *Compute* tab benchmarks the real model on your machine,
 estimates the run, and if it's too long walks through renting a box:
 
 1. the app generates its own ed25519 key (`~/.fraudvae/ssh/`); add the public
@@ -153,12 +161,13 @@ in one command), `scripts/bootstrap_remote.sh`. See `docs/REMOTE_TRAINING.md`.
 fraudvae/
   data/        registry (sources, licenses), schema, taxonomy, velocity features,
                adapters/<source>.py, fetch / build / prepare, docs generator
-  model/       vae.py, scoring.py, booster.py, dataset.py
+  model/       vae.py, scoring.py, booster.py (lazy lightgbm import), dataset.py
   train.py  calibrate.py  evaluate.py  config.py
   remote/      keys, ssh (paramiko), provision, jobs, advisor
-  server/      fastapi app + api modules, inference
+  server/      fastapi app + api modules, inference (active model, novelty-only fallback)
   web/         the ui: index.html, css/, js/, explain.html, vendored libs
 configs/       base, cpu_small, gpu_full, smoke
+scripts/       macos_openmp.sh, bootstrap_remote.sh, kaggle_manual_download.md
 tests/         pytest, no real data needed
 docs/
 ```
