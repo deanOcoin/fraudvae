@@ -83,8 +83,23 @@ def _plan(sources, max_rows_per_source, seed):
     return plan, counts
 
 
-def prepare(name="default", sources=None, max_rows_per_source=None, seed=1337, out_root=PREPARED_DIR):
+def _stats_from_run(run) -> dict:
+    """{feature name: (mean, std)} from a trained run's checkpoint, so a set prepared here is
+    standardised exactly like the one that run was trained on (calibrating / evaluating a
+    gpu-trained model on a laptop-sized set, say)"""
+    import torch
+
+    from ..paths import RUNS_DIR
+
+    p = Path(run) if Path(run).exists() else RUNS_DIR / run
+    p = p / "model.pt" if p.is_dir() else p
+    ck = torch.load(p, map_location="cpu", weights_only=False)
+    return {f["name"]: (float(f["mean"]), float(f["std"])) for f in ck["prepared_meta"]["numeric"]}
+
+
+def prepare(name="default", sources=None, max_rows_per_source=None, seed=1337, out_root=PREPARED_DIR, stats_from_run=None):
     t0 = time.time()
+    fixed_stats = _stats_from_run(stats_from_run) if stats_from_run else None
     sources = sources or _available_sources()
     if not sources:
         raise SystemExit("nothing in data/processed, run build first")
@@ -165,6 +180,9 @@ def prepare(name="default", sources=None, max_rows_per_source=None, seed=1337, o
     mean = np.zeros(D, dtype=np.float64)
     std = np.ones(D, dtype=np.float64)
     for j in range(D):
+        if fixed_stats is not None:
+            mean[j], std[j] = fixed_stats.get(num_names[j], (0.0, 1.0))
+            continue
         m = (tr["mask"][:, j] == 1) & legit
         if m.sum() > 1:
             v = tr["num"][:, j][m].astype(np.float64)
@@ -188,6 +206,7 @@ def prepare(name="default", sources=None, max_rows_per_source=None, seed=1337, o
         "sources": sources,
         "source_index": {k: schema.SOURCE_INDEX[k] for k in sources},
         "max_rows_per_source": max_rows_per_source,
+        "stats_from_run": str(stats_from_run) if stats_from_run else None,
         "seed": seed,
         "counts": {s: int(counts[s]) for s in SPLITS},
         "fraud_counts": {s: int(arrays[s]["y"][:].sum()) for s in SPLITS},
@@ -208,9 +227,11 @@ def main(argv=None):
     ap.add_argument("--max-rows-per-source", type=int, default=None,
                     help="cap TRAIN rows per source (legit subsampled, fraud kept). val/test are never capped")
     ap.add_argument("--seed", type=int, default=1337)
+    ap.add_argument("--stats-from-run", default=None,
+                    help="standardise with the mean/std a trained run used, so its model can be calibrated / evaluated on this set")
     args = ap.parse_args(argv)
     ensure_dirs()
-    prepare(args.name, args.source, args.max_rows_per_source, args.seed)
+    prepare(args.name, args.source, args.max_rows_per_source, args.seed, stats_from_run=args.stats_from_run)
     return 0
 
 

@@ -1,6 +1,7 @@
 """Train the VAE on legitimate transactions.
 
     python -m fraudvae.train --config configs/cpu_small.yaml
+    python -m fraudvae.train --config gpu_full --prepared full --name full-a100
 
 Writes runs/<name>/{run.json, metrics.jsonl, status.json, train.log, model.pt,
 calibration.json, eval.json, latent_map.npz}
@@ -8,6 +9,7 @@ calibration.json, eval.json, latent_map.npz}
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import math
 import os
@@ -28,14 +30,28 @@ from .model.vae import build_model, save_checkpoint
 from .paths import RUNS_DIR, ensure_dirs
 
 
-def pick_device(name="auto"):
-    if name != "auto":
-        return torch.device(name)
+def _best_device():
     if torch.cuda.is_available():
         return torch.device("cuda")
     if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
         return torch.device("mps")
     return torch.device("cpu")
+
+
+def pick_device(name="auto"):
+    """the config's device, unless this machine doesn't have it: a gpu config re-run on a
+    laptop (`fraudvae post --config gpu_full`) should fall back, not die in torch.load"""
+    if name == "auto":
+        return _best_device()
+    want = torch.device(name)
+    have = ((want.type == "cuda" and torch.cuda.is_available())
+            or (want.type == "mps" and getattr(torch.backends, "mps", None) and torch.backends.mps.is_available())
+            or want.type == "cpu")
+    if have:
+        return want
+    fallback = _best_device()
+    print(f"device '{name}' is not available here, using {fallback}")
+    return fallback
 
 
 class Logger:
@@ -154,7 +170,7 @@ def train(cfg: Config, prepared="default", run_dir: Path | None = None, name: st
         "schema_version": meta.get("schema_version"), "fraudvae": __version__,
     }
     (run_dir / "run.json").write_text(json.dumps(run_info, indent=1))
-    write_status(run_dir, state="running", epoch=start_epoch, epochs=cfg.train.epochs)
+    write_status(run_dir, state="running", epoch=start_epoch, epochs=cfg.train.epochs, pid=os.getpid())
 
     source_names = data.source_names
     eval_idx = _eval_indices(va, per_source=300_000, seed=cfg.train.seed)
@@ -207,10 +223,23 @@ def train(cfg: Config, prepared="default", run_dir: Path | None = None, name: st
             opt.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
             scaler.unscale_(opt)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.train.grad_clip)
+            gnorm = torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.train.grad_clip)
+            if not torch.isfinite(gnorm):
+                skipped += 1
+                if skipped <= 5 or skipped % 100 == 0:
+                    bad = [n_ for n_, p_ in model.named_parameters() if p_.grad is not None and not torch.isfinite(p_.grad).all()]
+                    log(f"non-finite gradient at step {step} (loss {loss.item():.3f}, {len(bad)} tensors, e.g. {bad[:4]}); "
+                        f"step skipped ({skipped} so far)")
+                opt.zero_grad(set_to_none=True)
+                if skipped >= 200:
+                    raise RuntimeError(f"{skipped} non-finite training steps; lower the learning rate or turn amp off")
+                continue
             scaler.step(opt)
             scaler.update()
             step += 1
+            if cfg.train.max_steps and step >= cfg.train.max_steps:
+                log(f"max_steps {cfg.train.max_steps} reached, stopping the epoch early ({skipped} skipped steps)")
+                break
             n = num.shape[0]
             seen += n
             sums["loss"] += loss.item() * n
@@ -264,11 +293,33 @@ def train(cfg: Config, prepared="default", run_dir: Path | None = None, name: st
     if not (run_dir / "model.pt").exists():
         save_checkpoint(run_dir / "model.pt", model, meta, to_dict(cfg), extra={"epoch": cfg.train.epochs - 1, "best": best})
 
+    # the training arrays can be a few GB in RAM; the stages below open what they need themselves
+    del tr, va, data, legit_idx, eval_idx, opt, model
+    gc.collect()
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+
+    post_train(run_dir, cfg, prepared=prepared, device=device, log=log, t_start=t_start, best=best)
+    log(f"done. total {(time.time() - t_start) / 60:.1f} min")
+    return run_dir
+
+
+def post_train(run_dir: Path, cfg: Config, prepared="default", device=None, log=print, t_start=None, best=None):
+    """everything after the VAE: booster, calibration (blender + thresholds), test evaluation.
+    also `fraudvae post RUN`, for re-doing those with a different booster config without
+    retraining the VAE (the booster is the cheap half)."""
+    run_dir = Path(run_dir)
+    device = device or pick_device(cfg.device)
+    t_start = t_start or time.time()
     if cfg.boost.enabled:
         log("fitting the supervised booster on the labelled train split ...")
         write_status(run_dir, state="boosting")
-        from .model.booster import train_booster
+        from .model.booster import train_booster, train_specialists
         train_booster(run_dir, prepared, cfg.boost, log=log, seed=cfg.train.seed)
+        if cfg.boost.specialists:
+            log("fitting the per-source specialist boosters ...")
+            write_status(run_dir, state="specialists")
+            train_specialists(run_dir, prepared, cfg.boost, log=log, seed=cfg.train.seed, min_fraud=cfg.boost.specialist_min_fraud)
     log("calibrating thresholds + blender + latent map on val ...")
     write_status(run_dir, state="calibrating")
     from .calibrate import calibrate_run
@@ -277,9 +328,41 @@ def train(cfg: Config, prepared="default", run_dir: Path | None = None, name: st
     write_status(run_dir, state="evaluating")
     from .evaluate import evaluate_run
     evaluate_run(run_dir, prepared=prepared, device=device, n_samples=cfg.train.score_samples, log=log)
-    write_status(run_dir, state="finished", elapsed=time.time() - t_start, best=best)
-    log(f"done. total {(time.time() - t_start) / 60:.1f} min")
-    return run_dir
+    kw = {"best": best} if best is not None else {}
+    write_status(run_dir, state="finished", elapsed=time.time() - t_start, **kw)
+
+
+def post_main(argv=None):
+    """fraudvae post RUN [--config NAME] [--prepared SET] [--device cuda]"""
+    ap = argparse.ArgumentParser(prog="fraudvae post", description=post_train.__doc__)
+    ap.add_argument("run")
+    ap.add_argument("--config", default=None, help="config to take the booster / scoring settings from (default: the run's own)")
+    ap.add_argument("--prepared", default=None)
+    ap.add_argument("--device", default=None)
+    ap.add_argument("--samples", type=int, default=None, help="posterior samples for scoring (default: the config's)")
+    args = ap.parse_args(argv)
+    run_dir = Path(args.run) if Path(args.run).exists() else RUNS_DIR / args.run
+    run = json.loads((run_dir / "run.json").read_text())
+    if args.config:
+        cfg = load_config(args.config)
+    else:
+        from . import config as _c
+
+        cfg = _c.Config()
+        _c._merge(cfg, run.get("config", {}))
+    if args.device:
+        cfg.device = args.device
+    if args.samples:
+        cfg.train.score_samples = args.samples
+    prepared = args.prepared or run.get("prepared", "default")
+    log = Logger(run_dir)
+    log(f"post-training pass for {run_dir.name}: booster config '{cfg.name}', prepared set '{prepared}'")
+    t0 = time.time()
+    # our pid replaces the (long gone) trainer's, so a remote status check sees this process
+    write_status(run_dir, state="post", pid=os.getpid(), stage="post")
+    post_train(run_dir, cfg, prepared=prepared, log=log, t_start=t0)
+    log(f"post-training pass done in {(time.time() - t0) / 60:.1f} min")
+    return 0
 
 
 def main(argv=None):

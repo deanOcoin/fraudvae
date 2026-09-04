@@ -5,12 +5,13 @@
   fraudvae prepare          parquet -> model arrays
   fraudvae train            train the VAE (+ booster, calibration, evaluation)
   fraudvae boost RUN        (re)train the supervised booster for a run
+  fraudvae post RUN         booster + calibration + evaluation for an existing run (new --config ok)
   fraudvae calibrate RUN    (re)compute thresholds for a run
   fraudvae evaluate RUN     test metrics for a run
   fraudvae serve            web ui
   fraudvae key              print the app's ssh public key
   fraudvae advise           local vs remote compute recommendation
-  fraudvae remote ...       probe / provision / launch / status / fetch on a gpu box over ssh
+  fraudvae remote ...       probe / provision / launch / status / fetch / run on a gpu box over ssh
 """
 from __future__ import annotations
 
@@ -50,18 +51,20 @@ def _advise(argv):
 
     ap = argparse.ArgumentParser(prog="fraudvae advise")
     ap.add_argument("--config", default="gpu_full")
+    ap.add_argument("--prepared", default="default")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
-    rec = advise(a.config)
+    rec = advise(a.config, a.prepared)
     if a.json:
         print(json.dumps(rec, indent=1))
         return
     loc = rec["local"]
     print(f"train rows: {rec['train_rows']:,}  epochs: {rec['epochs']}")
-    print(f"local ({loc['device']}): {loc['rows_per_sec']:,.0f} rows/s -> ~{loc['est_hours']:.1f} h")
+    print(f"local ({loc['device']}, {loc['device_name']}): {loc['rows_per_sec']:,.0f} rows/s -> ~{loc['est_hours']:.1f} h")
     print("recommendation:", "RENT A GPU" if rec["recommend_remote"] else "train locally")
     for t in rec["gpu_tiers"]:
         print(f"  {t['name']:<32} ~{t['est_hours']:.2f} h  ~${t['est_cost_usd']:.2f}")
+    print("requirements:", json.dumps(rec["requirements"], indent=1))
 
 
 COMMANDS = {
@@ -70,6 +73,7 @@ COMMANDS = {
     "prepare": lambda argv: __import__("fraudvae.data.prepare", fromlist=["main"]).main(argv),
     "train": lambda argv: __import__("fraudvae.train", fromlist=["main"]).main(argv),
     "boost": lambda argv: __import__("fraudvae.model.booster", fromlist=["main"]).main(argv),
+    "post": lambda argv: __import__("fraudvae.train", fromlist=["post_main"]).post_main(argv),
     "calibrate": lambda argv: __import__("fraudvae.calibrate", fromlist=["main"]).main(argv),
     "evaluate": lambda argv: __import__("fraudvae.evaluate", fromlist=["main"]).main(argv),
     "serve": _serve,
