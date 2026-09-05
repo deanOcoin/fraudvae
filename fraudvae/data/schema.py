@@ -1,21 +1,26 @@
 """The unified transaction schema every source gets mapped onto.
 
-Three kinds of columns:
-  meta      - identifiers / label / split, never fed to the model
+Four kinds of columns:
+  meta      - identifiers / label / split / entity keys, never fed to the model
   numeric   - float32, NaN == not observed for this source (mask bit = 0)
   categorical - small ints, 0 == unknown/not observed
+  wide      - (v5) a source's own raw columns, kept next to the unified ones for
+              the booster. Named "wide__<col>" by the adapter, written to a
+              separate parquet by build, NaN for every other source.
 
 Anything a source can't fill is left NaN / 0 and the model's likelihood is
 masked on it. See docs/SCHEMA.md for the per-source coverage table.
 
-v4 adds a short burst window, the customer's own scale, the merchant side and
-first-time-seen flags to the history block, all computed causally at build.
+v5 adds entity keys (customer, counterparty, device, email, address, card) so
+the sequence index and the entity-graph features can be built from the
+processed parquet, and a "graph" block of causal entity features with a label
+delay.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SOURCES = ["fdh", "capone", "tabformer", "ulb", "paysim", "sparkov", "banksim", "ieee", "amlworld"]
 # index 0 is reserved for "generic" (unknown bank/domain) at inference time
@@ -47,7 +52,17 @@ META_COLUMNS = {
     "is_fraud": "int8",
     "split": "category",     # train / val / test (time ordered within a source)
     "fraud_scenario": "int8",  # fdh and amlworld fill this
+    # v5 entity keys: dense codes per source, -1 = the source has no such thing.
+    # never model inputs themselves; they drive the sequence index and the graph block
+    "customer": "int64",
+    "counterparty": "int64",  # merchant / terminal / receiving account
+    "device": "int64",
+    "email": "int64",
+    "address": "int64",
+    "card": "int64",
 }
+ENTITY_COLUMNS = ("customer", "counterparty", "device", "email", "address", "card")
+WIDE_PREFIX = "wide__"
 
 NUMERIC: list[NumericFeature] = [
     NumericFeature("amount", "log1p", "core", "Amount", "source currency"),
@@ -91,7 +106,28 @@ NUMERIC: list[NumericFeature] = [
     NumericFeature("ieee_c13", "log1p", "ext", "IEEE C13 count"),
     NumericFeature("ieee_c14", "log1p", "ext", "IEEE C14 count"),
     NumericFeature("ieee_d15", "signed_log1p", "ext", "IEEE D15 timedelta"),
+] + [
+    # v5 graph block: what the entities this row touches have been up to, causally.
+    # "_delayed" counts only labels older than ENTITY_LABEL_DELAY days, which is what
+    # a bank actually knows at scoring time (confirmed fraud takes weeks to come back).
+    # everything is windowed or capped: lifetime counts and ages grow with the calendar
+    # and the booster learned the era from them (see entities.py)
+    NumericFeature(f"{k}_{what}", tr, "graph", f"{lab} {desc}", unit)
+    for k, lab in (("cpty", "Counterparty"), ("device", "Device"), ("email", "Email"), ("addr", "Address"), ("card", "Card"))
+    for what, tr, desc, unit in (("txn_count_30d", "log1p", "txns, last 30d", ""),
+                                 ("new_cust_30d", "log1p", "new customers, last 30d", ""),
+                                 ("age_days", "log1p", "age (capped at a year)", "days"),
+                                 ("fraud_count_delayed", "log1p", "confirmed fraud before (delayed)", ""),
+                                 ("fraud_share_delayed", "none", "fraud share before (delayed)", ""))
+] + [
+    NumericFeature("cust_new_cpty_30d", "log1p", "graph", "Customer's new counterparties, last 30d"),
+    NumericFeature("cust_new_device_30d", "log1p", "graph", "Customer's new devices, last 30d"),
+    NumericFeature("cust_fraud_count_delayed", "log1p", "graph", "Customer's confirmed fraud before (delayed)"),
+    NumericFeature("cust_fraud_share_delayed", "none", "graph", "Customer's fraud share before (delayed)"),
 ] + [NumericFeature(f"ulb_v{i}", "none", "ulb_pca", f"ULB V{i}") for i in range(1, 29)]
+
+ENTITY_LABEL_DELAY_DAYS = 30        # the schema's delayed-label features: a chargeback-speed lag
+ENTITY_LABEL_DELAY_FAST_DAYS = 7    # the booster-only wide__*_fast block: the handbook's one-week lag
 
 CATEGORICAL: list[CategoricalFeature] = [
     CategoricalFeature("channel", ("unknown", "card_present", "card_not_present", "online", "mobile_money"), "core", "Channel"),
@@ -144,6 +180,8 @@ def empty_frame(n: int):
             d[c] = np.full(n, np.nan)
         elif dt == "int8":
             d[c] = np.zeros(n, dtype=np.int8)
+        elif dt == "int64":
+            d[c] = np.full(n, -1, dtype=np.int64)
         else:
             # same None object n times, cheap even for millions of rows
             d[c] = pd.Series(np.full(n, None, dtype=object))
@@ -182,13 +220,32 @@ def finalize(df, source: str):
     df["fraud_scenario"] = df["fraud_scenario"].fillna(0).astype(np.int8)
     df["txn_id"] = df["txn_id"].astype("string[pyarrow]")
     df["ts"] = df["ts"].astype("float64")
+    for c in ENTITY_COLUMNS:
+        if c not in df:
+            df[c] = np.int64(-1)
+        else:
+            df[c] = pd.Series(df[c]).fillna(-1).astype(np.int64)
     # hour/dow range check, these get turned into sin/cos later
     for c, hi in (("hour", 24), ("dow", 7)):
         v = df[c]
         bad = v.notna() & ((v < 0) | (v >= hi))
         if bad.any():
             raise ValueError(f"{source}: {c} out of range in {int(bad.sum())} rows")
-    return df[ALL_COLUMNS].reset_index(drop=True)
+    wide = [c for c in df.columns if c.startswith(WIDE_PREFIX)]
+    attrs = dict(df.attrs)
+    df = df[ALL_COLUMNS + wide].reset_index(drop=True)
+    df.attrs.update(attrs)   # the wide column descriptions ride along to build
+    return df
+
+
+def entity_codes(values):
+    """anything per row -> dense int64 codes, -1 where missing. the adapters' one way of
+    turning ids (strings, ints, floats with NaN) into entity keys"""
+    import numpy as np
+    import pandas as pd
+
+    codes = pd.Series(values).astype("category").cat.codes.to_numpy()
+    return codes.astype(np.int64)
 
 
 SPLIT_NAMES = ("train", "val", "test")

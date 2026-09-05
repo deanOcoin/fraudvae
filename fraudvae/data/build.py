@@ -32,13 +32,14 @@ from .registry import ORDER, SOURCES
 
 STATS = PROCESSED_DIR / "stats.json"
 SAMPLES = PROCESSED_DIR / "samples.parquet"
-LIGHT_COLS = ["ts", "is_fraud", "split", "amount", "hour", "merchant_category", "channel", "txn_type"]
+LIGHT_COLS = ["ts", "is_fraud", "split", "amount", "hour", "merchant_category", "channel", "txn_type", "fraud_scenario"]
 
 
 def _arrow_schema():
     fields = []
     for c, dt in schema.META_COLUMNS.items():
-        t = {"category": pa.dictionary(pa.int8(), pa.string()), "float64": pa.float64(), "int8": pa.int8()}[dt]
+        t = {"category": pa.dictionary(pa.int8(), pa.string()), "string": pa.string(), "float64": pa.float64(),
+             "int8": pa.int8(), "int64": pa.int64()}[dt]
         fields.append(pa.field(c, t))
     for f in schema.NUMERIC:
         fields.append(pa.field(f.name, pa.float32()))
@@ -145,6 +146,7 @@ def summarize(path: Path, key: str, seconds: float) -> dict:
                    for s in ("train", "val", "test")},
         "ts_min": float(np.nanmin(df["ts"])) if df["ts"].notna().any() else None,
         "ts_max": float(np.nanmax(df["ts"])) if df["ts"].notna().any() else None,
+        "absolute_time": bool(df["ts"].dropna().gt(1e9).all()) if df["ts"].notna().any() else False,
         "coverage": _coverage(path),
         "amount": {
             "legit_quantiles": {q: float(legit["amount"].quantile(q)) for q in (0.01, 0.1, 0.5, 0.9, 0.99)},
@@ -161,6 +163,8 @@ def summarize(path: Path, key: str, seconds: float) -> dict:
         out["by_channel"] = _rate_by(df, "channel", schema.CAT_VOCAB["channel"])
     if (df["txn_type"] != 0).any():
         out["by_txn_type"] = _rate_by(df, "txn_type", schema.CAT_VOCAB["txn_type"])
+    if (df["fraud_scenario"] != 0).any():
+        out["by_scenario"] = {int(k): int(v) for k, v in df["fraud_scenario"].value_counts().items()}
     return out
 
 
@@ -168,10 +172,14 @@ def sample_rows(path: Path, n_legit=150, n_fraud=150, seed=0) -> pd.DataFrame:
     """a few hundred rows for the ui, fraud oversampled. row-group aware so it's
     cheap on the big files"""
     pf = pq.ParquetFile(path)
-    y = pf.read(columns=["is_fraud"]).column("is_fraud").to_numpy()
+    tbl = pf.read(columns=["is_fraud", "split"])
+    y = tbl.column("is_fraud").to_numpy()
+    held = tbl.column("split").to_numpy().astype(str) == "test"   # examples come from data the model never trained on
     rng = np.random.default_rng(seed)
-    legit = np.flatnonzero(y == 0)
-    fraud = np.flatnonzero(y == 1)
+    legit = np.flatnonzero((y == 0) & held)
+    fraud = np.flatnonzero((y == 1) & held)
+    if len(fraud) < n_fraud:
+        fraud = np.flatnonzero(y == 1)
     pick = np.sort(np.concatenate([
         rng.choice(legit, min(n_legit, len(legit)), replace=False),
         rng.choice(fraud, min(n_fraud, len(fraud)), replace=False),
