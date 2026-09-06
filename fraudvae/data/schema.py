@@ -13,8 +13,9 @@ masked on it. See docs/SCHEMA.md for the per-source coverage table.
 
 v5 adds entity keys (customer, counterparty, device, email, address, card) so
 the sequence index and the entity-graph features can be built from the
-processed parquet, and a "graph" block of causal entity features with a label
-delay.
+processed parquet, a "graph" block of causal entity features with a label
+delay, and a small device block that the IEEE identity table fills today and
+the application-fraud sources will fill tomorrow.
 """
 from __future__ import annotations
 
@@ -22,7 +23,7 @@ from dataclasses import dataclass
 
 SCHEMA_VERSION = 5
 
-SOURCES = ["fdh", "capone", "tabformer", "ulb", "paysim", "sparkov", "banksim", "ieee", "amlworld"]
+SOURCES = ["fdh", "capone", "tabformer", "ulb", "paysim", "sparkov", "banksim", "ieee", "amlworld", "baf", "fraudecom"]
 # index 0 is reserved for "generic" (unknown bank/domain) at inference time
 SOURCE_INDEX = {s: i + 1 for i, s in enumerate(SOURCES)}
 GENERIC_SOURCE = 0
@@ -106,6 +107,11 @@ NUMERIC: list[NumericFeature] = [
     NumericFeature("ieee_c13", "log1p", "ext", "IEEE C13 count"),
     NumericFeature("ieee_c14", "log1p", "ext", "IEEE C14 count"),
     NumericFeature("ieee_d15", "signed_log1p", "ext", "IEEE D15 timedelta"),
+    # v5 device block (IEEE identity table now, application-fraud sources later)
+    NumericFeature("screen_w", "log1p", "device", "Screen width", "px"),
+    NumericFeature("screen_h", "log1p", "device", "Screen height", "px"),
+    NumericFeature("session_length_min", "log1p", "device", "Session length", "min"),
+    NumericFeature("email_name_similarity", "none", "device", "Name / email similarity"),
 ] + [
     # v5 graph block: what the entities this row touches have been up to, causally.
     # "_delayed" counts only labels older than ENTITY_LABEL_DELAY days, which is what
@@ -152,6 +158,12 @@ CATEGORICAL: list[CategoricalFeature] = [
     CategoricalFeature("email_bucket", ("unknown", "gmail", "yahoo", "microsoft", "other_free", "other"), "ext", "Payer email domain"),
     # v4, amlworld: how the money moved between the two accounts
     CategoricalFeature("payment_format", ("unknown", "ach", "wire", "cheque", "cash", "credit_card", "reinvestment", "crypto"), "ext", "Payment format"),
+    # v5 device block
+    CategoricalFeature("device_os", ("unknown", "windows", "macos", "ios", "android", "linux", "other"), "device", "Device OS"),
+    CategoricalFeature("browser", ("unknown", "chrome", "safari", "firefox", "edge", "ie", "samsung", "opera", "other"), "device", "Browser"),
+    CategoricalFeature("email_bucket_recipient", ("unknown", "gmail", "yahoo", "microsoft", "other_free", "other"), "device", "Recipient email domain"),
+    CategoricalFeature("phone_valid", ("unknown", "no", "yes"), "device", "Phone number valid"),
+    CategoricalFeature("keep_alive_session", ("unknown", "no", "yes"), "device", "Keep-alive session"),
 ]
 
 NUMERIC_NAMES = [f.name for f in NUMERIC]
@@ -244,7 +256,7 @@ def entity_codes(values):
     import numpy as np
     import pandas as pd
 
-    codes = pd.Series(values).astype("category").cat.codes.to_numpy()
+    codes, _ = pd.factorize(pd.Series(values), sort=False)
     return codes.astype(np.int64)
 
 
