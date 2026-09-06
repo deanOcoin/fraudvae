@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -9,18 +10,30 @@ import torch
 
 from ..paths import PREPARED_DIR
 
-ARRAYS = ("num", "mask", "cat", "src", "y", "row")
-
 
 def _ram_bytes():
     try:
-        with open("/proc/meminfo") as f:
-            for line in f:
-                if line.startswith("MemTotal:"):
-                    return int(line.split()[1]) * 1024
+        total = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    except (ValueError, OSError):
+        total = 8 << 30
+    # containers lie about RAM, the cgroup limit is what actually kills you
+    candidates = ["/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"]
+    try:
+        for line in open("/proc/self/cgroup"):
+            parts = line.strip().split(":")
+            if len(parts) == 3 and parts[1] in ("memory", ""):
+                candidates.append(f"/sys/fs/cgroup/memory{parts[2]}/memory.limit_in_bytes")
+                candidates.append(f"/sys/fs/cgroup{parts[2]}/memory.max")
     except OSError:
         pass
-    return 8 << 30
+    for p in candidates:
+        try:
+            v = int(open(p).read().strip())
+            if 0 < v < total:
+                total = v
+        except (OSError, ValueError):
+            pass
+    return total
 
 
 def _to_tensor(a, device, dtype=None):
@@ -33,17 +46,56 @@ def _to_tensor(a, device, dtype=None):
 class PreparedSplit:
     """One split. Arrays are memmapped unless they comfortably fit in RAM."""
 
-    def __init__(self, root, split, in_memory=None):
+    def __init__(self, root: Path, split: str, in_memory: bool | None = None, wide_meta: dict | None = None):
         self.root = Path(root)
         self.split = split
-        files = {k: self.root / f"{split}_{k}.npy" for k in ARRAYS}
+        files = {k: self.root / f"{split}_{k}.npy" for k in ("num", "mask", "cat", "src", "y", "row")}
         total = sum(f.stat().st_size for f in files.values())
         if in_memory is None:
-            in_memory = total < 0.5 * _ram_bytes()
+            in_memory = total < 0.25 * _ram_bytes()
         mode = None if in_memory else "r"
-        for k, f in files.items():
-            setattr(self, k, np.load(f, mmap_mode=mode))
+        self.num = np.load(files["num"], mmap_mode=mode)
+        self.mask = np.load(files["mask"], mmap_mode=mode)
+        self.cat = np.load(files["cat"], mmap_mode=mode)
+        self.src = np.load(files["src"], mmap_mode=mode)
+        self.y = np.load(files["y"], mmap_mode=mode)
+        self.row = np.load(files["row"], mmap_mode=mode)
         self.in_memory = in_memory
+        self.wide_meta = wide_meta or {}
+        self.wide_blocks = self._open_wide()
+        # column layout of the union wide matrix: source blocks one after another
+        self.wide_names, self.wide_cat_cols, self.wide_slices = [], [], {}
+        for key, wm in self.wide_meta.items():
+            start = len(self.wide_names)
+            self.wide_names += [f"{key}.{c}" for c in wm["columns"]]
+            self.wide_cat_cols += [start + j for j, k in enumerate(wm["kinds"]) if k == "cat"]
+            self.wide_slices[key] = (start, start + len(wm["columns"]))
+
+    def _open_wide(self):
+        """per-source wide blocks of raw columns, always memmapped (they can be huge)"""
+        blocks = {}
+        for key, wm in self.wide_meta.items():
+            f = self.root / f"{self.split}_wide_{key}.npy"
+            if f.exists():
+                blocks[key] = (np.load(f, mmap_mode="r"), wm["offsets"][self.split][0])
+        return blocks
+
+    @property
+    def n_wide(self):
+        return len(self.wide_names)
+
+    def wide(self, idx) -> np.ndarray:
+        """[len(idx), n_wide] float32, NaN everywhere a row's source has no wide block."""
+        idx = np.asarray(idx)
+        out = np.full((len(idx), self.n_wide), np.nan, dtype=np.float32)
+        for key, (arr, start) in self.wide_blocks.items():
+            lo, hi = start, start + len(arr)
+            pos = np.flatnonzero((idx >= lo) & (idx < hi))
+            if len(pos) == 0:
+                continue
+            a, b = self.wide_slices[key]
+            out[pos, a:b] = arr[idx[pos] - lo]
+        return out
 
     def __len__(self):
         return len(self.y)
@@ -75,7 +127,8 @@ class PreparedSet:
         if not (self.path / "meta.json").exists():
             raise FileNotFoundError(f"no prepared set at {self.path}; run `fraudvae prepare`")
         self.meta = json.loads((self.path / "meta.json").read_text())
-        self.splits = {s: PreparedSplit(self.path, s, in_memory) for s in splits if (self.path / f"{s}_y.npy").exists()}
+        self.splits = {s: PreparedSplit(self.path, s, in_memory, self.meta.get("wide") or {})
+                       for s in splits if (self.path / f"{s}_y.npy").exists()}
 
     def __getitem__(self, split):
         return self.splits[split]

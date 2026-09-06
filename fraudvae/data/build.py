@@ -56,11 +56,24 @@ def _to_table(df: pd.DataFrame) -> pa.Table:
     return tbl.cast(_arrow_schema())
 
 
+def _wide_table(df: pd.DataFrame, cols: list[str]) -> pa.Table:
+    """the source's own raw columns, float32, same row order as the unified table"""
+    arrays = [pa.array(df[c].to_numpy(dtype=np.float32), type=pa.float32()) for c in cols]
+    return pa.table(arrays, names=[c[len(schema.WIDE_PREFIX):] for c in cols])
+
+
+def wide_path(out: Path) -> Path:
+    return out.with_name(out.stem + ".wide.parquet")
+
+
 def write_source(key: str, result, out: Path) -> int:
-    """result = DataFrame or iterator of DataFrames. returns rows written"""
+    """result = DataFrame or iterator of DataFrames. returns rows written. a frame with
+    wide__ columns also produces <key>.wide.parquet (+ .wide.json describing the columns)"""
     tmp = out.with_suffix(".parquet.tmp")
+    wtmp = wide_path(out).with_suffix(".parquet.tmp")
     rows = 0
-    writer = None
+    writer = wwriter = None
+    wide_cols, wide_desc = None, None
     try:
         if isinstance(result, pd.DataFrame):
             chunks = [result]
@@ -71,10 +84,22 @@ def write_source(key: str, result, out: Path) -> int:
                 if not isinstance(result, pd.DataFrame):
                     raise ValueError(f"{key}: chunked adapters must assign 'split' themselves")
                 df = schema.assign_time_splits(df)
+            if wide_cols is None:
+                wide_cols = [c for c in df.columns if c.startswith(schema.WIDE_PREFIX)]
+                # the adapter's descriptions where it gave them (raw categoricals carry their
+                # values), a numeric default for the rest (the entity block's wide__*_fast columns)
+                given = {d["name"]: d for d in (df.attrs.get("wide_columns") or [])}
+                wide_desc = [given.get(c[len(schema.WIDE_PREFIX):], {"name": c[len(schema.WIDE_PREFIX):], "kind": "num"}) for c in wide_cols]
             tbl = _to_table(df)
             if writer is None:
                 writer = pq.ParquetWriter(tmp, tbl.schema, compression="zstd")
             writer.write_table(tbl, row_group_size=500_000)
+            if wide_cols:
+                wt = _wide_table(df, wide_cols)
+                if wwriter is None:
+                    wwriter = pq.ParquetWriter(wtmp, wt.schema, compression="zstd")
+                wwriter.write_table(wt, row_group_size=500_000)
+                del wt
             rows += len(df)
             del tbl, df
             gc.collect()   # the 24M row sources run close to the memory limit
@@ -83,7 +108,17 @@ def write_source(key: str, result, out: Path) -> int:
     finally:
         if writer is not None:
             writer.close()
+        if wwriter is not None:
+            wwriter.close()
     tmp.replace(out)   # atomic-ish, a half written parquet would poison prepare
+    wp = wide_path(out)
+    if wide_cols:
+        wtmp.replace(wp)
+        wp.with_suffix(".json").write_text(json.dumps({"source": key, "columns": wide_desc}, indent=1))
+    else:
+        # a rebuild of a source that used to have a wide block: don't leave a stale one behind
+        wp.unlink(missing_ok=True)
+        wp.with_suffix(".json").unlink(missing_ok=True)
     return rows
 
 
@@ -185,15 +220,27 @@ def sample_rows(path: Path, n_legit=150, n_fraud=150, seed=0) -> pd.DataFrame:
         rng.choice(fraud, min(n_fraud, len(fraud)), replace=False),
     ]))
     frames = []
+    wp = wide_path(path)
+    pw = pq.ParquetFile(wp) if wp.exists() else None
     start = 0
     for rg in range(pf.metadata.num_row_groups):
         n = pf.metadata.row_group(rg).num_rows
         lo, hi = np.searchsorted(pick, [start, start + n])
         if hi > lo:
             tbl = pf.read_row_group(rg)
-            frames.append(tbl.take(pa.array(pick[lo:hi] - start)).to_pandas())
+            sel = pa.array(pick[lo:hi] - start)
+            frame = tbl.take(sel).to_pandas()
+            if pw is not None:
+                # the same rows of the wide block, as one json dict per row (NaN dropped) so
+                # the samples file keeps its flat schema and the ui can hand it back to /api/score
+                w = pw.read_row_group(rg).take(sel).to_pandas()
+                frame["wide"] = [json.dumps({k: float(v) for k, v in r.items() if v == v}) for r in w.to_dict("records")]
+            frames.append(frame)
         start += n
-    return pd.concat(frames, ignore_index=True)
+    out = pd.concat(frames, ignore_index=True)
+    if "wide" not in out:
+        out["wide"] = None
+    return out
 
 
 def build_source(key: str, raw_dir: Path, max_rows=None):

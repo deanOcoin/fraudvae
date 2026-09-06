@@ -8,6 +8,8 @@ Writes one directory per "prepared set" (default data/prepared/default):
     {split}_src.npy  int8     [N]    source index (schema.SOURCE_INDEX)
     {split}_y.npy    int8     [N]    fraud label
     {split}_row.npy  int64    [N]    row offset into the source parquet (for lookups)
+    {split}_wide_<source>.npy float32 [n_source_rows, W_source]  v5 wide block, NaN = missing;
+                              rows of one source are contiguous in a split (meta.wide.offsets)
 
 Standardisation uses train legit rows only. hour / dow become categoricals here
 (they're stored as numbers upstream because that's what they are, but the
@@ -33,6 +35,7 @@ from . import schema
 DERIVED_CATS = {"hour": 24, "dow": 7}   # numeric column -> number of classes
 SPLITS = ("train", "val", "test")
 BATCH = 1_000_000
+BATCH_WIDE = 200_000   # a 431-column wide block at 1M rows is 1.7 GB per copy; keep the lockstep batches small
 
 
 def model_numeric_features():
@@ -129,13 +132,33 @@ def prepare(name="default", sources=None, max_rows_per_source=None, seed=1337, o
         }
 
     cols = num_names + [c for c in schema.CATEGORICAL_NAMES] + list(DERIVED_CATS) + ["is_fraud"]
+    wide_meta = {}
     for key in sources:
         pf = pq.ParquetFile(PROCESSED_DIR / f"{key}.parquet")
         src_idx = schema.SOURCE_INDEX[key]
+        # v5 wide block: the source's own raw columns, read in lockstep with the unified file
+        wp = PROCESSED_DIR / f"{key}.wide.parquet"
+        wide_iter, wide_arrays = None, None
+        if wp.exists():
+            wdesc = json.loads(wp.with_suffix(".json").read_text())["columns"]
+            wcols = [c["name"] for c in wdesc]
+            wide_iter = pq.ParquetFile(wp).iter_batches(batch_size=BATCH_WIDE)
+            wide_arrays = {s: np.lib.format.open_memmap(out / f"{s}_wide_{key}.npy", "w+", np.float32, (len(plan[key][s]), len(wcols)))
+                           for s in SPLITS}
+            wide_meta[key] = {"columns": wcols, "kinds": [c["kind"] for c in wdesc],
+                              "sizes": [len(c.get("values", [])) + 2 if c["kind"] == "cat" else 0 for c in wdesc],
+                              "offsets": {s: [int(arrays[s]["pos"]), int(arrays[s]["pos"]) + len(plan[key][s])] for s in SPLITS}}
         offset = 0
-        for batch in pf.iter_batches(batch_size=BATCH, columns=cols):
+        for batch in pf.iter_batches(batch_size=BATCH_WIDE if wide_iter is not None else BATCH, columns=cols):
             b = batch.to_pandas()
             n_b = len(b)
+            wb = None
+            if wide_iter is not None:
+                wb = next(wide_iter)
+                assert len(wb) == n_b, (key, len(wb), n_b)
+                wb = np.column_stack([wb.column(i).to_numpy(zero_copy_only=False) for i in range(wb.num_columns)])
+                if wb.dtype != np.float32:
+                    wb = wb.astype(np.float32)
             rows = np.arange(offset, offset + n_b)
             for s in SPLITS:
                 want = plan[key][s]
@@ -147,6 +170,9 @@ def prepare(name="default", sources=None, max_rows_per_source=None, seed=1337, o
                 sub = b.iloc[sel]
                 a = arrays[s]
                 p, q = a["pos"], a["pos"] + len(sel)
+                if wb is not None:
+                    w0 = p - wide_meta[key]["offsets"][s][0]
+                    wide_arrays[s][w0 : w0 + len(sel)] = wb[sel]
                 num = np.empty((len(sel), D), dtype=np.float32)
                 for j, f in enumerate(num_feats):
                     num[:, j] = transform_numeric(sub[f.name].to_numpy(), f.transform)
@@ -168,6 +194,10 @@ def prepare(name="default", sources=None, max_rows_per_source=None, seed=1337, o
                 a["row"][p:q] = rows[sel]
                 a["pos"] = q
             offset += n_b
+        if wide_arrays is not None:
+            for s in SPLITS:
+                wide_arrays[s].flush()
+            del wide_arrays
         print(f"  {key}: streamed {offset:,} rows ({time.time() - t0:.0f}s)", flush=True)
 
     for s in SPLITS:
@@ -213,6 +243,7 @@ def prepare(name="default", sources=None, max_rows_per_source=None, seed=1337, o
         "numeric": [{"name": f.name, "transform": f.transform, "group": f.group, "label": f.label, "unit": f.unit,
                      "mean": float(mean[j]), "std": float(std[j])} for j, f in enumerate(num_feats)],
         "categorical": cat_feats,
+        "wide": wide_meta,
         "seconds": round(time.time() - t0, 1),
     }
     (out / "meta.json").write_text(json.dumps(meta, indent=1))
