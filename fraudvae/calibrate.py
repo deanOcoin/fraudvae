@@ -23,8 +23,9 @@ import numpy as np
 import torch
 
 from .model.booster import Booster
+from .model.seqhead import load_seqhead
 from .model.dataset import PreparedSet
-from .model.scoring import Scorer, auprc, auroc, score_split
+from .model.scoring import Scorer, auprc, auroc, extra_signals, score_split
 from .model.vae import load_checkpoint
 from .paths import RUNS_DIR
 
@@ -114,6 +115,7 @@ def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, 
     run_dir = Path(run_dir)
     model, ck = load_checkpoint(run_dir / "model.pt", device=device)
     booster = Booster.load(run_dir)
+    seqhead = load_seqhead(run_dir, device=device)   # v5: None without a history encoder / before the post stage
     data = PreparedSet(prepared, splits=("val",))
     va = data["val"]
     names = data.source_names
@@ -126,7 +128,7 @@ def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, 
 
     # ---- pass 1: baselines --------------------------------------------------------
     base_idx = _subsample(src, y, rng, BASELINE_ROWS, with_fraud=False)
-    r1 = score_split(model, va, batch_size=batch_size, n_samples=n_samples, device=device, idx=base_idx, keep_mu=False)
+    r1 = score_split(model, va, batch_size=batch_size, n_samples=n_samples, device=device, idx=base_idx, keep_mu=False, seq=data.seq, split_name="val")
     nll1 = np.concatenate([r1["nll_num"], r1["nll_cat"]], axis=1)
     baselines = {"by_source": {}}
     for s in np.unique(src[base_idx]):
@@ -135,7 +137,7 @@ def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, 
     gen_idx = _subsample(src, y, rng, GENERIC_ROWS, with_fraud=True)
     g_legit = gen_idx[y[gen_idx] == 0]
     rg = score_split(model, va, batch_size=batch_size, n_samples=n_samples, device=device, idx=g_legit, src_override=0,
-                     keep_mu=False)
+                     keep_mu=False, seq=data.seq, split_name="val")
     baselines["generic"] = Scorer.fit_baselines(np.concatenate([rg["nll_num"], rg["nll_cat"]], axis=1), rg["kl"])
     scorer = Scorer(baselines, n_feat)
     n_src = scorer.n_sources
@@ -145,7 +147,7 @@ def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, 
     # ---- pass 2: score type + blender on a labelled subsample --------------------------------
     fit_idx = _subsample(src, y, rng, FIT_ROWS, with_fraud=True)
     rf = score_split(model, va, batch_size=batch_size, n_samples=n_samples, device=device, idx=fit_idx, scorer=scorer,
-                     booster=booster, keep_features=False, keep_mu=False)
+                     booster=booster, keep_features=False, keep_mu=False, seq=data.seq, split_name="val", seqhead=seqhead)
     yf, sf = y[fit_idx], src[fit_idx]
     cands = {}
     for kind in ("raw", "norm"):
@@ -163,23 +165,27 @@ def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, 
         score_std[s] = max(float(rf[score_type][m].std()), 1e-6)
     gen_fit = np.sort(rng.choice(gen_idx, min(len(gen_idx), 200_000), replace=False))
     rfg = score_split(model, va, batch_size=batch_size, n_samples=n_samples, device=device, idx=gen_fit, scorer=scorer,
-                      booster=booster, src_override=0, keep_features=False, keep_mu=False)
+                      booster=booster, src_override=0, keep_features=False, keep_mu=False, seq=data.seq, split_name="val", seqhead=seqhead)
     yg = y[gen_fit]
     score_mean[0] = rfg[score_type][yg == 0].mean()
     score_std[0] = max(float(rfg[score_type][yg == 0].std()), 1e-6)
 
-    X = scorer.blend_features(rf, sf, rf.get("booster"), score_type, score_mean, score_std)
-    Xg = scorer.blend_features(rfg, np.zeros(len(gen_fit), dtype=int), rfg.get("booster"), score_type, score_mean, score_std)
+    signals = extra_signals(rf)
+    X = scorer.blend_features(rf, sf, rf.get("booster"), score_type, score_mean, score_std, signals=signals)
+    Xg = scorer.blend_features(rfg, np.zeros(len(gen_fit), dtype=int), rfg.get("booster"), score_type, score_mean, score_std,
+                               signals=signals)
     X_all = np.concatenate([X, Xg])
     y_all = np.concatenate([yf, yg])
     s_all = np.concatenate([sf, np.zeros(len(gen_fit), dtype=sf.dtype)])
     fit_mask = (np.arange(len(X_all)) % 2) == 0
     blend = _fit_logistic(X_all[fit_mask], y_all[fit_mask])
     blend.update({"score_type": score_type, "score_mean": score_mean.round(6).tolist(), "score_std": score_std.round(6).tolist(),
+                  "signals": signals,
                   "features": "booster logit, VAE score z, KL z (each clipped), source one-hot, each of the three x "
-                              "one-hot",
-                  "feature_names": Scorer.blend_feature_names(n_src),
-                  "fit_rows": int(fit_mask.sum()), "holdout_rows": int((~fit_mask).sum()), "with_booster": booster is not None})
+                              "one-hot" + (", then per extra signal: value, present, value x one-hot" if signals else ""),
+                  "feature_names": Scorer.blend_feature_names(n_src, signals),
+                  "fit_rows": int(fit_mask.sum()), "holdout_rows": int((~fit_mask).sum()), "with_booster": booster is not None,
+                  "with_seq": "seq" in signals})
     scorer.set_blend(blend)
     p_hold = _sigmoid(X_all[~fit_mask] @ scorer.blend_coef + scorer.blend_intercept)
     hold = {"auroc": auroc(y_all[~fit_mask], p_hold), "sources": {}}
@@ -187,17 +193,19 @@ def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, 
         m = s_all[~fit_mask] == s_
         hold["sources"][names.get(int(s_), "generic") if s_ else "generic"] = auroc(y_all[~fit_mask][m], p_hold[m])
     blend["holdout"] = hold
-    log(f"  blender fit on {blend['fit_rows']:,} rows; held-out half auroc {hold['auroc']:.4f} ({time.time() - t0:.0f}s)")
+    log(f"  blender fit on {blend['fit_rows']:,} rows; held-out half auroc {hold['auroc']:.4f}"
+        + (" (with the history head)" if "seq" in signals else "") + f" ({time.time() - t0:.0f}s)")
     del X, Xg, X_all, rf, rfg
 
     # ---- pass 3: everything, once ---------------------------------------------------------------
     r = score_split(model, va, batch_size=batch_size, n_samples=n_samples, device=device, keep_features=False,
-                    scorer=scorer, booster=booster, progress=lambda n: log(f"  calibrate: scored {n:,}/{len(va):,}"))
+                    scorer=scorer, booster=booster, progress=lambda n: log(f"  calibrate: scored {n:,}/{len(va):,}"), seq=data.seq, split_name="val", seqhead=seqhead)
     log(f"  pass 3: scored {len(va):,} val rows ({time.time() - t0:.0f}s)")
     rgen = score_split(model, va, batch_size=batch_size, n_samples=n_samples, device=device, idx=gen_idx,
-                       keep_features=False, scorer=scorer, booster=booster, src_override=0, keep_mu=False)
+                       keep_features=False, scorer=scorer, booster=booster, src_override=0, keep_mu=False, seq=data.seq, split_name="val", seqhead=seqhead)
     gy = y[gen_idx]
     score = r[score_type]
+    has_seq = "seq" in r
 
     cal = {
         "created": time.strftime("%Y-%m-%dT%H:%M:%S"), "n_samples": n_samples, "prepared": prepared,
@@ -206,6 +214,7 @@ def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, 
         "score_type": score_type, "score_type_candidates": cands,
         "baselines": baselines, "fpr_targets": list(FPR_TARGETS),
         "sources": {}, "booster": {"sources": {}} if booster is not None else None,
+        "seq": {"sources": {}} if has_seq else None,
         "blend": {**blend, "sources": {}},
     }
     std_score = np.zeros_like(score)
@@ -221,9 +230,12 @@ def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, 
         cal["sources"][name] = block
         if booster is not None:
             cal["booster"]["sources"][name] = _dist_block(y[m], _sigmoid(r["booster"][m]))
+        if has_seq:
+            cal["seq"]["sources"][name] = _dist_block(y[m], _sigmoid(r["seq"][m]))
         cal["blend"]["sources"][name] = _dist_block(y[m], r["blend"][m])
         log(f"  {name}: vae {block['auroc']:.4f} (raw {block['auroc_raw']:.4f} / norm {block['auroc_norm']:.4f})"
             + (f" | booster {cal['booster']['sources'][name]['auroc']:.4f}" if booster is not None else "")
+            + (f" | seq {cal['seq']['sources'][name]['auroc']:.4f}" if has_seq else "")
             + f" | blend {cal['blend']['sources'][name]['auroc']:.4f} recall@1%fpr "
             f"{cal['blend']['sources'][name]['thresholds']['fpr_0.01']['recall']:.3f}")
 
@@ -232,6 +244,8 @@ def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, 
         "auroc_raw": auroc(gy, rgen["raw"]), "auroc_norm": auroc(gy, rgen["norm"]), "note": note})
     if booster is not None:
         cal["booster"]["generic"] = _dist_block(gy, _sigmoid(rgen["booster"]), extra={"note": note})
+    if has_seq:
+        cal["seq"]["generic"] = _dist_block(gy, _sigmoid(rgen["seq"]), extra={"note": note})
     cal["blend"]["generic"] = _dist_block(gy, rgen["blend"], extra={"note": note})
     log(f"  generic context: vae {cal['generic']['auroc']:.4f}"
         + (f" | booster {cal['booster']['generic']['auroc']:.4f}" if booster is not None else "")
@@ -242,6 +256,7 @@ def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, 
     cal["mean_val_auroc"] = {
         "vae": float(np.mean([b["auroc"] for b in cal["sources"].values()])),
         "booster": float(np.mean([b["auroc"] for b in cal["booster"]["sources"].values()])) if booster is not None else None,
+        "seq": float(np.mean([b["auroc"] for b in cal["seq"]["sources"].values()])) if has_seq else None,
         "blend": float(np.mean([b["auroc"] for b in cal["blend"]["sources"].values()])),
     }
 

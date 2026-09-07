@@ -337,6 +337,13 @@ def post_train(run_dir: Path, cfg: Config, prepared="default", device=None, log=
             write_status(run_dir, state="specialists")
             train_specialists(run_dir, prepared, cfg.boost, log=log, seed=cfg.train.seed, min_fraud=cfg.boost.specialist_min_fraud,
                               model=model, device=device)
+    # v5: the sequence head, on the frozen history encoder's read-out
+    if history_window(model):
+        log("fitting the sequence head on the history read-out ...")
+        write_status(run_dir, state="sequence head")
+        from .model.seqhead import train_seqhead
+        train_seqhead(run_dir, prepared, model, device=device, log=log, max_legit_per_source=cfg.boost.max_legit_per_source,
+                      val_legit_per_source=cfg.boost.val_legit_per_source, seed=cfg.train.seed)
     del model
     # v5: the field heads (device block today), each its own blend signal
     log("fitting the field heads ...")
