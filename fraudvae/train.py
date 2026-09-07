@@ -25,7 +25,7 @@ import torch
 from . import __version__
 from .config import Config, load_config, to_dict
 from .model.dataset import PreparedSet
-from .model.scoring import auroc, batches, score_split
+from .model.scoring import auroc, batches, history_window, score_split
 from .model.vae import build_model, save_checkpoint
 from .paths import RUNS_DIR, ensure_dirs
 
@@ -89,10 +89,11 @@ def _eval_indices(split, per_source=300_000, seed=0):
     return np.sort(np.concatenate(keep))
 
 
-def evaluate_split(model, split, idx, source_names, device, batch_size=8192, n_samples=1):
+def evaluate_split(model, split, idx, source_names, device, batch_size=8192, n_samples=1, seq=None, split_name="val"):
     """per-epoch check on a val subsample. raw -elbo score only; the normalised
     score needs baselines which calibrate() builds at the end"""
-    r = score_split(model, split, batch_size=batch_size, n_samples=n_samples, device=device, idx=idx, keep_features=False)
+    r = score_split(model, split, batch_size=batch_size, n_samples=n_samples, device=device, idx=idx, keep_features=False,
+                    seq=seq, split_name=split_name)
     y = split.y[idx]
     src = split.src[idx]
     out = {"n": int(len(idx)), "per_source": {}}
@@ -140,7 +141,12 @@ def train(cfg: Config, prepared="default", run_dir: Path | None = None, name: st
 
     model = build_model(meta, cfg.model).to(device)
     n_params = sum(p.numel() for p in model.parameters())
-    log(f"model: {n_params / 1e6:.2f}M params, latent {cfg.model.latent_dim}, hidden {cfg.model.hidden}")
+    window = history_window(model)
+    if window and data.seq is None:
+        log("history encoder requested but the prepared set has no sequence index (re-run prepare); training without history")
+        window = 0
+    log(f"model: {n_params / 1e6:.2f}M params, latent {cfg.model.latent_dim}, hidden {cfg.model.hidden}"
+        + (f", history window {window} (d_model {model.hdim})" if window else ""))
 
     opt = torch.optim.AdamW(model.parameters(), lr=cfg.train.lr, weight_decay=cfg.train.weight_decay)
     steps_per_epoch = math.ceil(len(legit_idx) / cfg.train.batch_size)
@@ -190,15 +196,21 @@ def train(cfg: Config, prepared="default", run_dir: Path | None = None, name: st
         sums = {"loss": 0.0, "nll": 0.0, "kl": 0.0}
         seen = 0
         skipped = 0
-        for b, (num, mask, cat, src) in batches(tr, cfg.train.batch_size, idx=legit_idx, shuffle=True,
-                                                seed=cfg.train.seed + epoch, device=device):
+        for b, (num, mask, cat, src), hist in batches(tr, cfg.train.batch_size, idx=legit_idx, shuffle=True,
+                                                      seed=cfg.train.seed + epoch, device=device,
+                                                      seq=data.seq, split_name="train", window=window):
             if cfg.train.source_dropout > 0:
                 drop = torch.rand(src.shape[0], device=device) < cfg.train.source_dropout
                 src = torch.where(drop, torch.zeros_like(src), src)
+            if hist is not None and cfg.train.history_dropout > 0:
+                # sometimes hide the history, so the "no history" read-out is a trained state and
+                # the model keeps working for a customer's first transaction / an id-less bank
+                keep = (torch.rand(src.shape[0], 1, device=device) >= cfg.train.history_dropout)
+                hist = hist[:4] + (hist[4] & keep,)
             for g in opt.param_groups:
                 g["lr"] = lr_at(step)
             with torch.autocast(device.type, dtype=amp_dtype, enabled=use_amp):
-                out = model(num, mask, cat, src)
+                out = model(num, mask, cat, src, hist=hist)
                 nll_num, nll_cat = model.nll_terms(out, num, mask, cat)
                 nll = nll_num.sum(1) + nll_cat.sum(1)
                 kl_dims = model.kl_terms(out["mu"].float(), out["logvar"].float())
@@ -260,7 +272,8 @@ def train(cfg: Config, prepared="default", run_dir: Path | None = None, name: st
                "rows_per_sec": seen / max(train_time, 1e-6), "epoch_seconds": train_time, "skipped_steps": skipped}
         if (epoch + 1) % cfg.train.eval_every == 0 or epoch + 1 == cfg.train.epochs:
             t1 = time.time()
-            ev = evaluate_split(model, va, eval_idx, source_names, device, batch_size=cfg.train.batch_size * 4)
+            ev = evaluate_split(model, va, eval_idx, source_names, device, batch_size=cfg.train.batch_size * 4,
+                                seq=data.seq if window else None, split_name="val")
             rec.update({"val_mean_auroc": ev["mean_auroc"], "val_legit_score": ev["legit_score_mean"],
                         "val_legit_kl": ev["legit_kl_mean"], "val_per_source": ev["per_source"],
                         "eval_seconds": time.time() - t1})
@@ -311,15 +324,49 @@ def post_train(run_dir: Path, cfg: Config, prepared="default", device=None, log=
     run_dir = Path(run_dir)
     device = device or pick_device(cfg.device)
     t_start = t_start or time.time()
+    from .model.vae import load_checkpoint
+    model, _ = load_checkpoint(run_dir / "model.pt", device=device)
     if cfg.boost.enabled:
-        log("fitting the supervised booster on the labelled train split ...")
+        log("fitting the supervised booster on the labelled train split ..."
+            + (" (with the history encoder's read-out as features)" if cfg.boost.history_features and history_window(model) else ""))
         write_status(run_dir, state="boosting")
         from .model.booster import train_booster, train_specialists
-        train_booster(run_dir, prepared, cfg.boost, log=log, seed=cfg.train.seed)
+        train_booster(run_dir, prepared, cfg.boost, log=log, seed=cfg.train.seed, model=model, device=device)
         if cfg.boost.specialists:
             log("fitting the per-source specialist boosters ...")
             write_status(run_dir, state="specialists")
-            train_specialists(run_dir, prepared, cfg.boost, log=log, seed=cfg.train.seed, min_fraud=cfg.boost.specialist_min_fraud)
+            train_specialists(run_dir, prepared, cfg.boost, log=log, seed=cfg.train.seed, min_fraud=cfg.boost.specialist_min_fraud,
+                              model=model, device=device)
+    del model
+    # v5: the field heads (device block today), each its own blend signal
+    log("fitting the field heads ...")
+    write_status(run_dir, state="field heads")
+    from .model.heads import train_heads
+    train_heads(run_dir, prepared, device=device, log=log, max_legit_per_source=cfg.boost.max_legit_per_source,
+                val_legit_per_source=cfg.boost.val_legit_per_source, generic_fraction=cfg.boost.generic_fraction,
+                seed=cfg.train.seed)
+    # v5: the entity-graph models, one per source with entities
+    if cfg.graph.enabled:
+        log("fitting the entity-graph models ...")
+        write_status(run_dir, state="graph")
+        from .graph.train import train_graph
+        from .model.dataset import PreparedSet
+        train_graph(run_dir, PreparedSet(prepared, splits=()).meta, cfg.graph, device=device, log=log, seed=cfg.train.seed)
+    # v5: the text heads, on the public text-fraud sets (nothing in the transaction corpus has text)
+    if cfg.text.enabled:
+        log("fitting the text heads ...")
+        write_status(run_dir, state="text heads")
+        from .paths import RAW_DIR
+        from .text.train import train_text
+        train_text(run_dir, raw=RAW_DIR, device=device, log=log, epochs=cfg.text.epochs, seed=cfg.train.seed)
+    # v5: the behaviour verifiers, on the public biometric sets
+    if cfg.behaviour.enabled:
+        log("fitting the behaviour verifiers ...")
+        write_status(run_dir, state="behaviour")
+        from .behaviour.train import train_behaviour
+        from .paths import RAW_DIR
+        train_behaviour(run_dir, raw=RAW_DIR, device=device, log=log, epochs=cfg.behaviour.epochs, seed=cfg.train.seed,
+                        max_users=cfg.behaviour.max_users)
     log("calibrating thresholds + blender + latent map on val ...")
     write_status(run_dir, state="calibrating")
     from .calibrate import calibrate_run
@@ -328,6 +375,15 @@ def post_train(run_dir: Path, cfg: Config, prepared="default", device=None, log=
     write_status(run_dir, state="evaluating")
     from .evaluate import evaluate_run
     evaluate_run(run_dir, prepared=prepared, device=device, n_samples=cfg.train.score_samples, log=log)
+    # v5: the same test rows as a deployment whose fraud labels take a month would see them
+    # (the one-week label block blanked), so the receipt and the docs carry both numbers
+    from .data.schema import ENTITY_LABEL_DELAY_DAYS
+    from .model.booster import fast_columns
+    bj = run_dir / "booster.json"
+    if cfg.boost.enabled and bj.exists() and fast_columns(json.loads(bj.read_text()).get("features", [])):
+        log(f"evaluating on test again with {ENTITY_LABEL_DELAY_DAYS}-day label latency ...")
+        evaluate_run(run_dir, prepared=prepared, device=device, n_samples=cfg.train.score_samples, log=log,
+                     label_delay_days=ENTITY_LABEL_DELAY_DAYS)
     kw = {"best": best} if best is not None else {}
     write_status(run_dir, state="finished", elapsed=time.time() - t_start, **kw)
 

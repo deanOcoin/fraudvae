@@ -8,8 +8,17 @@ Writes one directory per "prepared set" (default data/prepared/default):
     {split}_src.npy  int8     [N]    source index (schema.SOURCE_INDEX)
     {split}_y.npy    int8     [N]    fraud label
     {split}_row.npy  int64    [N]    row offset into the source parquet (for lookups)
+    {split}_cust.npy int64    [N]    v5 global customer key (source << 40 | code), -1 unknown
+    {split}_ts.npy   float64  [N]    v5 timestamp, for the sequence index and history windows
+    {split}_ent.npy  int32    [N, 6] v5 entity codes within the source (schema.ENTITY_COLUMNS order), -1 none;
+                              the graph module looks embeddings up by them
     {split}_wide_<source>.npy float32 [n_source_rows, W_source]  v5 wide block, NaN = missing;
                               rows of one source are contiguous in a split (meta.wide.offsets)
+    seq_order.npy  int64     [N_all] v5 sequence index: global row ids (train, then val, then
+                              test; meta.split_offsets) sorted by (customer, time)
+    seq_pos.npy    int32     [N_all] position of each global row in seq_order
+    seq_start.npy  int32     [N_all] position where that row's customer block starts (== seq_pos
+                              for rows without a customer, i.e. no history)
 
 Standardisation uses train legit rows only. hour / dow become categoricals here
 (they're stored as numbers upstream because that's what they are, but the
@@ -128,14 +137,23 @@ def prepare(name="default", sources=None, max_rows_per_source=None, seed=1337, o
             "src": np.lib.format.open_memmap(out / f"{s}_src.npy", "w+", np.int8, (n,)),
             "y": np.lib.format.open_memmap(out / f"{s}_y.npy", "w+", np.int8, (n,)),
             "row": np.lib.format.open_memmap(out / f"{s}_row.npy", "w+", np.int64, (n,)),
+            "cust": np.lib.format.open_memmap(out / f"{s}_cust.npy", "w+", np.int64, (n,)),
+            "ts": np.lib.format.open_memmap(out / f"{s}_ts.npy", "w+", np.float64, (n,)),
+            "ent": np.lib.format.open_memmap(out / f"{s}_ent.npy", "w+", np.int32, (n, len(schema.ENTITY_COLUMNS))),
             "pos": 0,
         }
 
-    cols = num_names + [c for c in schema.CATEGORICAL_NAMES] + list(DERIVED_CATS) + ["is_fraud"]
+    cols = num_names + [c for c in schema.CATEGORICAL_NAMES] + list(DERIVED_CATS) + ["is_fraud", "ts"] + list(schema.ENTITY_COLUMNS)
+    cols = list(dict.fromkeys(cols))
     wide_meta = {}
     for key in sources:
         pf = pq.ParquetFile(PROCESSED_DIR / f"{key}.parquet")
         src_idx = schema.SOURCE_INDEX[key]
+        have = set(pf.schema_arrow.names)
+        missing = [c for c in cols if c not in have]
+        if missing:
+            # a field added to the schema after this source was built: unobserved for it
+            print(f"  {key}: parquet predates {len(missing)} schema field(s) ({', '.join(missing[:4])}...), treated as unobserved")
         # v5 wide block: the source's own raw columns, read in lockstep with the unified file
         wp = PROCESSED_DIR / f"{key}.wide.parquet"
         wide_iter, wide_arrays = None, None
@@ -149,8 +167,10 @@ def prepare(name="default", sources=None, max_rows_per_source=None, seed=1337, o
                               "sizes": [len(c.get("values", [])) + 2 if c["kind"] == "cat" else 0 for c in wdesc],
                               "offsets": {s: [int(arrays[s]["pos"]), int(arrays[s]["pos"]) + len(plan[key][s])] for s in SPLITS}}
         offset = 0
-        for batch in pf.iter_batches(batch_size=BATCH_WIDE if wide_iter is not None else BATCH, columns=cols):
+        for batch in pf.iter_batches(batch_size=BATCH_WIDE if wide_iter is not None else BATCH, columns=[c for c in cols if c in have]):
             b = batch.to_pandas()
+            for c in missing:
+                b[c] = np.int8(0) if c in schema.CATEGORICAL_NAMES else (np.int64(-1) if c in schema.ENTITY_COLUMNS else np.float32(np.nan))
             n_b = len(b)
             wb = None
             if wide_iter is not None:
@@ -192,6 +212,10 @@ def prepare(name="default", sources=None, max_rows_per_source=None, seed=1337, o
                 a["src"][p:q] = src_idx
                 a["y"][p:q] = sub["is_fraud"].to_numpy().astype(np.int8)
                 a["row"][p:q] = rows[sel]
+                cust = sub["customer"].to_numpy().astype(np.int64)
+                a["cust"][p:q] = np.where(cust >= 0, (np.int64(src_idx) << 40) | cust, -1)
+                a["ts"][p:q] = sub["ts"].to_numpy().astype(np.float64)
+                a["ent"][p:q] = np.column_stack([sub[c].to_numpy().astype(np.int64) for c in schema.ENTITY_COLUMNS]).astype(np.int32)
                 a["pos"] = q
             offset += n_b
         if wide_arrays is not None:
@@ -226,8 +250,47 @@ def prepare(name="default", sources=None, max_rows_per_source=None, seed=1337, o
             chunk = (chunk - mean.astype(np.float32)) / std.astype(np.float32)
             chunk[a["mask"][sl] == 0] = 0.0
             a["num"][sl] = chunk
-        for k in ("num", "mask", "cat", "src", "y", "row"):
+        for k in ("num", "mask", "cat", "src", "y", "row", "cust", "ts"):
             a[k].flush()
+
+    # v5 sequence index: every row of every split in (customer, time) order, so a row's history
+    # window is the slice of seq_order just before its own position, whatever split those
+    # earlier rows fell into (they're older, so train rows for a val row, train+val for test)
+    offsets = {}
+    acc = 0
+    for s in SPLITS:
+        offsets[s] = acc
+        acc += counts[s]
+    cust_all = np.concatenate([arrays[s]["cust"][:] for s in SPLITS])
+    ts_all = np.concatenate([arrays[s]["ts"][:] for s in SPLITS])
+    order = np.lexsort((ts_all, cust_all)).astype(np.int64)
+    del ts_all
+    c_sorted = cust_all[order]
+    del cust_all
+    n_all = len(order)
+    same = np.empty(n_all, dtype=bool)
+    same[0] = False
+    np.equal(c_sorted[1:], c_sorted[:-1], out=same[1:])
+    no_cust = c_sorted < 0
+    del c_sorted
+    starts = np.flatnonzero(~same)
+    block_id = np.cumsum(~same, dtype=np.int32) - 1
+    start_pos = starts[block_id].astype(np.int32)
+    del same, starts, block_id
+    pos_sorted = np.arange(n_all, dtype=np.int32)
+    start_pos[no_cust] = pos_sorted[no_cust]   # a row with no customer has no history
+    del no_cust
+    seq_pos = np.empty(n_all, dtype=np.int32)
+    seq_pos[order] = pos_sorted
+    seq_start = np.empty(n_all, dtype=np.int32)
+    seq_start[order] = start_pos
+    del pos_sorted, start_pos
+    np.save(out / "seq_order.npy", order)
+    np.save(out / "seq_pos.npy", seq_pos)
+    np.save(out / "seq_start.npy", seq_start)
+    n_hist = int((seq_pos - seq_start > 0).sum())
+    del order, seq_pos, seq_start
+    print(f"  sequence index: {n_all:,} rows, {n_hist:,} with at least one earlier row of the same customer", flush=True)
 
     meta = {
         "name": name,
@@ -239,6 +302,7 @@ def prepare(name="default", sources=None, max_rows_per_source=None, seed=1337, o
         "stats_from_run": str(stats_from_run) if stats_from_run else None,
         "seed": seed,
         "counts": {s: int(counts[s]) for s in SPLITS},
+        "split_offsets": offsets,
         "fraud_counts": {s: int(arrays[s]["y"][:].sum()) for s in SPLITS},
         "numeric": [{"name": f.name, "transform": f.transform, "group": f.group, "label": f.label, "unit": f.unit,
                      "mean": float(mean[j]), "std": float(std[j])} for j, f in enumerate(num_feats)],
