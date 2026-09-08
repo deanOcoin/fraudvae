@@ -22,7 +22,9 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from .model.booster import Booster
+from .model.booster import Booster, Specialists
+from .graph.scorer import GraphScorer
+from .model.heads import load_heads
 from .model.seqhead import load_seqhead
 from .model.dataset import PreparedSet
 from .model.scoring import Scorer, auprc, auroc, extra_signals, score_split
@@ -81,19 +83,52 @@ def _dist_block(y, s, extra=None):
     return block
 
 
-def _fit_logistic(X, y, C=0.5):
-    """L2 logistic regression on standardised columns. the standardisation is folded back into the
-    weights, so inference stays one dot product on the raw features."""
+def _signal_block(y, logit, extra=None, min_rows=200):
+    """_dist_block on sigmoid(logit) over the rows where the signal is present (finite); the
+    field heads leave NaN where their block is unobserved. None when too few rows carry it."""
+    ok = np.isfinite(logit)
+    if ok.sum() < min_rows or y[ok].sum() < 5 or (y[ok] == 0).sum() < 50:
+        return None
+    block = _dist_block(y[ok], _sigmoid(logit[ok]), extra=extra)
+    block["coverage"] = float(ok.mean())
+    return block
+
+
+def _fit_logistic(X, y, C=0.5, col_scale=None):
+    """L2 logistic regression on standardised columns. col_scale (one factor per column, default
+    1) multiplies a standardised column before the fit: a column scaled by f needs a 1/f larger
+    weight for the same effect and pays 1/f^2 more penalty, which is how the per-bank
+    interaction terms are shrunk toward the shared weights (see _interaction_shrink). the
+    scaling and the standardisation are folded back into the weights, so inference stays one
+    dot product on the raw features."""
     from sklearn.linear_model import LogisticRegression
 
     mean = X.mean(0)
     std = np.maximum(X.std(0), 1e-3)
+    f = np.ones(X.shape[1]) if col_scale is None else np.asarray(col_scale, dtype=np.float64)
     clf = LogisticRegression(C=C, class_weight="balanced", max_iter=2000, solver="lbfgs")
-    clf.fit((X - mean) / std, y)
-    coef = clf.coef_[0] / std
+    clf.fit((X - mean) / std * f, y)
+    coef = clf.coef_[0] * f / std
     intercept = float(clf.intercept_[0] - (coef * mean).sum())
     return {"coef": coef.round(6).tolist(), "intercept": intercept, "n_features": int(X.shape[1]), "C": C,
             "class_weight": "balanced"}
+
+
+# a bank's own blender weights (the "signal x one-hot" interaction columns) are trusted in full
+# once its fit half holds this many fraud rows; with fewer they are shrunk toward the shared
+# weights by sqrt(fraud / SHRINK_REF). the v5 run had 21 ULB fraud rows in the fit half and the
+# unshrunk interactions learnt them by heart: held-out ULB AUROC 0.915 against the booster's
+# 0.953 on the same rows. shrunk, 0.953, with every other bank unchanged.
+SHRINK_REF = 10_000
+
+
+def _interaction_shrink(feature_names: list[str], src_fit: np.ndarray, y_fit: np.ndarray) -> np.ndarray:
+    pos = {int(s): int(y_fit[src_fit == s].sum()) for s in np.unique(src_fit)}
+    f = np.ones(len(feature_names))
+    for j, name in enumerate(feature_names):
+        if "*src" in name:
+            f[j] = np.sqrt(min(1.0, pos.get(int(name.split("*src")[1]), 0) / SHRINK_REF))
+    return f
 
 
 def _subsample(src, y, rng, per_source, with_fraud=True):
@@ -116,6 +151,9 @@ def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, 
     model, ck = load_checkpoint(run_dir / "model.pt", device=device)
     booster = Booster.load(run_dir)
     seqhead = load_seqhead(run_dir, device=device)   # v5: None without a history encoder / before the post stage
+    heads = load_heads(run_dir, device=device)        # v5: the field heads (device ...), {} before the post stage
+    graph = GraphScorer.load(run_dir, device=device)  # v5: the entity-graph models, None without any
+    specialists = Specialists.load(run_dir)            # v5: per-source boosters, None without any
     data = PreparedSet(prepared, splits=("val",))
     va = data["val"]
     names = data.source_names
@@ -147,7 +185,7 @@ def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, 
     # ---- pass 2: score type + blender on a labelled subsample --------------------------------
     fit_idx = _subsample(src, y, rng, FIT_ROWS, with_fraud=True)
     rf = score_split(model, va, batch_size=batch_size, n_samples=n_samples, device=device, idx=fit_idx, scorer=scorer,
-                     booster=booster, keep_features=False, keep_mu=False, seq=data.seq, split_name="val", seqhead=seqhead)
+                     booster=booster, keep_features=False, keep_mu=False, seq=data.seq, split_name="val", seqhead=seqhead, heads=heads, graph=graph, specialists=specialists)
     yf, sf = y[fit_idx], src[fit_idx]
     cands = {}
     for kind in ("raw", "norm"):
@@ -165,7 +203,7 @@ def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, 
         score_std[s] = max(float(rf[score_type][m].std()), 1e-6)
     gen_fit = np.sort(rng.choice(gen_idx, min(len(gen_idx), 200_000), replace=False))
     rfg = score_split(model, va, batch_size=batch_size, n_samples=n_samples, device=device, idx=gen_fit, scorer=scorer,
-                      booster=booster, src_override=0, keep_features=False, keep_mu=False, seq=data.seq, split_name="val", seqhead=seqhead)
+                      booster=booster, src_override=0, keep_features=False, keep_mu=False, seq=data.seq, split_name="val", seqhead=seqhead, heads=heads, graph=graph, specialists=specialists)
     yg = y[gen_fit]
     score_mean[0] = rfg[score_type][yg == 0].mean()
     score_std[0] = max(float(rfg[score_type][yg == 0].std()), 1e-6)
@@ -178,12 +216,17 @@ def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, 
     y_all = np.concatenate([yf, yg])
     s_all = np.concatenate([sf, np.zeros(len(gen_fit), dtype=sf.dtype)])
     fit_mask = (np.arange(len(X_all)) % 2) == 0
-    blend = _fit_logistic(X_all[fit_mask], y_all[fit_mask])
+    feature_names = Scorer.blend_feature_names(n_src, signals)
+    shrink = _interaction_shrink(feature_names, s_all[fit_mask], y_all[fit_mask])
+    blend = _fit_logistic(X_all[fit_mask], y_all[fit_mask], col_scale=shrink)
     blend.update({"score_type": score_type, "score_mean": score_mean.round(6).tolist(), "score_std": score_std.round(6).tolist(),
                   "signals": signals,
                   "features": "booster logit, VAE score z, KL z (each clipped), source one-hot, each of the three x "
                               "one-hot" + (", then per extra signal: value, present, value x one-hot" if signals else ""),
-                  "feature_names": Scorer.blend_feature_names(n_src, signals),
+                  "feature_names": feature_names,
+                  "interaction_shrink": {"ref_fraud_rows": SHRINK_REF,
+                                         "per_source": {names.get(int(s), "generic") if s else "generic": round(float(shrink[feature_names.index(f"booster*src{int(s)}")]), 4)
+                                                        for s in np.unique(s_all[fit_mask])}},
                   "fit_rows": int(fit_mask.sum()), "holdout_rows": int((~fit_mask).sum()), "with_booster": booster is not None,
                   "with_seq": "seq" in signals})
     scorer.set_blend(blend)
@@ -193,19 +236,20 @@ def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, 
         m = s_all[~fit_mask] == s_
         hold["sources"][names.get(int(s_), "generic") if s_ else "generic"] = auroc(y_all[~fit_mask][m], p_hold[m])
     blend["holdout"] = hold
-    log(f"  blender fit on {blend['fit_rows']:,} rows; held-out half auroc {hold['auroc']:.4f}"
-        + (" (with the history head)" if "seq" in signals else "") + f" ({time.time() - t0:.0f}s)")
+    shrunk = {k: v for k, v in blend["interaction_shrink"]["per_source"].items() if v < 0.999}
+    log(f"  blender fit on {blend['fit_rows']:,} rows; held-out half auroc {hold['auroc']:.4f}; per-bank weights shrunk "
+        f"toward the shared ones for {len(shrunk)} banks (smallest: "
+        + ", ".join(f"{k} {v:.2f}" for k, v in sorted(shrunk.items(), key=lambda kv: kv[1])[:3]) + f") ({time.time() - t0:.0f}s)")
     del X, Xg, X_all, rf, rfg
 
     # ---- pass 3: everything, once ---------------------------------------------------------------
     r = score_split(model, va, batch_size=batch_size, n_samples=n_samples, device=device, keep_features=False,
-                    scorer=scorer, booster=booster, progress=lambda n: log(f"  calibrate: scored {n:,}/{len(va):,}"), seq=data.seq, split_name="val", seqhead=seqhead)
+                    scorer=scorer, booster=booster, progress=lambda n: log(f"  calibrate: scored {n:,}/{len(va):,}"), seq=data.seq, split_name="val", seqhead=seqhead, heads=heads, graph=graph, specialists=specialists)
     log(f"  pass 3: scored {len(va):,} val rows ({time.time() - t0:.0f}s)")
     rgen = score_split(model, va, batch_size=batch_size, n_samples=n_samples, device=device, idx=gen_idx,
-                       keep_features=False, scorer=scorer, booster=booster, src_override=0, keep_mu=False, seq=data.seq, split_name="val", seqhead=seqhead)
+                       keep_features=False, scorer=scorer, booster=booster, src_override=0, keep_mu=False, seq=data.seq, split_name="val", seqhead=seqhead, heads=heads, graph=graph, specialists=specialists)
     gy = y[gen_idx]
     score = r[score_type]
-    has_seq = "seq" in r
 
     cal = {
         "created": time.strftime("%Y-%m-%dT%H:%M:%S"), "n_samples": n_samples, "prepared": prepared,
@@ -214,9 +258,11 @@ def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, 
         "score_type": score_type, "score_type_candidates": cands,
         "baselines": baselines, "fpr_targets": list(FPR_TARGETS),
         "sources": {}, "booster": {"sources": {}} if booster is not None else None,
-        "seq": {"sources": {}} if has_seq else None,
         "blend": {**blend, "sources": {}},
     }
+    for sig in extra_signals(r):
+        cal[sig] = {"sources": {}}
+    cal.setdefault("seq", None)
     std_score = np.zeros_like(score)
     for s in np.unique(src):
         m = src == s
@@ -230,12 +276,15 @@ def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, 
         cal["sources"][name] = block
         if booster is not None:
             cal["booster"]["sources"][name] = _dist_block(y[m], _sigmoid(r["booster"][m]))
-        if has_seq:
-            cal["seq"]["sources"][name] = _dist_block(y[m], _sigmoid(r["seq"][m]))
+        extra_txt = ""
+        for sig in extra_signals(r):
+            sb = _signal_block(y[m], r[sig][m])
+            cal[sig]["sources"][name] = sb
+            extra_txt += f" | {sig} {sb['auroc']:.4f}" if sb else f" | {sig} -"
         cal["blend"]["sources"][name] = _dist_block(y[m], r["blend"][m])
         log(f"  {name}: vae {block['auroc']:.4f} (raw {block['auroc_raw']:.4f} / norm {block['auroc_norm']:.4f})"
             + (f" | booster {cal['booster']['sources'][name]['auroc']:.4f}" if booster is not None else "")
-            + (f" | seq {cal['seq']['sources'][name]['auroc']:.4f}" if has_seq else "")
+            + extra_txt
             + f" | blend {cal['blend']['sources'][name]['auroc']:.4f} recall@1%fpr "
             f"{cal['blend']['sources'][name]['thresholds']['fpr_0.01']['recall']:.3f}")
 
@@ -244,8 +293,8 @@ def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, 
         "auroc_raw": auroc(gy, rgen["raw"]), "auroc_norm": auroc(gy, rgen["norm"]), "note": note})
     if booster is not None:
         cal["booster"]["generic"] = _dist_block(gy, _sigmoid(rgen["booster"]), extra={"note": note})
-    if has_seq:
-        cal["seq"]["generic"] = _dist_block(gy, _sigmoid(rgen["seq"]), extra={"note": note})
+    for sig in extra_signals(rgen):
+        cal[sig]["generic"] = _signal_block(gy, rgen[sig], extra={"note": note})
     cal["blend"]["generic"] = _dist_block(gy, rgen["blend"], extra={"note": note})
     log(f"  generic context: vae {cal['generic']['auroc']:.4f}"
         + (f" | booster {cal['booster']['generic']['auroc']:.4f}" if booster is not None else "")
@@ -256,9 +305,12 @@ def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, 
     cal["mean_val_auroc"] = {
         "vae": float(np.mean([b["auroc"] for b in cal["sources"].values()])),
         "booster": float(np.mean([b["auroc"] for b in cal["booster"]["sources"].values()])) if booster is not None else None,
-        "seq": float(np.mean([b["auroc"] for b in cal["seq"]["sources"].values()])) if has_seq else None,
         "blend": float(np.mean([b["auroc"] for b in cal["blend"]["sources"].values()])),
     }
+    for sig in extra_signals(r):
+        vals = [b["auroc"] for b in cal[sig]["sources"].values() if b]
+        cal["mean_val_auroc"][sig] = float(np.mean(vals)) if vals else None
+    cal["mean_val_auroc"].setdefault("seq", None)
 
     # ---- latent map ------------------------------------------------------------------------------
     legit_idx = np.flatnonzero(y == 0)
