@@ -21,13 +21,14 @@ import numpy as np
 import torch
 
 from ..data import schema
+from ..data.schema import ENTITY_LABEL_DELAY_FAST_DAYS as FAST_DELAY_DAYS
 from .vae import TabularVAE
 
 N_SOURCES = len(schema.SOURCES)
 
 # the extra blend signals, in the order they appear on receipts: the sequence head and the
-# field heads (device today; text / behaviour as those modules land)
-EXTRA_SIGNALS = ("seq", "local", "device", "text", "behaviour")
+# field heads (device today; graph / text / behaviour as those modules land)
+EXTRA_SIGNALS = ("seq", "local", "device", "graph", "text", "behaviour")
 
 
 def extra_signals(r: dict) -> list[str]:
@@ -225,15 +226,35 @@ def history_window(model) -> int:
     return int(model.history_cfg.get("window", 32)) if getattr(model, "history_cfg", None) else 0
 
 
+@torch.no_grad()
+def label_delay_wide(wide, wide_names, label_delay_days) -> "np.ndarray | None":
+    """the wide block as a deployment with the given label latency would have it: the
+    one-week-delay columns (wide__*_fast*) are NaN once labels take longer than that to
+    arrive. None / 0 = as trained. the schema's 30-day block is left alone (a latency beyond a
+    month is outside what the model was trained for; the receipt says so)."""
+    if wide is None or not label_delay_days or label_delay_days <= FAST_DELAY_DAYS:
+        return wide
+    from .booster import fast_columns
+
+    cols = fast_columns(wide_names)
+    if not cols:
+        return wide
+    wide = np.array(wide, dtype=np.float32, copy=True)
+    wide[:, cols] = np.nan
+    return wide
+
+
 def score_split(model, split, batch_size=8192, n_samples=8, device="cpu", idx=None, keep_features=True,
                 progress=None, scorer: Scorer | None = None, src_override=None, booster=None, keep_mu=True,
-                seq=None, split_name=None, keep_h=False, seqhead=None, heads=None, specialists=None):
+                seq=None, split_name=None, keep_h=False, seqhead=None, heads=None, graph=None, specialists=None,
+                label_delay_days=None):
     """score every row of a PreparedSplit (or the given idx). results come back in the order
     of idx (or row order). src_override=0 scores everything in the 'generic' context. with a
     booster the per-row booster logit comes back as 'booster', and if the scorer has a blender,
     'blend' too. seq + split_name: the v5 sequence index, so a history model gets its windows
     (rows are then visited in customer order and the results re-sorted into idx order).
     heads: {name: FieldHead}; each adds its logit under its name, NaN where its block is absent.
+    graph: a GraphScorer; adds 'graph' from the row's entity codes (split.ent), snapshot by split_name.
     specialists: the per-source boosters; adds 'local', NaN for rows of a source without one."""
     model.eval()
     chunks = {"raw": [], "kl": []}
@@ -257,6 +278,9 @@ def score_split(model, split, batch_size=8192, n_samples=8, device="cpu", idx=No
     heads = heads or {}
     for name in heads:
         chunks[name] = []
+    use_graph = graph is not None and getattr(split, "ent", None) is not None
+    if use_graph:
+        chunks["graph"] = []
     if specialists is not None:
         chunks["local"] = []
     n_done = 0
@@ -272,14 +296,18 @@ def score_split(model, split, batch_size=8192, n_samples=8, device="cpu", idx=No
             r["seq"] = seqhead.logit(model, num, mask, cat, src, torch.from_numpy(r["h"]).to(num.device))
         for name, head in heads.items():
             r[name] = head.logit(num, mask, cat, src)
+        if use_graph:
+            r["graph"] = graph.logit_rows(s_np, np.asarray(split.ent[np.asarray(b)]), which=split_name or "test")
         if scorer is not None:
             r["norm"] = scorer.norm(r, s_np)
         if booster is not None:
             wide = split.wide(b) if (booster.wide_names and getattr(split, "n_wide", 0)) else None
+            wide = label_delay_wide(wide, booster.wide_names, label_delay_days)
             r["booster"] = booster.logit(num.cpu().numpy(), mask.cpu().numpy(), cat.cpu().numpy(), s_np, wide=wide,
                                          hist=r.get("h") if booster.hist_dim else None)
         if specialists is not None:
             wide_l = split.wide(b) if getattr(split, "n_wide", 0) else None
+            wide_l = label_delay_wide(wide_l, getattr(split, "wide_names", []), label_delay_days)
             r["local"] = specialists.logit(num.cpu().numpy(), mask.cpu().numpy(), cat.cpu().numpy(), s_np, wide=wide_l,
                                            hist=r.get("h"))
         if scorer is not None and scorer.blend:
