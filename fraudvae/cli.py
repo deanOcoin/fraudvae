@@ -74,6 +74,7 @@ COMMANDS = {
     "train": lambda argv: __import__("fraudvae.train", fromlist=["main"]).main(argv),
     "boost": lambda argv: __import__("fraudvae.model.booster", fromlist=["main"]).main(argv),
     "post": lambda argv: __import__("fraudvae.train", fromlist=["post_main"]).post_main(argv),
+    "graph-bench": lambda argv: __import__("fraudvae.graph.bench", fromlist=["main"]).main(argv),
     "calibrate": lambda argv: __import__("fraudvae.calibrate", fromlist=["main"]).main(argv),
     "evaluate": lambda argv: __import__("fraudvae.evaluate", fromlist=["main"]).main(argv),
     "serve": _serve,
