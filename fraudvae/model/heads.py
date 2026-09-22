@@ -89,18 +89,21 @@ class FieldHead(nn.Module):
 
     def present(self, mask, cat) -> torch.Tensor:
         """bool per row: at least one field of the block observed"""
+        # the index buffers follow the module's device; the batch may be on another (the
+        # presence scan runs on cpu batches while the head trains on the gpu)
         p = torch.zeros(mask.shape[0], dtype=torch.bool, device=mask.device)
         if len(self.pres_num_idx):
-            p |= mask[:, self.pres_num_sel].sum(1) > 0
+            p |= mask[:, self.pres_num_sel.to(mask.device)].sum(1) > 0
         if len(self.pres_cat_idx):
-            p |= (cat[:, self.pres_cat_sel] > 0).any(1)
+            p |= (cat[:, self.pres_cat_sel.to(cat.device)] > 0).any(1)
         return p
 
     def forward(self, num, mask, cat, src):
         parts = []
         if len(self.num_idx):
-            m = mask[:, self.num_sel]
-            parts += [num[:, self.num_sel] * m, m]
+            sel = self.num_sel.to(num.device)
+            m = mask[:, sel]
+            parts += [num[:, sel] * m, m]
         for k, emb in enumerate(self.cat_emb):
             parts.append(emb(cat[:, self.cat_sel[k]]))
         parts.append(self.src_emb(src.clamp(0, self.n_sources)))
@@ -123,24 +126,17 @@ def head_path(run_dir: Path, name: str) -> Path:
     return Path(run_dir) / f"head_{name}.pt"
 
 
-def load_head(run_dir: Path, name: str, device="cpu") -> FieldHead | None:
-    p = head_path(run_dir, name)
-    if not p.exists():
-        return None
-    ck = torch.load(p, map_location=device, weights_only=False)
-    cfg = ck["config"]
-    head = FieldHead(cfg["name"], cfg["num_idx"], cfg["cat_idx"], cfg["cat_sizes"], cfg["n_sources"], cfg["hidden"],
-                     cfg.get("pres_num_idx"), cfg.get("pres_cat_idx"))
-    head.load_state_dict(ck["state_dict"])
-    return head.to(device).eval()
-
-
 def load_heads(run_dir: Path, device="cpu") -> dict[str, FieldHead]:
+    """every head_<name>.pt in the run, by name. an empty dict for a run without heads."""
     heads = {}
-    for name in HEAD_SPECS:
-        head = load_head(run_dir, name, device)
-        if head is not None:
-            heads[name] = head
+    for p in sorted(Path(run_dir).glob("head_*.pt")):
+        ck = torch.load(p, map_location=device, weights_only=False)
+        cfg = ck["config"]
+        head = FieldHead(cfg["name"], cfg["num_idx"], cfg["cat_idx"], cfg["cat_sizes"], cfg["n_sources"], cfg["hidden"],
+                         cfg.get("pres_num_idx"), cfg.get("pres_cat_idx"))
+        head.load_state_dict(ck["state_dict"])
+        head.to(device).eval()
+        heads[cfg["name"]] = head
     return heads
 
 
@@ -148,11 +144,10 @@ def _rows_with_block(split, head: FieldHead, chunk=200_000) -> np.ndarray:
     """indices of the rows where the block is observed, without loading the split twice"""
     keep = []
     n = len(split)
-    dev = head.num_sel.device
     for s in range(0, n, chunk):
         b = np.arange(s, min(n, s + chunk))
-        _, mask, cat, _ = split.batch(b, dev)
-        keep.append(b[head.present(mask, cat).cpu().numpy()])
+        _, mask, cat, _ = split.batch(b, "cpu")
+        keep.append(b[head.present(mask, cat).numpy()])
     return np.concatenate(keep) if keep else np.zeros(0, dtype=np.int64)
 
 
@@ -198,8 +193,9 @@ def train_head(name: str, run_dir: Path, prepared: str, device="cpu", log=print,
     pos_weight = min(float((y_tr == 0).sum() / max(1, (y_tr == 1).sum())), 50.0)
     opt = torch.optim.AdamW(head.parameters(), lr=lr, weight_decay=1e-5)
     loss_fn = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(pos_weight, device=device))
+    by_src = {data.source_names.get(int(s), str(int(s))): int((tr.src[:][tr_idx] == s).sum()) for s in np.unique(tr.src[:][tr_idx])}
     log(f"  {name} head: {len(num_idx)} numerics + {len(cat_idx)} categoricals, {len(tr_idx):,} train rows "
-        f"({int(y_tr.sum()):,} fraud), {len(va_idx):,} val rows, pos_weight {pos_weight:.0f}")
+        f"({int(y_tr.sum()):,} fraud) from {by_src}, {len(va_idx):,} val rows, pos_weight {pos_weight:.0f}")
     gen = torch.Generator(device="cpu").manual_seed(seed)
     for ep in range(epochs):
         head.train()
