@@ -117,11 +117,12 @@ function readForm() {
   const fd = new FormData(form);
   const features = {};
   for (const [k, v] of fd.entries()) {
-    if (k === "source" || k === "fpr_target") continue;
+    if (k === "source" || k === "fpr_target" || k === "label_delay_days") continue;
     if (v === "" || v == null) continue;
     features[k] = v;
   }
-  return { source: fd.get("source") || null, fpr_target: fd.get("fpr_target"), features };
+  return { source: fd.get("source") || null, fpr_target: fd.get("fpr_target"), features,
+           label_delay_days: Number(fd.get("label_delay_days") || 7) };
 }
 
 function fillForm(features, source) {
@@ -167,6 +168,7 @@ function wireForm() {
     }
   }));
   document.getElementById("fpr-select").addEventListener("change", () => { if (lastResult) score(lastResult._label); });
+  document.getElementById("delay-select").addEventListener("change", () => { if (lastResult) score(lastResult._label); });
   document.getElementById("batch-form").addEventListener("submit", batchScore);
 }
 
@@ -266,6 +268,11 @@ function renderReceipt(r, label) {
     const sf = sup.flag == null ? "" : (sup.flag ? "  FLAG" : "  ok");
     lines.push(`<div class="rc-line"><span class="k">p(fraud) on its own</span><span class="${sup.flag ? "z hot" : ""}">${(100 * sup.prob).toFixed(sup.prob < 0.1 ? 2 : 1)}%${sf}</span></div>`);
     if (sup.legit_percentile != null) lines.push(`<div class="rc-line"><span class="k">percentile of legit</span><span>${pctText(sup.legit_percentile, "")}</span></div>`);
+    if (r.labels) {
+      const lb = r.labels;
+      const txt = lb.fast_block === "blanked" ? `blanked (labels take ${lb.latency_days}d)` : lb.fast_block === "used" ? "one-week history used" : "not in this request";
+      lines.push(`<div class="rc-line"><span class="k">fast fraud history</span><span>${esc(txt)}</span></div>`);
+    }
     const pushes = (sup.pushes || []).slice(0, showAll ? 12 : 6);
     const maxC = Math.max(0.5, ...pushes.map((c) => Math.abs(c.contribution)));
     lines.push(`<div class="rc-line"><span class="k">feature</span><span class="k">push (log-odds)</span></div>`);
@@ -366,7 +373,7 @@ async function batchScore(ev) {
   const fd = new FormData(form);
   const src = document.getElementById("source-select").value;
   const fpr = document.getElementById("fpr-select").value;
-  const q = new URLSearchParams({ fpr_target: fpr });
+  const q = new URLSearchParams({ fpr_target: fpr, label_delay_days: document.getElementById("delay-select").value });
   if (src) q.set("source", src);
   status.textContent = "scoring file"; status.classList.add("spin");
   try {

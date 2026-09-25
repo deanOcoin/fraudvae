@@ -47,7 +47,15 @@
                 <option value="fpr_0.02">2%</option>
                 <option value="fpr_0.05">5%</option>
               </select>
-              <small>Threshold chosen so this share of legitimate validation transactions gets flagged.</small>
+              <small>Threshold set on validation data so this share of legitimate transactions gets flagged.</small>
+            </label>
+            <label class="field">
+              <span>Fraud labels arrive within</span>
+              <select name="label_delay_days" id="delay-select">
+                <option value="7" selected>a week (one-week fraud history used)</option>
+                <option value="30">a month (one-week block blanked)</option>
+              </select>
+              <small>How fast this deployment learns a transaction was fraud. Past a week the booster must not see the one-week entity fraud history; the 30-day block stays.</small>
             </label>
           </div>
           <div class="example-row">

@@ -22,8 +22,9 @@ import torch
 
 from ..data import schema
 from ..data.prepare import DERIVED_CATS, transform_numeric
-from ..model.booster import Booster, BoosterUnavailable, Specialists
-from ..model.scoring import Scorer, score_batch
+from ..data.schema import ENTITY_LABEL_DELAY_DAYS as SLOW_DELAY_DAYS, ENTITY_LABEL_DELAY_FAST_DAYS as FAST_DELAY_DAYS
+from ..model.booster import Booster, BoosterUnavailable, Specialists, fast_columns
+from ..model.scoring import Scorer, score_batch, label_delay_wide
 from ..graph.build import KINDS as ENTITY_KINDS
 from ..graph.scorer import GraphScorer
 from ..model.heads import load_heads
@@ -59,6 +60,21 @@ def run_schema_version(run_dir: Path) -> int | None:
         return None
     v = r.get("schema_version") or (r.get("prepared_meta") or {}).get("schema_version")
     return int(v) if v else 3
+
+
+_ENTITY_WORDS = {"cpty": "counterparty", "cust": "customer", "addr": "address", "device": "device", "email": "email", "card": "card"}
+
+
+def _wide_label(col: str) -> str:
+    """a wide column's receipt label: the raw name for a source's own columns, words for the
+    one-week fraud-history block (cust_fraud_share_fast_w30 -> customer fraud share, week-old
+    labels, last 30 days)"""
+    parts = col.split("_")
+    if len(parts) >= 4 and parts[1] == "fraud" and parts[2] in ("count", "share") and parts[3] == "fast":
+        who = _ENTITY_WORDS.get(parts[0], parts[0])
+        window = f", last {parts[4][1:]} days" if len(parts) > 4 and parts[4].startswith("w") else ""
+        return f"{who} fraud {parts[2]}, week-old labels{window}"
+    return col + " (raw)"
 
 
 class ActiveModel:
@@ -210,7 +226,7 @@ class ActiveModel:
         return row
 
     def score(self, features: dict, source: str | None = None, fpr_target: str = "fpr_0.01", wide: dict | None = None,
-              device: dict | None = None, entities: dict | None = None) -> dict:
+              device: dict | None = None, entities: dict | None = None, label_delay_days: float | None = None) -> dict:
         """wide: the source's own raw columns keyed by raw name ({'V1': 3.0, 'DeviceInfo': 12}), the
         v5 wide block; only the booster reads it and only for a source that has one.
         device: the device telemetry payload (see payloads.py), mapped onto the device block.
@@ -254,6 +270,17 @@ class ActiveModel:
             num_np, mask_np, cat_np = num.cpu().numpy(), mask.cpu().numpy(), cat.cpu().numpy()
             # v5: the source's raw columns, if the caller has them ({'V1': 3.0} keyed by the raw name)
             wide_np = self.booster.wide_vector({f"{ctx}.{k}": v for k, v in (wide or {}).items()}) if self.booster.wide_names else None
+            # v5: a deployment whose fraud labels take longer than a week to arrive must not be
+            # scored with the one-week label block; blank it (the booster trained on that regime too)
+            fast_cols = fast_columns(self.booster.wide_names) if self.booster.wide_names else []
+            fast_given = bool(wide_np is not None and fast_cols and np.isfinite(wide_np[0, fast_cols]).any())
+            if label_delay_days and fast_cols:
+                wide_np = label_delay_wide(wide_np, self.booster.wide_names, label_delay_days)
+            out["labels"] = {"latency_days": float(label_delay_days) if label_delay_days else None,
+                             "fast_block": "blanked" if (label_delay_days and label_delay_days > FAST_DELAY_DAYS and fast_given)
+                             else ("used" if fast_given else "not sent"),
+                             "note": f"the one-week-delay fraud history (wide *_fast columns) counts only for labels known within "
+                                     f"{FAST_DELAY_DAYS:g} days; the schema's delayed block assumes {SLOW_DELAY_DAYS:g}"}
             b_logit = self.booster.logit(num_np, mask_np, cat_np, np.array([src_idx]), threads=1, wide=wide_np)
             p_sup = float(1.0 / (1.0 + math.exp(-max(min(float(b_logit[0]), 30), -30))))
             sup = {"prob": p_sup, "logit": float(b_logit[0])}
@@ -391,7 +418,7 @@ class ActiveModel:
                 continue
             val = None if wide is None else float(wide[0, j])
             observed = val is not None and val == val
-            items.append({"feature": name, "label": name.split(".", 1)[-1] + " (raw)", "kind": "wide",
+            items.append({"feature": name, "label": _wide_label(name.split(".", 1)[-1]), "kind": "wide",
                           "contribution": c, "observed": val if observed else None, "is_observed": bool(observed)})
         items.sort(key=lambda d: -abs(d["contribution"]))
         total = float(np.abs(contrib).sum()) or 1.0
@@ -399,7 +426,7 @@ class ActiveModel:
             it["share"] = abs(it["contribution"]) / total
         return items[:top]
 
-    def score_frame(self, df, source_col="source", fpr_target="fpr_0.01", batch_size=4096):
+    def score_frame(self, df, source_col="source", fpr_target="fpr_0.01", batch_size=4096, label_delay_days=None):
         """vectorised scoring of a unified-schema DataFrame (raw units). returns a DataFrame with
         p_fraud + flag (the blend), booster_prob, novelty_score / novelty_flag (the VAE)"""
         import pandas as pd
@@ -451,6 +478,8 @@ class ActiveModel:
             for k in df.columns:
                 if k in self.booster.wide_index:
                     wide[:, self.booster.wide_index[k]] = pd.to_numeric(df[k], errors="coerce").to_numpy(dtype=np.float32)
+            # v5: a deployment whose labels take longer than a week never had the one-week block
+            wide = label_delay_wide(wide, self.booster.wide_names, label_delay_days)
 
         raw = np.zeros(n, dtype=np.float32)
         norm = np.zeros(n, dtype=np.float32)
