@@ -133,10 +133,10 @@ details.batch summary { cursor: pointer; font-weight: 500; }
 .rc-verdict .big { font-size: 1.6rem; display: block; line-height: 1.1; }
 .rc-line { display: flex; justify-content: space-between; gap: 1rem; padding: 0.15rem 0; }
 .rc-line .k { color: var(--ink-2); }
-.rc-line .v { font-variant-numeric: tabular-nums; }
 .rc-sep { border-top: 1px dashed var(--ink-3); margin: 0.6rem 0; }
-.rc-sub { font-weight: 600; letter-spacing: 0.06em; margin: 0.4rem 0; }
-.rc-bar > i.cold { background: var(--line); }
+.rc-sub { font-weight: 600; letter-spacing: 0.06em; margin: 0.2rem 0 0.3rem; }
+.rc-sub .dim { font-weight: 400; letter-spacing: 0; }
+.rc-bar > i.calm { background: var(--calm); opacity: 0.55; }
 .rc-items { margin-top: 0.4rem; }
 .rc-item { padding: 0.3rem 0; }
 .rc-item .top { display: flex; justify-content: space-between; gap: 0.6rem; }
@@ -288,3 +288,13 @@ details.batch summary { cursor: pointer; font-weight: 500; }
   .content { padding: 1.2rem 1rem 3rem; }
   .form-top, .chart-pair { grid-template-columns: 1fr; }
 }
+
+
+/* v5: customer history box on the score form */
+.history-box { margin: 10px 0 4px; border: 1px dashed var(--line, #d7d9de); border-radius: 6px; padding: 6px 10px; }
+.history-box summary { cursor: pointer; font-weight: 600; }
+.history-box label { display: block; margin: 8px 0; }
+.history-box label span { display: block; font-size: 12px; margin-bottom: 3px; }
+.history-box textarea { width: 100%; font-family: var(--mono, monospace); font-size: 12px; box-sizing: border-box; }
+.history-box input[type=text] { width: 260px; }
+.rc-line.dim span { color: var(--dim, #777); font-size: 12px; }

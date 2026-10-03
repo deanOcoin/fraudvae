@@ -24,12 +24,16 @@ from ..data import schema
 from ..data.prepare import DERIVED_CATS, transform_numeric
 from ..data.schema import ENTITY_LABEL_DELAY_DAYS as SLOW_DELAY_DAYS, ENTITY_LABEL_DELAY_FAST_DAYS as FAST_DELAY_DAYS
 from ..model.booster import Booster, BoosterUnavailable, Specialists, fast_columns
-from ..model.scoring import Scorer, score_batch, label_delay_wide
+from ..model.scoring import Scorer, history_window, score_batch, label_delay_wide
 from ..graph.build import KINDS as ENTITY_KINDS
 from ..graph.scorer import GraphScorer
 from ..model.heads import load_heads
+from ..behaviour.scorer import BehaviourScorer, merge_enrolment
+from ..text.scorer import TextScorer
+from ..model.seqhead import load_seqhead
 from ..model.vae import load_checkpoint
-from ..paths import RUNS_DIR
+from ..paths import APP_HOME, RUNS_DIR
+from .entity_store import EntityStore
 from .payloads import merge_payloads
 
 _lock = threading.Lock()
@@ -117,6 +121,10 @@ class ActiveModel:
             self.specialists = Specialists.load(self.run_dir) if self.booster is not None else None
         except BoosterUnavailable:
             self.specialists = None
+        # v5: the customer-history side. window 0 = a model without a history encoder
+        self.window = history_window(self.model)
+        self.seqhead = load_seqhead(self.run_dir, device=self.device) if self.window else None
+        self.store = EntityStore(APP_HOME / "entity_store.sqlite", self.name) if self.window else None
         # v5: the field heads (device ...), each a blend signal with a receipt block of its own
         self.heads = load_heads(self.run_dir, device=self.device)
         self.head_info = {}
@@ -125,6 +133,14 @@ class ActiveModel:
             self.head_info[name] = json.loads(p.read_text()) if p.exists() else {}
         # v5: the entity-graph models (one per source with entities); None for a run without any
         self.graph = GraphScorer.load(self.run_dir, device=self.device)
+        # v5: the text heads; their likelihood ratios are fused into the final probability
+        self.text = TextScorer.load(self.run_dir, device=self.device)
+        # v5: the behaviour verifiers; enrolments live in the entity store per customer
+        self.behaviour = BehaviourScorer.load(self.run_dir, device=self.device)
+        if self.store is None and self.behaviour is not None:
+            self.store = EntityStore(APP_HOME / "entity_store.sqlite", self.name)
+        self.fusion_weights = {"text": float((self.train_config.get("text") or {}).get("fusion_weight", 0.5)),
+                               "behaviour": float((self.train_config.get("behaviour") or {}).get("fusion_weight", 1.0))}
         self.loaded_at = time.time()
 
     # -- encoding -------------------------------------------------------------------
@@ -211,6 +227,21 @@ class ActiveModel:
             "context_auroc": cal.get("auroc"),
         }
 
+    def _fuse(self, blend_prob: float, llrs: dict[str, list[float]]) -> dict | None:
+        """blend probability + external likelihood ratios -> final probability. each ratio is
+        clipped to +-6 (one text field cannot say more than e^6), summed per module, weighted."""
+        terms = {}
+        for module, vals in llrs.items():
+            vals = [float(np.clip(v, -6.0, 6.0)) for v in vals if v == v]
+            if vals:
+                terms[module] = {"llr": float(sum(vals)), "weight": self.fusion_weights.get(module, 1.0), "n": len(vals)}
+        if not terms:
+            return None
+        p = min(max(blend_prob, 1e-6), 1 - 1e-6)
+        base = math.log(p / (1 - p))
+        final = base + sum(t["llr"] * t["weight"] for t in terms.values())
+        return {"blend_logit": base, "terms": terms, "logit": final, "prob": float(1.0 / (1.0 + math.exp(-max(min(final, 30), -30))))}
+
     @staticmethod
     def _entity_row(entities: dict | None) -> np.ndarray:
         """{kind: code} -> [1, 6] int64 codes, -1 where not given / not an integer"""
@@ -225,23 +256,79 @@ class ActiveModel:
                 continue
         return row
 
+    def history_tensors(self, rows: list, source: str | None, cur_ts: float):
+        """v5: past transactions -> the window tensors the history encoder wants (oldest first,
+        padded at the front). rows: [(ts, num, mask, cat)] in model space, as the entity store
+        hands them out, or dicts {"features": {...}, "ts": epoch_seconds | "secs_before": s}
+        in raw units, as the API accepts them."""
+        L = self.window
+        D, C = len(self.numeric), len(self.categorical)
+        h_num = np.zeros((1, L, D), dtype=np.float32)
+        h_mask = np.zeros((1, L, D), dtype=np.float32)
+        h_cat = np.zeros((1, L, C), dtype=np.int64)
+        h_dt = np.zeros((1, L), dtype=np.float32)
+        h_valid = np.zeros((1, L), dtype=bool)
+        enc = []
+        for row in rows[-L:]:
+            if isinstance(row, dict):
+                feats = row.get("features", row)
+                n_, m_, c_, _, _ = self.encode(feats, source)
+                ts = float(row["ts"]) if row.get("ts") is not None else cur_ts - float(row.get("secs_before", 0.0))
+                enc.append((ts, n_.cpu().numpy()[0], m_.cpu().numpy()[0], c_.cpu().numpy()[0]))
+            else:
+                enc.append(row)
+        for k, (ts, n_, m_, c_) in enumerate(enc):
+            pos = L - len(enc) + k
+            h_num[0, pos], h_mask[0, pos], h_cat[0, pos] = n_, m_, c_
+            h_dt[0, pos] = math.log1p(max(cur_ts - ts, 0.0)) / 10.0
+            h_valid[0, pos] = True
+        dev = self.device
+        return (torch.from_numpy(h_num).to(dev), torch.from_numpy(h_mask).to(dev), torch.from_numpy(h_cat).to(dev),
+                torch.from_numpy(h_dt).to(dev), torch.from_numpy(h_valid).to(dev)), len(enc)
+
     def score(self, features: dict, source: str | None = None, fpr_target: str = "fpr_0.01", wide: dict | None = None,
-              device: dict | None = None, entities: dict | None = None, label_delay_days: float | None = None) -> dict:
+              history: list | None = None, customer_id: str | None = None, ts: float | None = None,
+              remember: bool = True, device: dict | None = None, entities: dict | None = None,
+              text: dict | None = None, session: dict | None = None, label_delay_days: float | None = None) -> dict:
         """wide: the source's own raw columns keyed by raw name ({'V1': 3.0, 'DeviceInfo': 12}), the
         v5 wide block; only the booster reads it and only for a source that has one.
+        history: the customer's previous transactions, oldest first (dicts with 'features' and
+        'ts' or 'secs_before'); customer_id: lets the server's entity store supply the history
+        instead, and remember this transaction for next time (remember=False to only read).
+        ts: this transaction's epoch seconds (default: now), for the elapsed-time features.
         device: the device telemetry payload (see payloads.py), mapped onto the device block.
         entities: {customer, counterparty, device, email, address, card: <entity code in the source>}
         for the graph module (codes as the source's build assigned them; unknown ones are simply
-        entities the graph has not seen)."""
+        entities the graph has not seen).
+        text: {url, description, memo, profile ...}: free text for the text heads; their likelihood
+        ratios are added to the blend's log-odds (the fusion step) rather than blended, because no
+        training row ever carried text.
+        session: raw interaction events per modality (see behaviour/scorer.py); compared with the
+        customer's enrolled behaviour profile (customer_id) and enrolled for next time."""
         features = merge_payloads(features, device=device)
         num, mask, cat, src, src_idx = self.encode(features, source)
+        cur_ts = float(ts) if ts is not None else time.time()
+        hist, n_hist, hist_from = None, 0, None
+        if self.window:
+            if history:
+                hist, n_hist = self.history_tensors(list(history), source, cur_ts)
+                hist_from = "request"
+            elif customer_id is not None and self.store is not None:
+                past = self.store.last(source or "", customer_id, cur_ts, self.window)
+                if past:
+                    hist, n_hist = self.history_tensors(past, source, cur_ts)
+                hist_from = "entity store"
         with _lock:
-            r = score_batch(self.model, num, mask, cat, src, n_samples=self.n_samples)
+            r = score_batch(self.model, num, mask, cat, src, n_samples=self.n_samples, hist=hist)
+            if self.seqhead is not None:
+                r["seq"] = self.seqhead.logit(self.model, num, mask, cat, src, torch.from_numpy(r["h"]).to(self.device))
             for name, head in self.heads.items():
                 r[name] = head.logit(num, mask, cat, src)
         ent = self._entity_row(entities)
         if self.graph is not None and src_idx:
             r["graph"] = self.graph.logit_rows(np.array([src_idx]), ent, which="test")
+        if customer_id is not None and self.store is not None and remember:
+            self.store.append(source or "", customer_id, cur_ts, num.cpu().numpy()[0], mask.cpu().numpy()[0], cat.cpu().numpy()[0])
         raw = float(r["raw"][0])
         kl = float(r["kl"][0])
         nll_num, nll_cat = r["nll_num"][0], r["nll_cat"][0]
@@ -281,20 +368,22 @@ class ActiveModel:
                              else ("used" if fast_given else "not sent"),
                              "note": f"the one-week-delay fraud history (wide *_fast columns) counts only for labels known within "
                                      f"{FAST_DELAY_DAYS:g} days; the schema's delayed block assumes {SLOW_DELAY_DAYS:g}"}
-            b_logit = self.booster.logit(num_np, mask_np, cat_np, np.array([src_idx]), threads=1, wide=wide_np)
+            hist_np = r["h"] if (self.booster.hist_dim and r.get("h") is not None) else None
+            b_logit = self.booster.logit(num_np, mask_np, cat_np, np.array([src_idx]), threads=1, wide=wide_np, hist=hist_np)
             p_sup = float(1.0 / (1.0 + math.exp(-max(min(float(b_logit[0]), 30), -30))))
             sup = {"prob": p_sup, "logit": float(b_logit[0])}
             bcal, bkind = self._calibration_for(ctx, name="booster")
             sup["calibration"] = bkind
             if bcal:
                 sup.update(self._operating(bcal, p_sup, fpr_target))
-            contrib = self.booster.contributions(num_np, mask_np, cat_np, np.array([src_idx]), wide=wide_np)[0]
+            contrib = self.booster.contributions(num_np, mask_np, cat_np, np.array([src_idx]), wide=wide_np, hist=hist_np)[0]
             sup["bias"] = float(contrib[-1])
             sup["pushes"] = self._booster_pushes(contrib[:-1], num, mask, cat, features, wide=wide_np)
             out["supervised"] = sup
             # v5: this bank's own specialist, when it has one
             if self.specialists is not None:
-                r["local"] = self.specialists.logit(num_np, mask_np, cat_np, np.array([src_idx]), wide=wide_np, threads=1)
+                r["local"] = self.specialists.logit(num_np, mask_np, cat_np, np.array([src_idx]), wide=wide_np, threads=1,
+                                                    hist=r.get("h"))
                 lb = {"present": bool(np.isfinite(r["local"][0])), "label": "Bank specialist", "fields": []}
                 if lb["present"]:
                     lg = float(r["local"][0])
@@ -304,6 +393,18 @@ class ActiveModel:
                     if lcal:
                         lb.update(self._operating(lcal, lb["prob"], fpr_target))
                 out["local"] = lb
+
+        # -- v5 sequence: the history read-out through the sequence head -------------------
+        if self.window:
+            sq = {"n_history": int(n_hist), "window": int(self.window), "history_from": hist_from}
+            if "seq" in r:
+                lg = float(r["seq"][0])
+                sq.update({"logit": lg, "prob": float(1.0 / (1.0 + math.exp(-max(min(lg, 30), -30))))})
+                scal, skind = self._calibration_for(ctx, name="seq")
+                sq["calibration"] = skind
+                if scal:
+                    sq.update(self._operating(scal, sq["prob"], fpr_target))
+            out["sequence"] = sq
 
         # -- v5 field heads: the device block (and whatever lands next) through its own head -----
         for name, head in self.heads.items():
@@ -335,6 +436,26 @@ class ActiveModel:
                     gb.update(self._operating(gcal, gb["prob"], fpr_target))
             out["graph"] = gb
 
+        # -- v5 text: free text through the text heads, as likelihood ratios ----------------------
+        text_terms = self.text.score(text) if (self.text is not None and text) else {}
+        if self.text is not None:
+            out["text"] = {"present": bool(text_terms), "fields": text_terms, "label": "Text",
+                           "sent": [k for k, v in (text or {}).items() if v not in (None, "")] if isinstance(text, dict) else []}
+
+        # -- v5 behaviour: the session against the customer's enrolled profile --------------------
+        beh_terms = {}
+        if self.behaviour is not None:
+            embs = self.behaviour.embeddings(session) if session else {}
+            profile, n_sessions = (self.store.profile(source or "", customer_id) if (customer_id is not None and self.store is not None)
+                                   else (None, 0))
+            beh_terms = self.behaviour.compare(embs, profile) if embs else {}
+            out["behaviour"] = {"present": any("llr" in v for v in beh_terms.values()), "fields": beh_terms, "label": "Behaviour",
+                               "sent": [k for k, v in (session or {}).items() if v] if isinstance(session, dict) else [],
+                               "enrolled_sessions": n_sessions, "enrolled_modalities": sorted(profile) if profile else []}
+            if embs and customer_id is not None and self.store is not None and remember:
+                self.store.set_profile(source or "", customer_id, merge_enrolment(profile, embs), n_sessions + 1)
+                out["behaviour"]["enrolled_now"] = sorted(embs)
+
         # -- the blend: what we flag on ---------------------------------------------------
         if self.has_blend:
             p = float(self.scorer.blend_prob(r, np.array([src_idx]), b_logit)[0])
@@ -345,10 +466,22 @@ class ActiveModel:
                 bl.update(self._operating(blcal, p, fpr_target))
                 bl["thresholds"] = blcal["thresholds"]
             out["blend"] = bl
+            # v5 fusion: external modules (text, behaviour) were never present on a training row, so
+            # their evidence is added to the blend's log-odds with a fixed weight instead of being
+            # blended; the operating point stays the blend's (the probability means the same thing)
+            fused = self._fuse(p, {"text": [t["llr"] for t in text_terms.values()],
+                                   "behaviour": [v["llr"] for v in beh_terms.values() if "llr" in v]})
+            if fused is not None:
+                out["fusion"] = fused
+                p_final = fused["prob"]
+                flag = bool(blcal and p_final > (bl.get("threshold") or 1.0)) if blcal else None
+                verdict = "blend+" + "+".join(fused["terms"])
+            else:
+                p_final, flag, verdict = p, bl.get("flag"), "blend"
             # flat copies of the headline so simple clients / the batch csv don't need to dig
-            out.update({"p_fraud": p, "flag": bl.get("flag"), "legit_percentile": bl.get("legit_percentile"),
+            out.update({"p_fraud": p_final, "flag": flag, "legit_percentile": bl.get("legit_percentile"),
                         "z_score": bl.get("z_score"), "calibration": blkind, "operating_point": bl.get("operating_point"),
-                        "verdict_from": "blend"})
+                        "verdict_from": verdict})
         else:
             out.update({"p_fraud": None, "flag": nov.get("flag"), "legit_percentile": nov.get("legit_percentile"),
                         "z_score": nov.get("z_score"), "calibration": kind, "operating_point": nov.get("operating_point"),
@@ -420,6 +553,13 @@ class ActiveModel:
             observed = val is not None and val == val
             items.append({"feature": name, "label": _wide_label(name.split(".", 1)[-1]), "kind": "wide",
                           "contribution": c, "observed": val if observed else None, "is_observed": bool(observed)})
+        # v5: the history encoder's read-out, when the booster reads it: one line for the block
+        hd = self.booster.hist_dim if self.booster is not None else 0
+        if hd:
+            start = D + C + 1 + len(self.booster.wide_names)
+            block = contrib[start : start + hd]
+            items.append({"feature": "history_readout", "label": f"customer history summary ({hd} dims, {int((block != 0).sum())} used)",
+                          "kind": "history", "contribution": float(block.sum()), "observed": None, "is_observed": True})
         items.sort(key=lambda d: -abs(d["contribution"]))
         total = float(np.abs(contrib).sum()) or 1.0
         for it in items:
@@ -484,6 +624,7 @@ class ActiveModel:
         raw = np.zeros(n, dtype=np.float32)
         norm = np.zeros(n, dtype=np.float32)
         boost = np.full(n, np.nan, dtype=np.float32)
+        seqp = np.full(n, np.nan, dtype=np.float32)
         headp = {name: np.full(n, np.nan, dtype=np.float32) for name in self.heads}
         graphp = np.full(n, np.nan, dtype=np.float32)
         localp = np.full(n, np.nan, dtype=np.float32)
@@ -500,9 +641,13 @@ class ActiveModel:
                 sl = slice(s, min(s + batch_size, n))
                 num_t, mask_t = torch.from_numpy(num[sl]).to(self.device), torch.from_numpy(mask[sl]).to(self.device)
                 cat_t, src_t = torch.from_numpy(cat[sl]).to(self.device), torch.from_numpy(src[sl]).to(self.device)
+                # a csv carries no history: every row gets the "no history" context (a trained state)
                 r = score_batch(self.model, num_t, mask_t, cat_t, src_t, n_samples=self.n_samples)
                 raw[sl] = r["raw"]
                 b = None
+                if self.seqhead is not None:
+                    r["seq"] = self.seqhead.logit(self.model, num_t, mask_t, cat_t, src_t, torch.from_numpy(r["h"]).to(self.device))
+                    seqp[sl] = 1.0 / (1.0 + np.exp(-np.clip(r["seq"], -30, 30)))
                 for name, head in self.heads.items():
                     r[name] = head.logit(num_t, mask_t, cat_t, src_t)
                     headp[name][sl] = 1.0 / (1.0 + np.exp(-np.clip(r[name], -30, 30)))
@@ -513,15 +658,19 @@ class ActiveModel:
                     norm[sl] = self.scorer.norm(r, src[sl])
                     r["norm"] = norm[sl]
                 if self.booster is not None:
-                    b = self.booster.logit(num[sl], mask[sl], cat[sl], src[sl], wide=(wide[sl] if wide is not None else None))
+                    b = self.booster.logit(num[sl], mask[sl], cat[sl], src[sl], wide=(wide[sl] if wide is not None else None),
+                                           hist=(r.get("h") if self.booster.hist_dim else None))
                     boost[sl] = 1.0 / (1.0 + np.exp(-np.clip(b, -30, 30)))
                     if self.specialists is not None:
-                        r["local"] = self.specialists.logit(num[sl], mask[sl], cat[sl], src[sl], wide=(wide[sl] if wide is not None else None))
+                        r["local"] = self.specialists.logit(num[sl], mask[sl], cat[sl], src[sl], wide=(wide[sl] if wide is not None else None),
+                                                            hist=r.get("h"))
                         localp[sl] = 1.0 / (1.0 + np.exp(-np.clip(r["local"], -30, 30)))
                 if self.has_blend:
                     blend[sl] = self.scorer.blend_prob(r, src[sl], b)
         nov = norm if (self.score_type == "norm" and self.scorer) else raw
         out = pd.DataFrame({"p_fraud": blend, "booster_prob": boost, "novelty_score": nov, "novelty_raw": raw})
+        if self.seqhead is not None:
+            out["sequence_prob"] = seqp
         for name in self.heads:
             out[f"{name}_prob"] = headp[name]
         if ent is not None:

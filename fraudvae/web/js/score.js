@@ -112,6 +112,11 @@ function markUnused() {
   });
 }
 
+// v5: the loaded example's raw source columns (the "wide" block). the form has no fields for
+// them - there are 431 on ieee - so they ride along invisibly until the form is cleared
+let loadedWide = null;
+let loadedEntities = null;   // v5: the example row's entity codes, for the graph module
+
 function readForm() {
   const form = document.getElementById("score-form");
   const fd = new FormData(form);
@@ -121,8 +126,31 @@ function readForm() {
     if (v === "" || v == null) continue;
     features[k] = v;
   }
-  return { source: fd.get("source") || null, fpr_target: fd.get("fpr_target"), features,
-           label_delay_days: Number(fd.get("label_delay_days") || 7) };
+  const req = { source: fd.get("source") || null, fpr_target: fd.get("fpr_target"), features, wide: loadedWide, entities: loadedEntities,
+                label_delay_days: Number(fd.get("label_delay_days") || 7) };
+  // v5: history as json in the textarea (a list of {features, ts|secs_before}), and/or a customer id
+  const histEl = document.getElementById("history-json");
+  if (histEl && histEl.value.trim()) {
+    try { req.history = JSON.parse(histEl.value); } catch (e) { throw new Error("history is not valid json: " + e.message); }
+  }
+  const cid = document.getElementById("customer-id");
+  if (cid && cid.value.trim()) req.customer_id = cid.value.trim();
+  // v5: the device telemetry payload, mapped server side onto the device block
+  const devEl = document.getElementById("device-json");
+  if (devEl && devEl.value.trim()) {
+    try { req.device = JSON.parse(devEl.value); } catch (e) { throw new Error("device payload is not valid json: " + e.message); }
+  }
+  // v5: free text for the text heads
+  const txtEl = document.getElementById("text-json");
+  if (txtEl && txtEl.value.trim()) {
+    try { req.text = JSON.parse(txtEl.value); } catch (e) { throw new Error("text payload is not valid json: " + e.message); }
+  }
+  // v5: the session's raw interaction events for the behaviour verifiers
+  const sesEl = document.getElementById("session-json");
+  if (sesEl && sesEl.value.trim()) {
+    try { req.session = JSON.parse(sesEl.value); } catch (e) { throw new Error("session payload is not valid json: " + e.message); }
+  }
+  return req;
 }
 
 function fillForm(features, source) {
@@ -150,6 +178,7 @@ function wireForm() {
   });
   document.getElementById("clear-form").addEventListener("click", () => {
     form.reset(); markUnused(); showSourceHint();
+    loadedWide = null; loadedEntities = null;
     document.getElementById("example-note").textContent = "";
   });
   document.querySelectorAll("[data-example]").forEach((b) => b.addEventListener("click", async () => {
@@ -160,8 +189,12 @@ function wireForm() {
     try {
       const [ex] = await get(`/api/examples?${q}`);
       fillForm(ex.features, ex.source);
+      loadedWide = ex.wide || null;
+      loadedEntities = ex.entities && Object.keys(ex.entities).length ? ex.entities : null;
       const scen = ex.fraud_scenario ? `, scenario ${ex.fraud_scenario}` : "";
-      document.getElementById("example-note").textContent = `${ex.txn_id} (${ex.split} split, labelled ${ex.is_fraud ? "fraud" : "legitimate"}${scen})`;
+      const wideNote = (ex.wide ? `, + ${Object.keys(ex.wide).length} raw source columns` : "")
+        + (loadedEntities ? `, entities: ${Object.keys(loadedEntities).join("/")}` : "");
+      document.getElementById("example-note").textContent = `${ex.txn_id} (${ex.split} split, labelled ${ex.is_fraud ? "fraud" : "legitimate"}${scen}${wideNote})`;
       await score(ex.is_fraud);
     } catch (e) {
       document.getElementById("example-note").textContent = e.message;
@@ -175,7 +208,8 @@ function wireForm() {
 async function score(label = null) {
   const btn = document.getElementById("score-btn");
   const status = document.getElementById("score-status");
-  const req = readForm();
+  let req;
+  try { req = readForm(); } catch (e) { status.textContent = e.message; return; }
   if (!Object.keys(req.features).length) { status.textContent = "fill in at least one field"; return; }
   btn.disabled = true; status.textContent = "scoring"; status.classList.add("spin");
   try {
@@ -185,7 +219,7 @@ async function score(label = null) {
     showAll = false;
     renderReceipt(r, label);
     plotLatent(r);
-    status.textContent = `${r.observed_features} fields observed, ${r.n_samples} posterior samples${r.supervised ? ", booster + blend" : ""}`;
+    status.textContent = `${r.observed_features} fields observed, ${r.n_samples} posterior samples${r.supervised ? ", booster + blend" : ""}${r.sequence ? `, ${r.sequence.n_history} past txns` : ""}`;
   } catch (e) {
     status.textContent = e.message;
   } finally {
@@ -287,9 +321,74 @@ function renderReceipt(r, label) {
     lines.push(`</div>`);
   }
 
+  // ---- v5 sequence evidence: the customer's history through the sequence head ----
+  const sq = r.sequence;
+  if (sq) {
+    lines.push(`<div class="rc-sep"></div>`);
+    lines.push(`<div class="rc-sub">SEQUENCE  <span class="dim">history transformer, ${sq.n_history} of ${sq.window} past txns${sq.history_from ? ` (${sq.history_from})` : ""}</span></div>`);
+    if (sq.prob != null) {
+      const qf = sq.flag == null ? "" : (sq.flag ? "  FLAG" : "  ok");
+      lines.push(`<div class="rc-line"><span class="k">p(fraud) from history</span><span class="${sq.flag ? "z hot" : ""}">${(100 * sq.prob).toFixed(sq.prob < 0.1 ? 2 : 1)}%${qf}</span></div>`);
+      if (sq.legit_percentile != null) lines.push(`<div class="rc-line"><span class="k">percentile of legit</span><span>${pctText(sq.legit_percentile, "")}</span></div>`);
+    }
+    if (!sq.n_history) lines.push(`<div class="rc-line dim"><span>no history given: scored as a first transaction. add past transactions below, or a customer id so the server remembers them</span></div>`);
+  }
+
+  // ---- v5 text: free text through the text heads, fused as likelihood ratios ----
+  if (r.text) {
+    lines.push(`<div class="rc-sep"></div>`);
+    const tf = r.text.fields || {};
+    const keys = Object.keys(tf);
+    lines.push(`<div class="rc-sub">TEXT  <span class="dim">${keys.length ? `${keys.length} field${keys.length === 1 ? "" : "s"} read` : "no text sent"}${r.fusion ? ", fused into the verdict" : ""}</span></div>`);
+    for (const k of keys) {
+      const t = tf[k];
+      lines.push(`<div class="rc-line"><span class="k">${esc(k)} → ${esc(t.label)}</span><span class="${t.llr > 1 ? "z hot" : ""}">p ${(100 * t.prob).toFixed(1)}%, LR ${t.llr >= 0 ? "+" : ""}${t.llr.toFixed(2)}</span></div>`);
+    }
+    if (!keys.length && r.text.sent && r.text.sent.length) lines.push(`<div class="rc-line dim"><span>sent ${r.text.sent.join(", ")}: no head reads those keys (url, description, memo, message, profile, bio)</span></div>`);
+  }
+  if (r.fusion) {
+    lines.push(`<div class="rc-sep"></div>`);
+    lines.push(`<div class="rc-line"><span class="k">blend ⊕ ${Object.keys(r.fusion.terms).join(" ⊕ ")}</span><span class="${r.flag ? "z hot" : ""}">${(100 * r.fusion.prob).toFixed(r.fusion.prob < 0.1 ? 2 : 1)}% (blend alone ${(100 * r.blend.prob).toFixed(r.blend.prob < 0.1 ? 2 : 1)}%)${r.flag == null ? "" : (r.flag ? "  FLAG" : "  ok")}</span></div>`);
+  }
+
+  // ---- v5 behaviour: the session against the customer's enrolled profile ----
+  if (r.behaviour) {
+    lines.push(`<div class="rc-sep"></div>`);
+    const bf = r.behaviour.fields || {};
+    const mods = Object.keys(bf);
+    lines.push(`<div class="rc-sub">BEHAVIOUR  <span class="dim">${mods.length ? `${mods.join(", ")} session` : "no session sent"}${r.behaviour.enrolled_sessions ? `, profile from ${r.behaviour.enrolled_sessions} earlier session${r.behaviour.enrolled_sessions === 1 ? "" : "s"}` : ""}</span></div>`);
+    for (const m of mods) {
+      const v = bf[m];
+      if (v.llr == null) lines.push(`<div class="rc-line dim"><span>${esc(v.label)}: ${v.windows} window${v.windows === 1 ? "" : "s"} read, no enrolment for this customer yet${r.behaviour.enrolled_now ? " — enrolled now" : ""}</span></div>`);
+      else lines.push(`<div class="rc-line"><span class="k">${esc(v.label)}</span><span class="${v.llr < -1 ? "z hot" : ""}">cosine ${v.cosine.toFixed(2)}, LR ${v.llr >= 0 ? "+" : ""}${v.llr.toFixed(2)}${v.llr < 0 ? " (not like the account holder)" : ""}</span></div>`);
+    }
+    if (!mods.length && r.behaviour.sent && r.behaviour.sent.length) lines.push(`<div class="rc-line dim"><span>sent ${r.behaviour.sent.join(", ")}: too few events for a window, or no verifier for that modality</span></div>`);
+    if (!r.behaviour.sent || !r.behaviour.sent.length) lines.push(`<div class="rc-line dim"><span>add session events below and a customer id; the second session is compared with the first</span></div>`);
+  }
+
+  // ---- v5 field heads: the device block (and whatever lands next) through its own head ----
+  for (const name of ["local", "device", "graph"]) {
+    const hb = r[name];
+    if (!hb) continue;
+    lines.push(`<div class="rc-sep"></div>`);
+    lines.push(`<div class="rc-sub">${name.toUpperCase()}  <span class="dim">${hb.label || name}${name === "local" ? "" : " head"}${hb.present && hb.fields.length ? `, ${hb.fields.length} field${hb.fields.length === 1 ? "" : "s"}` : ""}</span></div>`);
+    if (hb.present && hb.prob != null) {
+      const hf = hb.flag == null ? "" : (hb.flag ? "  FLAG" : "  ok");
+      lines.push(`<div class="rc-line"><span class="k">p(fraud) from ${name}</span><span class="${hb.flag ? "z hot" : ""}">${(100 * hb.prob).toFixed(hb.prob < 0.1 ? 2 : 1)}%${hf}</span></div>`);
+      if (hb.legit_percentile != null) lines.push(`<div class="rc-line"><span class="k">percentile of legit</span><span>${pctText(hb.legit_percentile, "")}</span></div>`);
+      if (hb.fields.length) lines.push(`<div class="rc-line dim"><span>${hb.fields.join(", ")}</span></div>`);
+    } else if (name === "local") {
+      lines.push(`<div class="rc-line dim"><span>this bank has no specialist booster (too little labelled fraud, or the generic context): the shared booster carries it</span></div>`);
+    } else if (name === "graph") {
+      lines.push(`<div class="rc-line dim"><span>${hb.available === false ? "this bank has no entity graph" : (hb.sent && hb.sent.length ? `none of the entities sent (${hb.sent.join(", ")}) is known to the graph` : "no entity ids sent (load an example row, or pass entities in the API)")}: signal absent, the blend goes without it</span></div>`);
+    } else {
+      lines.push(`<div class="rc-line dim"><span>no ${name} fields on this transaction: signal absent, the blend goes without it</span></div>`);
+    }
+  }
+
   // ---- novelty evidence ----
   lines.push(`<div class="rc-sep"></div>`);
-  lines.push(`<div class="rc-sub">NOVELTY  <span class="dim">VAE, never saw a fraud label</span></div>`);
+  lines.push(`<div class="rc-sub">NOVELTY  <span class="dim">VAE, never saw a fraud label${sq ? ", conditioned on the history" : ""}</span></div>`);
   const nf = nov.flag == null ? "" : (nov.flag ? "  FLAG" : "  ok");
   if (nov.legit_percentile != null) lines.push(`<div class="rc-line"><span class="k">percentile of legit</span><span class="${nov.flag ? "z hot" : ""}">${pctText(nov.legit_percentile, "")}${nf}</span></div>`);
   lines.push(`<div class="rc-line"><span class="k">score (${esc(nov.score_type)})</span><span>${fmt.num(nov.score, 3)}</span></div>`);

@@ -66,6 +66,35 @@
             <span id="example-note" class="dim"></span>
           </div>
           <div id="field-groups"></div>
+          <details class="history-box">
+            <summary>Customer history <span class="dim">(v5: what the sequence model sees)</span></summary>
+            <p class="dim">Either paste the customer's previous transactions as JSON, oldest first — a list of
+              <code>{"features": {...same field names...}, "secs_before": 3600}</code> (or <code>"ts"</code> in epoch seconds) —
+              or give a customer id and the server will remember every transaction it scores for that id and use them as history next time.</p>
+            <label class="wide"><span>previous transactions (json)</span><textarea id="history-json" rows="4" placeholder='[{"features": {"amount": 12.5, "hour": 14}, "secs_before": 86400}]'></textarea></label>
+            <label><span>customer id</span><input type="text" id="customer-id" placeholder="any string, e.g. cust-42" autocomplete="off"></label>
+          </details>
+          <details class="history-box">
+            <summary>Device payload <span class="dim">(v5: what the device head sees)</span></summary>
+            <p class="dim">Telemetry as the browser or app reports it; the server maps it onto the device block.
+              Keys: <code>os</code>, <code>browser</code>, <code>device_type</code>, <code>screen</code>, <code>session_length_min</code>,
+              <code>keep_alive</code>, <code>phone_valid</code>, <code>email_domain</code>, <code>recipient_email_domain</code>,
+              <code>name_email_similarity</code>, <code>account_age_days</code>, <code>foreign</code>. Fields set in the form win.</p>
+            <label class="wide"><span>device (json)</span><textarea id="device-json" rows="3" placeholder='{"os": "Windows 10", "browser": "chrome 63.0", "screen": "1920x1080", "session_length_min": 4.2, "keep_alive": true}'></textarea></label>
+          </details>
+          <details class="history-box">
+            <summary>Text payload <span class="dim">(v5: what the text heads read)</span></summary>
+            <p class="dim">Free text on the transaction: <code>url</code> (the url head), <code>description</code> / <code>memo</code> / <code>message</code> (the free-text head, trained on scam postings),
+              <code>profile</code> / <code>bio</code> (the profile head). Each answers with a likelihood ratio that is added to the blend's log-odds; nothing in the training data had text, so this never changes a held-out number.</p>
+            <label class="wide"><span>text (json)</span><textarea id="text-json" rows="3" placeholder='{"url": "http://paypal.com.secure-login.verify-account.ru/login", "memo": "urgent: send the registration fee today"}'></textarea></label>
+          </details>
+          <details class="history-box">
+            <summary>Session events <span class="dim">(v5: what the behaviour verifiers see)</span></summary>
+            <p class="dim">Raw interaction events per modality: <code>mouse</code> rows <code>[t, x, y, kind]</code>, <code>keystroke</code> rows <code>[t, key, down|up]</code>,
+              <code>touch</code> rows <code>[t, x, y, pressure, size, action]</code>, <code>motion</code> rows <code>[t, x, y, z]</code>. With a customer id the server compares the session with that
+              customer's enrolled profile (built from their earlier sessions) and enrols this one; the first session only enrols.</p>
+            <label class="wide"><span>session (json)</span><textarea id="session-json" rows="3" placeholder='{"mouse": [[0.0, 100, 200, "move"], [0.02, 104, 203, "move"], ...]}'></textarea></label>
+          </details>
           <div class="form-actions">
             <button type="submit" class="btn primary" id="score-btn">Score transaction</button>
             <span id="score-status" class="dim"></span>
@@ -188,9 +217,11 @@
         <div class="remote-steps">
           <div class="step">
             <h3>1. Provision</h3>
-            <p class="dim">Installs dependencies, uploads the code and the processed parquet files, runs <code>prepare</code> on the server.</p>
+            <p class="dim">Installs dependencies, uploads the code and the processed parquet files, runs <code>prepare</code> on the server.
+              v5: or point it at a folder of raw downloads and the box fetches the public sets itself, takes the rest from here, and runs <code>build</code> there.</p>
             <label class="inline-field">prepared set name <input id="prov-prepared" value="full" size="8"></label>
             <label class="inline-field"><input type="checkbox" id="prov-data" checked> upload processed data</label>
+            <label class="inline-field"><input type="checkbox" id="prov-raw"> push raw downloads from <input id="prov-raw-dir" value="~/Downloads/fraud-data-raw" size="26"> and build on the box</label>
             <button class="btn" id="btn-provision">Provision server</button>
           </div>
           <div class="step">
@@ -209,7 +240,7 @@
             <label class="inline-field"><input type="checkbox" id="auto-status"> auto refresh</label>
             <button class="btn ghost" id="btn-stop">Stop</button>
             <button class="btn" id="btn-fetch-run">Fetch results &amp; load model</button>
-            <button class="btn ghost" id="btn-fetch-processed">Pull processed data</button>
+            <label class="inline-field"><input type="checkbox" id="fetch-processed"> also pull the box's processed data (v5: the sources the run was built on)</label>
           </div>
         </div>
         <div id="remote-status" class="remote-status"></div>
