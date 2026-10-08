@@ -1,5 +1,6 @@
 """Get a fresh GPU box ready: look at what it has, install what's missing, push
-the code and the processed data.
+the code and the processed data. Everything is idempotent so re-running after a
+dropped connection just continues.
 """
 from __future__ import annotations
 
@@ -76,10 +77,17 @@ def _int(x):
 
 
 def _find_python(s: SSHSession) -> str | None:
-    # prefer a python that already has a cuda torch
-    cands = ["/opt/conda/bin/python", "/usr/local/bin/python3", "/usr/bin/python3"]
+    # prefer a python that already has a cuda torch (vast.ai pytorch images keep
+    # theirs in a venv that only a login shell has on PATH, hence the bash -lc)
+    cands = ["/venv/main/bin/python", "/opt/conda/bin/python", "/usr/local/bin/python3", "/usr/bin/python3"]
+    rc, out, _ = s.run("bash -lc 'command -v python3 python' 2>/dev/null")
+    cands = [c for c in out.split() if c] + cands
+    seen = set()
     fallback = None
     for cand in cands:
+        if cand in seen:
+            continue
+        seen.add(cand)
         rc, out, _ = s.run(f"test -x {shlex.quote(cand)} && {shlex.quote(cand)} -c 'import torch; print(torch.cuda.is_available())' 2>/dev/null")
         if out.strip() == "True":
             return cand
@@ -111,9 +119,10 @@ def _filter(ti: tarfile.TarInfo):
 
 def bootstrap(s: SSHSession, log: Log = print, remote_dir: str | None = None) -> dict:
     """create the remote dir, make sure python+torch+deps are there. returns the probe"""
-    rd = remote_dir or s.host.remote_dir
+    rd = s.expand(remote_dir or s.host.remote_dir)
     s.host.remote_dir = rd
-    s.run(f"mkdir -p {shlex.quote(rd)}/data/processed {shlex.quote(rd)}/runs", check=True)
+    s.mkdirs(f"{rd}/data/processed")
+    s.mkdirs(f"{rd}/runs")
     info = probe(s)
     log(f"remote: {info.get('hostname')} {info.get('os')} | {info.get('cpus')} cpus | {info.get('ram_gb')} GB ram | "
         f"{info.get('disk_free_gb')} GB free | gpus: {', '.join(g['name'] for g in info['gpus']) or 'none'}")
@@ -123,9 +132,9 @@ def bootstrap(s: SSHSession, log: Log = print, remote_dir: str | None = None) ->
     torch_info = info.get("torch")
     if not torch_info or not torch_info.get("cuda"):
         log("no cuda torch found, installing torch (this is a few GB, grab a coffee)...")
-        rc, out, err = s.run(f"{py} -m pip install --quiet torch 2>&1 | tail -3", timeout=3600)
-        if rc != 0:
-            log(f"pip exited {rc}: {(out or err).strip()[-500:]}")
+        for line in s.stream(f"{py} -m pip install --quiet torch 2>&1"):
+            if line.strip():
+                log("  " + line)
         rc, out, _ = s.run(f"{py} -c 'import torch; print(torch.cuda.is_available())'")
         log(f"torch cuda available: {out.strip()}")
     else:
@@ -147,7 +156,7 @@ def sync_code(s: SSHSession, log: Log = print) -> None:
     py = s.host.python or "python3"
     log("installing python deps (minus torch)...")
     reqs = [l.strip() for l in (ROOT / "requirements.txt").read_text().splitlines()
-            if l.strip() and not l.startswith("#") and not l.startswith("torch") and "pytest" not in l]
+            if l.strip() and not l.startswith("#") and not l.startswith("torch") and "pytest" not in l and "asyncssh" not in l]
     cmd = f"cd {shlex.quote(rd)} && {py} -m pip install --quiet {' '.join(shlex.quote(r) for r in reqs)} 2>&1 | tail -3"
     rc, out, err = s.run(cmd, timeout=1800)
     if rc != 0:
@@ -191,22 +200,28 @@ def sync_data(s: SSHSession, log: Log = print, sources: list[str] | None = None,
     return sent
 
 
-def sync_raw(s: SSHSession, raw_root: Path, log: Log = print, keys: list[str] | None = None, progress: Callable | None = None) -> dict:
+def sync_raw(s: SSHSession, raw_root: Path, log: Log = print, keys: list[str] | None = None, progress: Callable | None = None,
+             skip_direct: bool = True) -> dict:
     """v5: push the raw downloads themselves (the zips as they came from kaggle / zenodo / the
     registration forms) to data/raw/<key>/ on the remote, identified by their contents, so the
     v5 build runs on the box instead of the laptop. resumes partial uploads and skips files the
-    remote already has at the same size."""
-    from ..data.aux_registry import scan
+    remote already has at the same size. datasets with a public direct url (brainrun) are left
+    for the box to fetch itself (remote_data_pipeline) unless skip_direct=False."""
+    from ..data.aux_registry import AUX, scan
 
     rd = s.host.remote_dir
     found = scan(Path(raw_root))
     if keys:
         found = {k: v for k, v in found.items() if k in keys}
+    else:
+        found.pop("talkingdata", None)   # 11 GB and optional: only when asked for by name
+    if skip_direct:
+        found = {k: v for k, v in found.items() if not (k in AUX and AUX[k].direct_urls)}
     total = sum(f.stat().st_size for fs in found.values() for f in fs)
     log(f"raw data under {raw_root}: {len(found)} datasets, {sum(len(v) for v in found.values())} files, {total / 1e9:.1f} GB")
     sent, skipped = [], []
     for key, files in found.items():
-        s.run(f"mkdir -p {shlex.quote(rd)}/data/raw/{key}", check=True)
+        s.mkdirs(f"{rd}/data/raw/{key}")
         for f in files:
             remote = f"{rd}/data/raw/{key}/{f.name}"
             size = f.stat().st_size
@@ -234,43 +249,70 @@ def sync_raw(s: SSHSession, raw_root: Path, log: Log = print, keys: list[str] | 
 
 def remote_data_pipeline(s: SSHSession, log: Log = print, fetch: bool = True, build: bool = True, prepare: bool = True,
                          prepared_name: str = "full", max_rows_per_source: int | None = None, keys: list[str] | None = None,
-                         min_free_gb: int = 40) -> dict:
-    """the box-side data steps (public downloads + github sources, build, prepare), run one
-    after the other over this connection with the output streamed back. checks the free disk
-    before prepare since the prepared arrays roughly double what build wrote."""
+                         poll: int = 20) -> dict:
+    """the box-side data steps (public downloads + github sources, build, prepare) as ONE
+    detached script with a done-marker per step, so a laptop going to sleep mid-build costs
+    nothing: re-running this re-attaches to the live script or skips the finished steps.
+    Streams the script's log back until it ends."""
     from ..data.aux_registry import AUX
 
     rd = s.host.remote_dir
     py = s.host.python or "python3"
-    done = []
-
-    def step(name: str, cmd: str) -> None:
-        log(f"== {name}")
-        for line in s.stream(f"cd {shlex.quote(rd)} && {cmd} 2>&1; echo __RC=$?"):
-            if line.startswith("__RC="):
-                if line.strip() != "__RC=0":
-                    raise RemoteError(f"{name} failed on the box ({line.strip()})")
-            elif line.strip():
-                log("  " + line.rstrip())
-        done.append(name)
-
+    jobs = f"{rd}/jobs"
+    s.mkdirs(jobs)
+    lines = ["#!/bin/bash", f"cd {shlex.quote(rd)} || exit 1", "set -o pipefail"]
     if fetch:
         for key, d in AUX.items():
             if not d.direct_urls or (keys and key not in keys):
                 continue
-            s.run(f"mkdir -p {shlex.quote(rd)}/data/raw/{key}", check=True)
+            lines.append(f"mkdir -p data/raw/{key}")
             for url in d.direct_urls:
                 name = url.split("/")[-1].split("?")[0]
-                step(f"wget {key}/{name}", f"wget -c -q -O data/raw/{key}/{shlex.quote(name)} {shlex.quote(url)}")
-        step("fraudvae fetch", f"{py} -m fraudvae.data.fetch")
+                lines.append(f"[ -f jobs/fetch_{key}_{name}.done ] || {{ echo \"== wget {key}/{name}\"; "
+                             f"wget -c -q -O data/raw/{key}/{shlex.quote(name)} {shlex.quote(url)} && touch jobs/fetch_{key}_{name}.done; }}")
+        lines.append(f"[ -f jobs/fetch_github.done ] || {{ echo \"== fraudvae fetch\"; {py} -m fraudvae.data.fetch && touch jobs/fetch_github.done; }}")
     if build:
         extra = "".join(f" --source {shlex.quote(k)}" for k in (keys or []))
-        step("build", f"{py} -m fraudvae.data.build{extra}")
+        lines.append(f"[ -f jobs/build.done ] || {{ echo \"== build\"; {py} -m fraudvae.data.build{extra} && touch jobs/build.done; }}")
     if prepare:
-        rc, out, _ = s.run(f"df -BG --output=avail {shlex.quote(rd)} 2>/dev/null | tail -1")
-        free = _int(out.strip().rstrip("G"))
-        if free is not None and free < min_free_gb:
-            raise RemoteError(f"only {free} GB free on the box, prepare needs about {min_free_gb} GB; rent a bigger disk")
         extra = f" --max-rows-per-source {int(max_rows_per_source)}" if max_rows_per_source else ""
-        step(f"prepare {prepared_name}", f"{py} -m fraudvae.data.prepare --name {shlex.quote(prepared_name)}{extra}")
-    return {"done": done}
+        lines.append(f"[ -f jobs/prepare_{prepared_name}.done ] || {{ echo \"== prepare {prepared_name}\"; "
+                     f"{py} -m fraudvae.data.prepare --name {shlex.quote(prepared_name)}{extra} && touch jobs/prepare_{prepared_name}.done; }}")
+    lines.append('echo "== PIPELINE DONE $(date)"')
+    script = "\n".join(lines) + "\n"
+    s.run(f"cat > {jobs}/data_pipeline.sh <<'FRAUDVAE_EOF'\n{script}FRAUDVAE_EOF\nchmod +x {jobs}/data_pipeline.sh", check=True)
+    # already running from an earlier attempt? re-attach instead of starting a second one
+    rc, out, _ = s.run(f"cat {jobs}/data_pipeline.pid 2>/dev/null")
+    pid = out.strip()
+    alive = bool(pid) and s.run(f"kill -0 {pid} 2>/dev/null")[0] == 0
+    if alive:
+        log(f"data pipeline already running on the box (pid {pid}), re-attaching")
+    else:
+        rc, out, _ = s.run(f"cd {shlex.quote(rd)} || exit 1; nohup bash jobs/data_pipeline.sh >> jobs/data_pipeline.log 2>&1 < /dev/null & echo $!")
+        pid = out.strip().splitlines()[-1] if out.strip() else ""
+        s.run(f"echo {pid} > {jobs}/data_pipeline.pid")
+        log(f"data pipeline launched on the box (pid {pid}); it survives this connection")
+    seen = 0
+    while True:
+        rc, out, _ = s.run(f"wc -l < {jobs}/data_pipeline.log 2>/dev/null; tail -n +{seen + 1} {jobs}/data_pipeline.log 2>/dev/null | head -200")
+        parts = out.split("\n", 1)
+        try:
+            total = int(parts[0].strip())
+        except ValueError:
+            total = seen
+        new = parts[1].splitlines() if len(parts) > 1 else []
+        for line in new:
+            if line.strip():
+                log("  " + line.rstrip())
+        seen = min(seen + len(new), total)
+        if any("== PIPELINE DONE" in line for line in new):
+            break
+        rc, _, _ = s.run(f"kill -0 {pid} 2>/dev/null")
+        if rc != 0:
+            rc2, tail, _ = s.run(f"tail -3 {jobs}/data_pipeline.log 2>/dev/null")
+            if "== PIPELINE DONE" in tail:
+                break
+            raise RemoteError("the data pipeline on the box stopped before finishing; see jobs/data_pipeline.log there")
+        time.sleep(poll)
+    rc, out, _ = s.run(f"ls {jobs}/*.done 2>/dev/null")
+    return {"done": [Path(x).name for x in out.split()]}

@@ -211,7 +211,10 @@ class SSHSession:
                 break
             else:
                 time.sleep(0.05)
-        buf += chan.recv(65536)
+        rest = chan.recv(65536)
+        while rest:
+            buf += rest
+            rest = chan.recv(65536)
         if buf:
             yield buf.decode("utf-8", "replace")
 
@@ -237,13 +240,32 @@ class SSHSession:
         rc, out, _ = self.run(f"sha256sum {shlex.quote(path)} 2>/dev/null | cut -d' ' -f1", timeout=600)
         return out.strip() or None
 
-    def upload(self, local: Path, remote: str, progress: Callable[[int, int], None] | None = None, skip_same_size=True) -> bool:
+    def upload(self, local: Path, remote: str, progress: Callable[[int, int], None] | None = None, resume=True) -> bool:
         """returns True if bytes were actually sent (False = remote already had it)"""
         local = Path(local)
-        if skip_same_size and self.exists(remote):
-            if self.sftp.stat(remote).st_size == local.stat().st_size:
+        size = local.stat().st_size
+        offset = 0
+        if resume and self.exists(remote):
+            st = self.sftp.stat(remote)
+            if st.st_size == size:
                 return False
-        self.sftp.put(str(local), remote, callback=progress)
+            if 0 < st.st_size < size:
+                offset = st.st_size   # a partial upload from a dropped connection: carry on from there
+        if offset == 0:
+            self.sftp.put(str(local), remote, callback=progress)
+            return True
+        with open(local, "rb") as src, self.sftp.open(remote, "ab") as dst:
+            dst.set_pipelined(True)
+            src.seek(offset)
+            done = offset
+            while True:
+                chunk = src.read(1 << 20)
+                if not chunk:
+                    break
+                dst.write(chunk)
+                done += len(chunk)
+                if progress:
+                    progress(done, size)
         return True
 
     def download(self, remote: str, local: Path, progress: Callable[[int, int], None] | None = None):
@@ -251,8 +273,9 @@ class SSHSession:
         local.parent.mkdir(parents=True, exist_ok=True)
         self.sftp.get(remote, str(local), callback=progress)
 
-    def read_text(self, remote: str) -> str:
+    def read_text(self, remote: str, max_bytes: int = 2_000_000) -> str:
         with self.sftp.open(remote, "r") as f:
+            f.seek(max(0, f.stat().st_size - max_bytes))
             return f.read().decode("utf-8", "replace")
 
 
