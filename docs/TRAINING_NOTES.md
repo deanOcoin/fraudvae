@@ -276,19 +276,101 @@ What to take from it, against the capped-corpus v4 baseline above:
   score, the price of not knowing whose "normal" to compare against. It was 0.939 one
   pass earlier - the weighting story above - and 0.74 in v3.
 
-Two things the run taught about the plumbing, both fixed in this version: LightGBM with
+Three things the run taught about the plumbing, all fixed in this version: LightGBM with
 `num_threads=0` on a 256-thread rented box ran 5× slower than on a 2-core sandbox (one
 thread per hardware thread fighting over 2M rows; the booster now caps itself at the
-cores it is actually allowed, 32 at most - the same booster went from 21 min to 4); and
+cores it is actually allowed, 32 at most - the same booster went from 21 min to 4);
 `fraudvae post` on a `cuda` config died in `torch.load` on a machine without a GPU
-(device choice now falls back).
+(device choice now falls back); and on macOS the PyTorch and LightGBM wheels bring two
+OpenMP runtimes that segfault the server on the first booster call (`make fix-omp`, see
+the README; the server now logs to `~/.fraudvae/server.log` with `faulthandler` armed, and
+refuses the booster with a message instead of crashing when it sees the two runtimes).
 
-## Next
+## v5 development runs (2-core sandbox, capped sets)
 
-- v5 schema: the graph block (entity fraud history on a delay), the device block and
-  each source's own raw columns in a side table the booster alone reads. IEEE and
-  capone are where the 2-core probes say it pays.
-- A history encoder in front of the VAE, so "unusual" means unusual for this
-  customer and not for the corpus.
-- Text and behaviour heads for the payloads the transaction tables do not carry.
-- The full run on a bigger box once the pieces are sized on the sandbox.
+The v5 work was built against capped prepared sets on the sandbox while the box was
+being rented; these runs size the pieces, they are not the numbers that ship.
+
+### IEEE: the wide block and the graph block (booster only, `v5test` = ieee + ulb, 150k legit / source)
+
+| IEEE test | AUROC | recall @1% FPR |
+|---|---|---|
+| v4 fields (gpu_full-4090-v4, full corpus) | 0.862 | 35% |
+| v5 fields: graph block, virtual customer id, device block | 0.926 | 52% |
+| + the wide block (431 raw IEEE columns) | **0.937** | **56%** |
+
+The booster's top gains are `ieee.V258`, `cust_fraud_share_delayed`, `ieee.C5`,
+`ieee.DeviceInfo`, `ieee.id_31`: two from the wide block, one from the graph block,
+two from the device block. The delayed-label entity features are the single biggest
+new idea per column; the wide block is the biggest in total. Both are specific to the
+bank that has them, which is the point: a source's own columns stay in a side table
+the VAE never sees, and the booster alone reads them.
+
+### History conditioning on vs off (`v5seq` = fdh + sparkov + banksim + capone, 250k rows / source, 4 epochs, window 16, d_model 64)
+
+| test | VAE | VAE r@1% | sequence head | booster | blend | blend r@1% |
+|---|---|---|---|---|---|---|
+| history off, mean | 0.777 | - | - | 0.875 | 0.8755 | - |
+| history on, mean | **0.793** | - | 0.865 | 0.875 | 0.8760 | - |
+| sparkov, off → on | 0.869 → **0.938** | 51% → **60%** | 0.996 | 0.9998 | 0.9998 | 99.6% |
+| fdh, off → on | 0.613 → 0.624 | 2% → 6% | 0.660 | 0.667 | 0.672 | 34% |
+| capone, off → on | 0.627 → 0.613 | 1% → 3% | 0.808 | 0.832 | 0.833 | 19% |
+| banksim | 0.997 | 92-94% | 0.998 | 0.999 | 0.999 | 98% |
+
+Reading: conditioning on the customer's own sequence makes the novelty model itself
+noticeably better where there is a sequence to read (sparkov: +0.07 AUROC, +9 points
+of recall at 1% FPR from the VAE alone), and the sequence head is a respectable third
+signal (0.865 mean, within 0.01 of the booster), but on these four sources the blend
+does not move: the booster already has the hand-made velocity block, and the
+simulators' fraud is the kind it describes. The history model costs 2.2× the epoch
+time at this size. Whether it pays on the sources with long real sequences
+(tabformer's 30 years, IEEE's reconstructed customers, amlworld's accounts) is a
+question for the full-scale run on the H200; the module stays on because the VAE is
+the part that must not depend on labels, and "unusual for this customer" is the
+right definition of novelty whatever the blend does with it.
+
+## v5 on the H200: what the box taught in the first hours
+
+- **bf16 autocast and the history transformer do not mix.** The v4 model trained in bf16
+  at lr 2e-3 for 30 epochs without a hiccup. With the history encoder the gradient norm
+  overflowed around step 700 of epoch 1 whatever the learning rate, and a few steps
+  later the embeddings were NaN. fp32 ran the same 700 steps clean and was only 10%
+  slower, because the window gather on the cpu is the bottleneck, not the matmuls.
+  `gpu_full` is fp32 now, and the training loop skips a non-finite step instead of
+  letting it reach the weights.
+- **The box is fast where it matters.** Building all eleven sources from raw (42.8M rows,
+  the wide blocks, the graph block over every entity) took 7 minutes on 64 cores and
+  `prepare` of the full corpus with the sequence index 95 seconds; the v5 history model
+  does an epoch of 30M rows in 6.4 minutes at 78k rows/s.
+
+### The modules' own numbers (2-core sandbox, `runs/aux-sandbox`)
+
+| module | data | protocol | result |
+|---|---|---|---|
+| text: url head | malurl, 651k urls, 34% malicious | stratified 80/10/10, platt on val | test AUROC **0.991**, AUPRC 0.987 |
+| text: free-text head | fakejob, 17.9k postings, 4.8% fraudulent | same | test AUROC **0.976**, AUPRC 0.841 |
+| text: profile head | twitterbot, 37k profiles, 33% bots (bio + name + location only) | same | test AUROC 0.771, AUPRC 0.640 |
+| behaviour: mouse | Balabit 10 users + BB-MAS 117 users | Balabit challenge: enrol on training sessions, score the 816 labelled test sessions | AUROC **0.821**, EER 0.251 |
+| behaviour: keystroke | BB-MAS desktop keyboard | open set, 35 unseen users, 228 genuine / 7,752 impostor trials | EER **0.118**, AUROC 0.957 |
+| behaviour: touch | BB-MAS phone + HMOG, 151 users | open set, 34 unseen users | EER 0.181, AUROC 0.899 |
+| behaviour: motion | BB-MAS + HMOG accelerometer, 151 users | open set, 65 unseen users, 1,028 / 65,792 trials | EER **0.129**, AUROC 0.948 |
+
+The text and behaviour numbers are what a deployer gets from those payloads; they never
+touch the held-out transaction tables, which have no text and no sessions. The behaviour
+verifiers are scored per modality because a session rarely carries all four, and their
+feature windows now end at the scored event instead of straddling it (the old windows
+read a little of the future and flattered every EER by 0.02-0.04). The Balabit mouse
+number is well short of the challenge's best (0.9+ with heavy stroke engineering and
+session-level models); the keystroke and motion verifiers are in the range the
+literature reports for feature-MLP verifiers on these sets. The box retrains all of
+them on the full sets.
+
+## Open questions for the full run
+
+- Does the history encoder pay on the long real sequences (tabformer, IEEE's
+  reconstructed customers, amlworld)? The sandbox could not say.
+- The delayed-label features use a 30-day horizon everywhere. fdh's compromised
+  terminals are clean again after 28 days, so fdh may need a shorter delay to show
+  anything; that is a deployment question as much as a model one.
+- Which of the wide and graph columns carry the IEEE and capone gains, and whether any
+  of them read the calendar instead of the customer.
