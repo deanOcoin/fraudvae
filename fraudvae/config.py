@@ -49,8 +49,12 @@ class TrainConfig:
     seed: int = 1337
     amp: bool = True              # bf16 autocast on cuda, no-op on cpu
     eval_every: int = 1
-    patience: int = 3
+    patience: int = 5
     score_samples: int = 8
+    max_steps: int = 0            # stop after this many optimiser steps (0 = whole run); for probes
+    select_by: str = "elbo"       # which validation number picks the checkpoint / stops early: "elbo" (held-out
+                                  # legit -ELBO, the training objective itself, smooth) or "auroc" (mean 1-sample
+                                  # AUROC, what v4 used; on 11 sources paysim alone swings it by 0.05 between epochs)
 
 
 @dataclass
@@ -68,7 +72,10 @@ class BoostConfig:
     lambda_l2: float = 1.0
     max_legit_per_source: int = 600_000   # legit train rows sampled per source (all fraud rows are kept)
     val_legit_per_source: int = 150_000   # for early stopping
-    generic_fraction: float = 0.15        # share of rows duplicated with the source blanked
+    generic_fraction: float = 0.25        # share of rows duplicated with the source blanked (0.15 -> 0.25: better on
+                                          # every bank's val auroc as well as generic, it acts as augmentation)
+    legit_weight_cap: float = 3.0         # subsampled legit rows are weighted back towards the base rate, at most this
+                                          # much (0 = no cap). see _legit_weights in model/booster.py for why
     num_threads: int = 0                  # 0 = all cores
     specialists: bool = True              # v5: one extra booster per source with enough fraud, its own "local" signal
     specialist_min_fraud: int = 300       # a source needs at least this many labelled fraud rows in train to get one
@@ -100,6 +107,25 @@ class GraphConfig:
 
 
 @dataclass
+class TextConfig:
+    """v5: the text heads (url / free text / profile text), trained on the public text-fraud
+    sets found under the raw folder in the post stage. see fraudvae/text/."""
+    enabled: bool = True
+    epochs: int = 4
+    fusion_weight: float = 0.5     # how much of a text likelihood ratio reaches the final probability
+
+
+@dataclass
+class BehaviourConfig:
+    """v5: the behaviour verifiers (mouse, keystroke, touch, motion), trained on the public
+    biometric sets found under the raw folder in the post stage. see fraudvae/behaviour/."""
+    enabled: bool = True
+    epochs: int = 25
+    fusion_weight: float = 1.0
+    max_users: int | None = None    # cap users per dataset (loading 10 GB of csv takes a while)
+
+
+@dataclass
 class DataConfig:
     max_rows_per_source: int | None = None   # subsample legit rows for training
     sources: list[str] | None = None         # None = everything that was built
@@ -114,6 +140,8 @@ class Config:
     train: TrainConfig = field(default_factory=TrainConfig)
     boost: BoostConfig = field(default_factory=BoostConfig)
     graph: GraphConfig = field(default_factory=GraphConfig)
+    text: TextConfig = field(default_factory=TextConfig)
+    behaviour: BehaviourConfig = field(default_factory=BehaviourConfig)
     data: DataConfig = field(default_factory=DataConfig)
     device: str = "auto"
     notes: str = ""

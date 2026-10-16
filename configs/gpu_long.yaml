@@ -1,0 +1,43 @@
+# gpu_full with a longer customer window and more epochs: the one lever left for the novelty
+# score and the sequence head once the booster side is settled (the ELBO was still falling
+# at epoch 30 of the shipped run). same booster settings
+name: gpu_long
+device: cuda
+model:
+  latent_dim: 24
+  hidden: [768, 768, 384]
+  cat_embed_dim: 10
+  source_embed_dim: 8
+  dropout: 0.05
+  history:            # v5 customer-history transformer, the full size
+    enabled: true
+    window: 48
+    d_model: 128
+    layers: 2
+    heads: 4
+train:
+  epochs: 40
+  batch_size: 8192
+  lr: 0.0015
+  beta_warmup_epochs: 5
+  patience: 10
+  select_by: elbo
+  score_samples: 16
+  # v5: fp32. with the history transformer, bf16 autocast blew the gradients up around step
+  # 700 at any learning rate we tried, while fp32 ran clean and only ~10% slower on an H200
+  # (the window gather on the cpu is the bottleneck, not the matmuls)
+  amp: false
+boost:
+  # the first full run used 600k legit rows/source, lr 0.08 and stopped at 604 rounds; it did
+  # worse on the newest test months than a 150k-row, lr 0.05, 800-round booster from a 2-core
+  # box (tabformer 0.944 vs 0.980). more legit rows per bank buys sharper fits of time-local
+  # patterns, not generalisation. see docs/TRAINING_NOTES.md
+  max_legit_per_source: 200000
+  val_legit_per_source: 100000
+  legit_weight_cap: 3.0
+  # v5 sweep on the full corpus: 0.03 / 3000 rounds beat 0.05 / 1000 by 0.003 mean AUROC
+  # (tabformer +0.01); 255 leaves, feature_fraction 0.5 and 400k rows were within noise
+  learning_rate: 0.03
+  max_rounds: 3000
+  early_stopping: 200
+notes: window 48 is ~7 min per epoch on an H200 (the cpu-side window gather is the bottleneck), 40 epochs ~4.7 h plus the post stage
