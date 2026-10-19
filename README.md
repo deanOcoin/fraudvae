@@ -1,12 +1,12 @@
 # fraudvae
 
-Fraud screening for payment transactions, trained on a merged corpus of nine
-public transaction datasets (~42M rows), with a web UI to score new
+Fraud screening for payment transactions, trained on a merged corpus of eleven
+public transaction datasets (~43M rows), with a web UI to score new
 transactions, browse the data, train locally, or push a training run to a
 rented GPU over ssh.
 
 Two models look at every transaction and a small per-bank blender combines
-them into one probability:
+them - and, since v5, the signals of five more modules - into one probability:
 
 - a **variational autoencoder** trained on legitimate traffic only. It scores a
   transaction by how badly it reconstructs it, field by field, so every score
@@ -21,10 +21,17 @@ them into one probability:
   weight per bank for each model, which is what the app flags on. Every bank
   also has a "generic" mode for transactions from an institution the model
   never trained on.
+- **v5**: the VAE reads the customer's previous transactions through a small
+  transformer, so "unusual" means unusual *for this customer*; a per-bank
+  specialist booster, a device head and an entity-graph GNN add their own
+  signals to the blend; text heads (urls, memos) and behavioural-biometrics
+  verifiers (mouse, keystrokes, touch, motion) trained on public data are fused
+  into the verdict when a request carries those payloads.
 
 ![score tab](docs/img/score.png)
 
-The other tabs: [data explorer](docs/img/data.png), [model & runs](docs/img/model.png),
+The other tabs: [data explorer](docs/img/data.png), [model & runs](docs/img/model.png)
+(and its [per-source results table](docs/img/model_results.png)),
 [compute / remote training](docs/img/compute.png), [how it works](docs/img/explain.png).
 
 ## Quick start
@@ -67,18 +74,27 @@ still starts, novelty-only, and the sidebar tells you why.
 | banksim | BankSim agent based bank payments | 595k | 1.21% | kaggle |
 | ieee | IEEE-CIS / Vesta real e-commerce transactions | 590k | 3.5% | kaggle |
 | amlworld | IBM AMLworld synthetic inter-bank transfers (HI-Small), label = laundering | 5.08M | 0.10% | kaggle |
+| baf | Bank Account Fraud (Feedzai) account applications with device telemetry (v5) | 1.0M | 1.10% | kaggle |
+| fraudecom | e-commerce first purchases with shared device ids (v5) | 151k | 9.4% | kaggle |
 
-Every source is mapped onto one schema (`fraudvae/data/schema.py`): numeric
-fields (amount, hour, the customer's history in the last hour / day / week and
-their own amount z-score, tenure, the merchant's volume and typical amount,
-balances, limits, distances), categoricals (channel, transaction type, an
-18-way merchant category taxonomy, card brand/kind, auth errors, first-time
-flags, payment format...), plus a source id and a customer key that never
-enters a model. Fields a source can't fill are *unobserved* and masked out of
-the likelihood, never imputed. All context features are computed causally per
-source. Splits are by time within each source: oldest 70% train, 10%
-validation (calibration), newest 20% test. Details, licenses and per-source
-quirks: `docs/DATA_SOURCES.md` (generated from the registry), `docs/SCHEMA.md`.
+Every source is mapped onto one schema (`fraudvae/data/schema.py`, v5): 95
+numeric fields (amount, hour, the customer's history in the last hour / day /
+week / month and their own amount z-score, tenure, the merchant's volume and
+typical amount, balances, limits, distances, and the v5 *graph block*: each
+entity's 30-day volume, distinct customers seen with it, age and
+30-day-delayed confirmed fraud for the counterparty, device, e-mail domain,
+address and card), 24 categoricals (channel, transaction type, an 18-way
+merchant category taxonomy, card brand/kind, auth errors, first-time flags,
+payment format, OS and browser family...), plus a source id and six entity
+keys (customer, counterparty, card, device, email, address) that drive the
+sequence index and the graph block but never enter a model. Each source may
+also carry a *wide block* of its own raw columns (IEEE-CIS: 431 of them)
+stored beside the common table and read only by the booster. Fields a source
+can't fill are *unobserved* and masked out of the likelihood, never imputed.
+All context features are computed causally per source. Splits are by time
+within each source: oldest 70% train, 10% validation (calibration), newest
+20% test. Details, licenses and per-source quirks: `docs/DATA_SOURCES.md`,
+`docs/SCHEMA.md`; the v5 plan and data assessment: `docs/ROADMAP_V5.md`.
 
 ## The models
 
@@ -90,17 +106,44 @@ legitimate rows only with β warm-up and source-token dropout (so a "generic"
 bank context exists). Scoring is a Monte Carlo −ELBO plus a per-field
 normalised variant; calibration picks the better one on validation.
 
+**Customer history (v5).** A small transformer, the history encoder, reads
+the customer's previous 16-32 transactions (same field encoding, plus the
+log time gap to each) into a vector `h` that conditions both the encoder
+`q(z|x,h,s)` and the decoder `p(x|z,h,s)`: "unusual" becomes unusual *for
+this customer*. 10% history dropout keeps a learned no-history token
+trained for first transactions and callers that send none. A sequence head
+(MLP on `[h, embedding of x]`, trained on the labelled subsample) turns the
+same read-out into a fourth supervised signal. The server keeps a per-customer
+store of what it has scored, so the API needs only a `customer_id` (or an
+explicit `history` list) to score with context.
+
 **Supervised (booster).** A LightGBM classifier on the same fields (NaN where
-unobserved) plus the source token, trained on the labelled train split with
-legit rows subsampled per source and re-weighted (capped, so no bank outweighs
-the others), early-stopped on validation AUC, with a 25% source-blanked slice
+unobserved) plus the source token and the source's wide block, trained on the
+labelled train split with legit rows subsampled per source and re-weighted
+(capped, so no bank outweighs the others), early-stopped on the mean of the
+named-bank and source-blanked validation AUCs, with a 25% source-blanked slice
 for a generic mode. It never sees a VAE output, which keeps the stacking
-honest. If LightGBM can't be loaded the run is saved novelty-only and the app
-scores with the VAE alone.
+honest.
+
+**Device head and entity graph (v5).** A small MLP over the device block alone
+("what a risky device looks like", learned across every source that has one) and,
+per source, a GraphSAGE over the entity graph - customers, counterparties, devices,
+emails, addresses, cards as nodes, transactions as edges, three time snapshots so a
+row never sees its own label - whose transaction head reads a row's entities'
+embeddings. Each is one more calibrated signal with a presence bit.
+
+**Text and behaviour (v5).** fastText-style heads trained on public text-fraud
+sets (malicious URLs, scam job postings, bot profiles) read a `text` payload;
+behaviour verifiers trained on public biometric sets (Balabit, BB-MAS, HMOG)
+compare a `session` of raw mouse / keystroke / touch / motion events with the
+customer's enrolled profile. Both return calibrated likelihood ratios that are
+*fused* into the verdict (added to the blend's log-odds with a fixed weight),
+because no transaction row ever carried text or a session.
 
 **Blend.** One logistic regression on bounded signals - booster logit,
-VAE score z, KL z - with a source one-hot and the signals × one-hot, fit on
-labelled validation rows. The interaction terms give every bank its
+VAE score z, KL z and (v5) the sequence, device and graph logits, each with a
+presence bit - with a source one-hot and the signals × one-hot, fit on labelled
+validation rows. The interaction terms give every bank its
 own booster-vs-novelty weighting. Calibration then scores the whole
 validation split once and records, per bank and for the generic context,
 operating thresholds at 0.1/0.5/1/2/5% false positive rate for every
@@ -111,34 +154,67 @@ the friendly one.
 
 ## Results
 
-Held-out test split: the newest 20% of every source, thresholds frozen on
-validation. `gpu_full-4090-v4` is the full corpus trained on a rented RTX 4090.
-`runs/` is not in git - train your own with the commands above or pull a run
-back from a GPU box through the UI.
+Held-out test split: the newest 20% of every source, 8.57M rows, 27k fraud,
+thresholds frozen on validation. `v5-h200-h` is the full 30M-row v5 corpus
+trained on a rented H200 through the relay (30 epochs of the history-conditioned
+VAE in 2.9 h, then the booster, the specialists, the sequence / device / graph
+heads, the text and behaviour modules, calibration and evaluation as a 30-minute
+`post` stage). Two blend columns: as trained, for a deployment whose fraud labels
+arrive within a week, and the same model scored as one whose labels take a month
+(the one-week fraud-history block blanked - `label_delay_days` on the API, the
+"labels arrive within" control in the UI). The last two columns are
+`gpu_full-4090-v4`, the previous release on the same nine sources. `runs/` is not
+in git - train your own with the commands above or pull a run back from a GPU box
+through the UI.
 
-| source | **blend** | r@1% FPR |
-|---|---|---|
-| fdh | **0.672** | 34% |
-| capone | **0.765** | 8% |
-| tabformer | **0.981** | 73% |
-| ulb | **0.982** | 84% |
-| paysim | **1.000** | 100% |
-| sparkov | **0.999** | 99% |
-| banksim | **0.999** | 97% |
-| ieee | **0.858** | 35% |
-| amlworld | **0.990** | 84% |
-| **mean (9)** | **0.916** | |
-| generic (bank unknown) | **0.956** | 66% |
+| source | VAE | booster | seq | local | device | graph | **blend** | r@1% FPR | 30-day labels: blend / r@1% | v4 blend | v4 r@1% |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| fdh | 0.624 | 0.903 | 0.656 | 0.905 | – | 0.501 | **0.905** | 78% | 0.679 / 34% | 0.672 | 34% |
+| capone | 0.613 | 0.837 | 0.815 | 0.839 | – | 0.767 | **0.841** | 21% | 0.836 / 19% | 0.765 | 8% |
+| tabformer | 0.940 | 0.991 | 0.985 | 0.995 | – | 0.815 | **0.994** | 86% | 0.986 / 73% | 0.981 | 73% |
+| ulb | 0.962 | 0.986 | 0.987 | 0.985 | – | – | **0.984** | 89% | 0.984 / 89% | 0.982 | 84% |
+| paysim | 0.797 | 1.000 | 0.991 | 1.000 | – | 0.554 | **1.000** | 100% | 1.000 / 100% | 1.000 | 100% |
+| sparkov | 0.863 | 1.000 | 0.996 | 1.000 | – | 0.953 | **1.000** | 100% | 1.000 / 100% | 0.999 | 99% |
+| banksim | 0.990 | 0.999 | 0.999 | 1.000 | – | 0.998 | **1.000** | 99% | 0.999 / 99% | 0.999 | 97% |
+| ieee | 0.795 | 0.958 | 0.904 | 0.955 | 0.733 | 0.825 | **0.958** | 63% | 0.940 / 56% | 0.858 | 35% |
+| amlworld | 0.912 | 0.990 | 0.984 | 0.990 | – | 0.846 | **0.990** | 85% | 0.990 / 85% | 0.990 | 84% |
+| baf | 0.658 | 0.893 | 0.812 | 0.891 | 0.768 | – | **0.893** | 25% | 0.893 / 25% | – | – |
+| fraudecom | 0.641 | 0.645 | 0.644 | 0.639 | 0.639 | 0.516 | **0.641** | 10% | 0.641 / 9% | – | – |
+| **mean (11)** | 0.799 | 0.927 | 0.889 | 0.927 | 0.714 | 0.753 | **0.928** | | 0.904 | | |
+| **mean (v4's 9)** | 0.833 | 0.963 | | | | | **0.963** | | 0.935 | 0.916 | |
+| generic (bank unknown) | 0.625 | 0.969 | 0.930 | – | 0.735 | – | **0.969** | 70% | 0.952 / 62% | 0.956 | 66% |
 
-AUROC; r@1% FPR is the share of fraud caught at a 1% false-positive budget.
-The simulators (PaySim, Sparkov, BankSim) saturate because their fraud rules
-are learnable; fdh and Capital One are the hard ones, their fraud looks like
-the customer's ordinary traffic.
+AUROC unless marked; r@1% FPR is the share of fraud caught at a 1% false-positive
+budget; `seq` is the sequence head on the history encoder, `local` the bank's own
+specialist booster, `device` and `graph` the device-block and entity-graph heads
+(only where a source carries those columns). The honest reading: the new columns
+are the step change - the entity-graph block with its delayed fraud labels lifted
+Capital One from 0.77 to 0.84 (8% → 21% of its fraud at 1% FPR); the same labels
+at a one-week delay with 7 / 30-day windows (the Fraud Detection Handbook's
+assumption about label latency, booster-only, `docs/SCHEMA.md`) took fdh from
+0.67 to 0.91 (34% → 78%) and tabformer from 73% to 86% of its fraud; the graph
+block plus the wide blocks took IEEE from 0.86 to 0.96 (35% → 63%) - while the
+extra models are second opinions that the blend uses where they help and ignores
+where they do not. The month-latency column is the same model with the one-week
+block blanked, which the booster was trained to expect: it lands where the model
+stood before that block existed. The simulators (PaySim, Sparkov, BankSim)
+saturate because their fraud rules are learnable; fraudecom's fraud is a shared
+device, and 95% of its test rows are a device seen for the first time. The
+modules trained on their own public data keep their own numbers
+(`docs/TRAINING_NOTES.md`): the URL head 0.994 AUROC, the free-text head 0.972,
+the profile head 0.783; the behaviour verifiers 0.11 (keystroke), 0.12 (motion),
+0.17 (touch) and 0.24 (mouse) equal error rate; the graph encoder 0.78 / 0.88 /
+0.92 / 0.98 on DGraph-Fin / Elliptic / YelpChi / Amazon. `docs/TRAINING_NOTES.md`
+has the per-run commentary, including the features that made tabformer worse
+before they made everything else better, the blender that memorised ULB's 21
+validation fraud rows, why a 30-day-old label can never catch a terminal that is
+compromised for 28, and the two things that did not help (the transformer's
+summary as booster input, a longer VAE).
 
 ## Remote training
 
 The full corpus is ~29M legitimate rows per epoch; a laptop does it in days,
-an RTX 4090 in a few minutes per epoch. The *Compute* tab benchmarks the real model on your machine,
+an RTX 4090 in about a minute per epoch. The *Compute* tab benchmarks the real model on your machine,
 estimates the run, and if it's too long walks through renting a box:
 
 1. the app generates its own ed25519 key (`~/.fraudvae/ssh/`); add the public
@@ -160,14 +236,18 @@ in one command), `scripts/bootstrap_remote.sh`. See `docs/REMOTE_TRAINING.md`.
 ```
 fraudvae/
   data/        registry (sources, licenses), schema, taxonomy, velocity features,
-               adapters/<source>.py, fetch / build / prepare, docs generator
-  model/       vae.py, scoring.py, booster.py (lazy lightgbm import), dataset.py
+               entities.py (graph block), adapters/<source>.py, fetch / build / prepare
+  model/       vae.py (model + history encoder), scoring.py, booster.py,
+               seqhead.py (sequence head), heads.py (device head), dataset.py (+ the sequence index)
+  graph/       entity-graph snapshots, GraphSAGE, per-source training, scorer, public benchmarks
+  text/        hashed-bag text heads (url / free text / profile), training, scorer
+  behaviour/   mouse / keystroke / touch / motion features, verifiers, training, scorer
   train.py  calibrate.py  evaluate.py  config.py
-  remote/      keys, ssh (paramiko), provision, jobs, advisor
-  server/      fastapi app + api modules, inference (active model, novelty-only fallback)
+  remote/      keys, ssh (paramiko), provision (incl. raw-data push + box-side pipeline),
+               jobs, advisor, relay (a git repo as the laptop-off control channel)
+  server/      fastapi app + api modules, inference (active model + fusion), entity_store, payloads
   web/         the ui: index.html, css/, js/, explain.html, vendored libs
 configs/       base, cpu_small, gpu_full, smoke
-scripts/       macos_openmp.sh, bootstrap_remote.sh, kaggle_manual_download.md
 tests/         pytest, no real data needed
 docs/
 ```

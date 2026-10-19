@@ -5,7 +5,7 @@ assessment asked for in October 2026: what the current model is limited by,
 what each of the five proposed additions needs, which public data exists for
 it, what our nine sources can and cannot contribute, and what compute and
 storage the build needs. Newest decisions at the top of each section; the
-TRAINING_NOTES file will keep the results as they come in.
+TRAINING_NOTES file keeps the results as they come in.
 
 ## 1. Where v4 stands and what limits it
 
@@ -282,8 +282,26 @@ Decisions:
 5. **Behaviour:** Balabit, BB-MAS, HMOG/BrainRun; session verifier; session
    payload in the API; behaviour LLR.
 6. UI made workable for the new payloads, docs and How-it-works updated,
-   full retrain on the big box.
+   full retrain on the big box, git history last.
 
-Each phase ends with a GPU run and an entry in `docs/TRAINING_NOTES.md`. If
-phase 1 does not land IEEE inside the expected band, the plan is revised
-before any new data is downloaded.
+## 6. Outcome (written after `v5-h200-e`, `f` and `h`)
+
+All six phases shipped; `docs/TRAINING_NOTES.md` has the numbers. Against the
+expectations above: IEEE recall at 1% FPR went from 35% to 63% (inside the
+55-70% band; the wide block and the graph block did it, the device head is a
+0.73 signal on its own), Capital One from 8% to 21% on the delayed-label graph
+features alone, fdh from 34% to 34% with the 30-day label delay and to **78%**
+(0.69 → 0.91 AUROC) once the same terminal / customer fraud history was added at
+the handbook's one-week delay with 7 / 30-day windows: the simulator compromises
+a terminal for 28 days, so a label that arrives 30 days late points at terminals
+that are clean again, and the graph head, which only sees the slow labels, scores
+0.50 there. TabFormer went from 73% to 86% on the same windows. Mean blend AUROC
+over the nine v4 banks 0.916 → 0.963 (0.936 before the one-week block); generic
+mode 0.956 → 0.969; scored as a month-latency deployment the same model gives
+0.935 and 0.952, which the README reports next to the headline. BAF and fraudecom
+joined the corpus (0.893, 0.641). The
+history-conditioned VAE is a better novelty model on the sequence-rich banks and a
+worse one on PaySim; the blender gives it almost no weight either way. The text,
+behaviour and graph modules work as planned on their own public data and reach
+the blend through the API payloads, which the held-out transaction tables cannot
+exercise.

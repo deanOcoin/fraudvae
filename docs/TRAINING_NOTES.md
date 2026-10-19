@@ -333,44 +333,295 @@ right definition of novelty whatever the blend does with it.
 
 - **bf16 autocast and the history transformer do not mix.** The v4 model trained in bf16
   at lr 2e-3 for 30 epochs without a hiccup. With the history encoder the gradient norm
-  overflowed around step 700 of epoch 1 whatever the learning rate, and a few steps
-  later the embeddings were NaN. fp32 ran the same 700 steps clean and was only 10%
-  slower, because the window gather on the cpu is the bottleneck, not the matmuls.
-  `gpu_full` is fp32 now, and the training loop skips a non-finite step instead of
-  letting it reach the weights.
+  overflowed around step 700 of epoch 1 whatever the learning rate, with every
+  individual gradient still finite (the sum of squares passes fp32's range) and the loss
+  still ~40; a few steps later the embeddings were NaN. fp32 ran the same 700 steps clean
+  and was only 10% slower, because the window gather on the cpu is the bottleneck, not
+  the matmuls. `gpu_full` is fp32 now, inputs and targets are bounded at ±20σ
+  (`TabularVAE.NUM_CLIP`: a 150σ cell's Gaussian NLL used to own a batch's gradient),
+  the history tokens get a LayerNorm before the attention, and the training loop skips
+  a non-finite step instead of letting it reach the weights (200 in a row aborts the
+  run with a message).
 - **The box is fast where it matters.** Building all eleven sources from raw (42.8M rows,
   the wide blocks, the graph block over every entity) took 7 minutes on 64 cores and
   `prepare` of the full corpus with the sequence index 95 seconds; the v5 history model
-  does an epoch of 30M rows in 6.4 minutes at 78k rows/s.
+  does an epoch of 30M rows in 5.8 minutes at 85k rows/s.
 
-### The modules' own numbers (2-core sandbox, `runs/aux-sandbox`)
+### The modules' own numbers (trained on the box, `runs/aux-modules`)
 
 | module | data | protocol | result |
 |---|---|---|---|
-| text: url head | malurl, 651k urls, 34% malicious | stratified 80/10/10, platt on val | test AUROC **0.991**, AUPRC 0.987 |
-| text: free-text head | fakejob, 17.9k postings, 4.8% fraudulent | same | test AUROC **0.976**, AUPRC 0.841 |
-| text: profile head | twitterbot, 37k profiles, 33% bots (bio + name + location only) | same | test AUROC 0.771, AUPRC 0.640 |
-| behaviour: mouse | Balabit 10 users + BB-MAS 117 users | Balabit challenge: enrol on training sessions, score the 816 labelled test sessions | AUROC **0.821**, EER 0.251 |
-| behaviour: keystroke | BB-MAS desktop keyboard | open set, 35 unseen users, 228 genuine / 7,752 impostor trials | EER **0.118**, AUROC 0.957 |
-| behaviour: touch | BB-MAS phone + HMOG, 151 users | open set, 34 unseen users | EER 0.181, AUROC 0.899 |
-| behaviour: motion | BB-MAS + HMOG accelerometer, 151 users | open set, 65 unseen users, 1,028 / 65,792 trials | EER **0.129**, AUROC 0.948 |
+| text: url head | malurl, 651k urls, 34% malicious | stratified 80/10/10, platt on val | test AUROC **0.994**, AUPRC 0.991 |
+| text: free-text head | fakejob, 17.9k postings, 4.8% fraudulent | same | test AUROC **0.983**, AUPRC 0.866 |
+| text: profile head | twitterbot, 37k profiles, 33% bots (bio + name + location only) | same | test AUROC 0.778, AUPRC 0.654 |
+| behaviour: mouse | Balabit 10 users + BB-MAS 117 users | Balabit challenge: enrol on training sessions, score the 816 labelled test sessions | AUROC **0.836**, EER 0.237 |
+| behaviour: keystroke | BB-MAS desktop keyboard | open set, 35 unseen users, 228 genuine / 7,752 impostor trials | EER **0.110**, AUROC 0.963 |
+| behaviour: touch | BB-MAS phone + HMOG, 151 users | open set, 34 unseen users | EER 0.172, AUROC 0.908 |
+| behaviour: motion | BB-MAS + HMOG accelerometer, 151 users | open set, 65 unseen users, 1,028 / 65,792 trials | EER **0.121**, AUROC 0.956 |
+| graph: public benchmarks | DGraph-Fin, Elliptic, YelpChi, Amazon | each dataset's standard split | 0.784 / 0.880 / 0.923 / 0.978 AUROC (`docs/GRAPH_BENCHMARKS.md`) |
 
 The text and behaviour numbers are what a deployer gets from those payloads; they never
-touch the held-out transaction tables, which have no text and no sessions. The behaviour
-verifiers are scored per modality because a session rarely carries all four, and their
-feature windows now end at the scored event instead of straddling it (the old windows
-read a little of the future and flattered every EER by 0.02-0.04). The Balabit mouse
-number is well short of the challenge's best (0.9+ with heavy stroke engineering and
-session-level models); the keystroke and motion verifiers are in the range the
-literature reports for feature-MLP verifiers on these sets. The box retrains all of
-them on the full sets.
+touch the held-out transaction tables, which have no text and no sessions. The
+Balabit mouse number is well short of the challenge's best (0.9+ with heavy stroke
+engineering and session-level models); the keystroke and motion verifiers are in the
+range the literature reports for feature-MLP verifiers on these sets.
 
-## Open questions for the full run
+### The booster on the full v5 corpus: a sweep and an ablation (test AUROC / recall @1% FPR)
 
-- Does the history encoder pay on the long real sequences (tabformer, IEEE's
-  reconstructed customers, amlworld)? The sandbox could not say.
-- The delayed-label features use a 30-day horizon everywhere. fdh's compromised
-  terminals are clean again after 28 days, so fdh may need a shorter delay to show
-  anything; that is a deployment question as much as a model one.
-- Which of the wide and graph columns carry the IEEE and capone gains, and whether any
-  of them read the calendar instead of the customer.
+Trained on the box's full prepared set (200k legit rows per source + every fraud row,
+11 sources, 589 features), scored on the 8.6M-row test split. The v4 numbers are the
+shipped `gpu_full-4090-v4` booster for reference.
+
+| variant | mean | fdh | capone | tabformer | ulb | ieee | amlworld | baf | fraudecom |
+|---|---|---|---|---|---|---|---|---|---|
+| v4 booster (9 sources, v4 fields) | – | .672/34% | .765/8% | **.980/73%** | .987/84% | .862/35% | .990/85% | – | – |
+| v5 base (lr .05, 1000 rounds) | .898 | .664/34% | .833/19% | .928/16% | .983/87% | .940/55% | .990/85% | .892/26% | .644/10% |
+| 255 leaves | .899 | .664 | .837 | .930 | .988 | .939 | .990 | .891 | .653 |
+| lr .03, 3000 rounds | .900 | .671 | .834 | .941/19% | .986 | .940 | .990 | .893 | .650 |
+| feature_fraction .5 | .900 | .670 | .834 | .939 | .985 | .939 | .990 | .892 | .650 |
+| − wide blocks (469 cols) | .893 | .683 | .833 | .936 | .987 | .927/51% | .990 | .833/17% | .638 |
+| − delayed-label features (12) | .887 | .673 | .775/8% | .895/7% | .987 | .907/43% | .990 | .891 | .647 |
+| − whole graph block (29) | .883 | .674 | .765/9% | **.984/75%** | .988 | .905/42% | .990 | .891 | .515/1% |
+| − lifetime counts and ages (12) | **.904** | .680 | .834 | **.977/69%** | .985 | .939 | .989 | .891 | .651 |
+
+Reading, in order of what it changed:
+- The **graph block is worth +0.07 on capone and +0.035 on IEEE**, and the delayed-label
+  features inside it are most of that (removing only them costs capone 0.06 and IEEE
+  0.03). fraudecom without the graph block is a coin flip: its fraud *is* the shared
+  device.
+- The same block **cost tabformer 0.05 AUROC and 57 points of recall**, and the
+  ablation pinned it on the twelve lifetime features - distinct customers ever seen
+  with an entity, days since an entity was first seen, the customer's distinct
+  counterparties / devices ever. On a 30-year file those grow with the calendar; the
+  booster read them as the era and the newest months are an era it never saw. The
+  windowed count (`txn_count_30d`) and the delayed fraud share do not have that
+  problem. The schema now carries windowed and capped versions instead
+  (`*_new_cust_30d`, `*_age_days` capped at a year, `cust_new_*_30d`): tabformer back
+  at 0.977 / 69%, nothing else lost, best mean of the table.
+- The wide blocks are +0.013 / +4 points of recall on IEEE and +0.06 on baf, as before.
+- Booster hyperparameters are a rounding error next to features: lr 0.03 with 3000
+  rounds is the one change worth taking (+0.003 mean, tabformer +0.01).
+
+### v5-h200-e (the run that ships: full v5 corpus, 11 sources, rented H200 NVL)
+
+The whole thing ran with the laptop off, through the relay (`docs/REMOTE_TRAINING.md`):
+raw files pushed once (18 GB), `build` of all eleven sources in 7 minutes, `prepare --name
+full` in 95 seconds (29,989,316 train / 4,284,187 val / 8,568,376 test rows, 93k / 13k /
+27k fraud, 589 features with the wide blocks), then `gpu_full` as written for v5: latent 24,
+768-768-384, history encoder with a 32-transaction window, d_model 128, 2 layers, 4 heads
+(3.01M parameters), batch 8192, lr 1.5e-3, fp32, 30 epochs, checkpoint and stopping on the
+held-out −ELBO with patience 8, 16 scoring samples.
+
+**Training.** 5.8 minutes per epoch at 85k rows/s (the window gather on the cpu is the
+bottleneck, the GPU sat at 75%), 30 epochs in 2.9 hours, no skipped steps. The held-out
+−ELBO fell from 21.6 to −2.8 (best epoch 28) with two excursions on the way (epoch 10,
+epoch 15) that recovered within two epochs each; the train loss ended at −5.1. The
+per-epoch VAE AUROC - the number v4 stopped on - oscillated between 0.72 and 0.78 with no
+trend after epoch 3, and single sources swung by 0.3 between neighbouring epochs (paysim
+0.34 → 0.67 → 0.76), because the per-epoch check scores with one posterior sample and the
+fraud sets are small. Two earlier launches of this config (c, d) stopped on that number and
+would have kept an epoch-2 checkpoint; e selects on the ELBO, which is what the model is
+trained to lower and moves smoothly. The post stage took 29 minutes: booster 1,435 rounds
+in 285 s (val AUC 0.965 pooled; v4's was 0.950), eleven specialists, the sequence head
+(70 s), the device head (13 s), nine entity graphs (paysim's capped at 4M nodes, 3 minutes
+for all), the three text heads, the four behaviour verifiers, calibration and evaluation.
+
+**The blender needed one fix.** The blend is a logistic regression over every signal with
+per-bank interaction terms, fit on half of a validation subsample and checked on the other
+half. On the held-out half ULB's blend scored 0.915 against 0.953 for the booster on the
+same rows: the fit half holds 21 ULB fraud rows and the unregularised ULB interactions had
+learnt them by heart (`kl_z x ulb` had a weight of −1.1). Lowering C across the board did
+nothing until it hurt the big banks; dropping the interactions altogether cost fdh 0.02.
+What works is hierarchical shrinkage: each bank's interaction columns are scaled by
+sqrt(fraud rows / 10,000) before the fit, so a bank with few labelled fraud rows pays more
+penalty for leaving the shared weights and ULB (factor 0.05) is pulled onto them while
+tabformer (0.45) and fdh (0.28) keep theirs. The scaling folds back into the stored
+weights, so inference is unchanged. Held-out half: ULB 0.953, every other bank identical to
+the third decimal; on test ULB went from 0.971 to 0.984 and the mean blend edged above the
+booster (0.9056 vs 0.9052) instead of below it. Re-running calibration and evaluation on
+the frozen models took 10 minutes on the box.
+
+**Results** (test split, newest 20% of every source, 8.57M rows, 27,303 fraud; thresholds
+frozen on validation; AUROC unless marked):
+
+| source | VAE | booster | seq | local | device | graph | **blend** | r@0.1% | r@1% | r@5% | v4 blend | v4 r@1% |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| fdh | 0.624 | 0.688 | 0.656 | 0.674 | – | 0.501 | **0.691** | 32% | 34% | 38% | 0.672 | 34% |
+| capone | 0.612 | 0.834 | 0.815 | 0.836 | – | 0.767 | **0.838** | 11% | 21% | 41% | 0.765 | 8% |
+| tabformer | 0.940 | 0.980 | 0.985 | 0.988 | – | 0.815 | **0.983** | 43% | 71% | 93% | 0.981 | 73% |
+| ulb | 0.963 | 0.987 | 0.987 | 0.985 | – | – | **0.984** | 80% | 89% | 92% | 0.982 | 84% |
+| paysim | 0.797 | 1.000 | 0.991 | 1.000 | – | 0.554 | **1.000** | 95% | 100% | 100% | 1.000 | 100% |
+| sparkov | 0.862 | 1.000 | 0.996 | 1.000 | – | 0.953 | **1.000** | 99% | 100% | 100% | 0.999 | 99% |
+| banksim | 0.990 | 0.999 | 0.999 | 1.000 | – | 0.998 | **1.000** | 89% | 99% | 100% | 0.999 | 97% |
+| ieee | 0.795 | 0.939 | 0.904 | 0.939 | 0.733 | 0.825 | **0.940** | 33% | 56% | 73% | 0.858 | 35% |
+| amlworld | 0.911 | 0.990 | 0.984 | 0.989 | – | 0.846 | **0.990** | 62% | 86% | 93% | 0.990 | 84% |
+| baf | 0.657 | 0.891 | 0.812 | 0.890 | 0.768 | – | **0.892** | 7% | 26% | 55% | – | – |
+| fraudecom | 0.641 | 0.649 | 0.644 | 0.644 | 0.639 | 0.516 | **0.643** | 0% | 7% | 32% | – | – |
+| **mean, 11 sources** | 0.799 | 0.905 | 0.889 | 0.904 | 0.714 | 0.753 | **0.906** | | | | | |
+| **mean, v4's 9 sources** | 0.833 | 0.935 | | | | | **0.936** | | | | **0.916** | |
+| generic (bank unknown) | 0.625 | 0.952 | 0.930 | – | 0.735 | – | **0.953** | 46% | 62% | 75% | 0.956 | 66% |
+
+`seq` is the sequence head on the history read-out, `local` the bank's own specialist
+booster, `device` the device-block head (only the three sources with a device block),
+`graph` the entity-graph head (NaN-free rows only; paysim's covers 48% of its test rows,
+fraudecom's 5%). The modules that never touch the transaction tables keep the numbers in
+the table above: text 0.994 / 0.972 / 0.783, behaviour EER 0.24 / 0.11 / 0.17 / 0.12.
+
+What to take from it:
+
+- **On the nine sources v4 had, the blend went from 0.916 to 0.936 mean AUROC**, and the
+  gains are where the new columns are: Capital One 0.765 → 0.838 (recall at 1% FPR 8% →
+  21%), IEEE 0.858 → 0.940 (35% → 56%), fdh 0.672 → 0.691, ULB 84% → 89% recall. The
+  ablation on the previous page says which columns: the graph block with its delayed labels
+  for capone and IEEE, the wide blocks for IEEE. Tabformer is unchanged (0.981 → 0.983,
+  73% → 71% recall: inside the month-to-month noise of its newest months, and the
+  lifetime-count regression of the first v5 booster is gone). The simulators stay saturated.
+- **The specialist and the sequence head are second opinions, not new information.** `local`
+  tracks the pooled booster within 0.005 everywhere except fdh (0.674 vs 0.688: its
+  specialist stopped after 15 rounds) and tabformer (0.988 vs 0.980, 75% vs 66% recall),
+  where the per-bank model sees the newest months better than the blend does;
+  `seq` is 0.01-0.08 below the booster on every bank but beats it on nothing, and on
+  tabformer (0.985) it is the strongest single neural signal the project has produced.
+  The blender's coefficients say the same: the VAE score's weight is ~0, the booster and
+  the specialist carry the sum. The blend is still the right thing to serve - it is the one
+  calibrated probability, and it now matches or beats the best single signal on every bank
+  but tabformer and fraudecom.
+- **The history-conditioned VAE is a better novelty model on the banks with customer
+  sequences and a worse one on the simulators**: capone 0.51 → 0.61, IEEE 0.73 → 0.79,
+  amlworld 0.82 → 0.91, ULB 0.95 → 0.96; paysim 0.94 → 0.80, sparkov 0.91 → 0.86, fdh
+  0.65 → 0.62; 0.826 → 0.833 mean over the nine. PaySim's fraud is a balance drained in one
+  transfer, which the v4 model saw as an outlier of the row and the history model, having
+  read the account's previous rows, half expects; the ±20σ bound on the Gaussian terms
+  (`NUM_CLIP`, needed for the fp32 run) takes the rest. Nothing in the blend cares, but
+  the receipt's "surprise" column is a different animal on PaySim now.
+- **Generic mode (bank blanked)** is 0.953 against 0.956, on a pool that now includes the two
+  hardest new sources (baf at 0.89 and fraudecom at 0.64 contribute 15% of the generic
+  pool's fraud rows). Recall at 1% FPR 62% vs 66% for the same reason. On the shared banks it is the
+  same model.
+- **BAF and fraudecom are honest numbers for honest reasons.** BAF is account applications
+  with a device block and no customer: 0.892 AUROC and 55% of the fraud at 5% FPR is the
+  range the dataset's own paper reports for gradient-boosted trees on its Base variant
+  (about half the fraud at 5% FPR), and the device head alone gets 0.77 from os + session
+  + validity flags. fraudecom's fraud *is* the shared device (the graph head's
+  AUPRC 0.24 on the 5% of test rows whose device the graph has seen is the best signal
+  there), but 95% of its test rows are a device and an ip seen for the first time, and on
+  those nothing beats the base rate by much: every signal sits at 0.64.
+
+### v5-h200-f (the same VAE, the booster side refit with a one-week label delay)
+
+The table above left fdh where every model had left it, 0.69, and the reason is
+mechanical rather than statistical. The handbook simulator's second scenario compromises
+a terminal for 28 days; the schema's fraud-history features count labels that are at
+least 30 days old (`ENTITY_LABEL_DELAY_DAYS`), so by the time a terminal's fraud is
+"known" the terminal is clean again, and the feature is a perfect description of last
+month. The handbook's own baseline uses a one-week delay for exactly these
+terminal-risk features and gets ~0.87 AUROC with XGBoost. Whether a week is honest is a
+statement about a deployment's label latency, not about the model, so v5 carries both:
+the 30-day pair stays in the schema (the VAE and the booster see it), and the same pair at
+7 days (`ENTITY_LABEL_DELAY_FAST_DAYS`) rides in the wide block for the booster only, for
+every source with entities (`wide__<entity>_fraud_{count,share}_fast`). Nothing about the
+VAE changed, so this was a `build` (7.5 minutes for all eleven sources, the entity pass
+run twice), a `prepare` and a `post` on a copy of the e checkpoint: 30 minutes on the box.
+
+| source | VAE | booster | seq | local | device | graph | **blend** | r@0.1% | r@1% | r@5% | v5-h200-e blend | v4 blend |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| fdh | 0.624 | 0.891 | 0.656 | 0.892 | – | 0.501 | **0.893** | 67% | 75% | 79% | 0.691 | 0.672 |
+| capone | 0.613 | 0.838 | 0.815 | 0.839 | – | 0.767 | **0.841** | 11% | 21% | 42% | 0.838 | 0.765 |
+| tabformer | 0.940 | 0.980 | 0.985 | 0.989 | – | 0.815 | **0.986** | 50% | 74% | 94% | 0.983 | 0.981 |
+| ulb | 0.962 | 0.984 | 0.987 | 0.985 | – | – | **0.983** | 81% | 88% | 91% | 0.984 | 0.982 |
+| paysim | 0.797 | 1.000 | 0.991 | 1.000 | – | 0.554 | **1.000** | 95% | 100% | 100% | 1.000 | 1.000 |
+| sparkov | 0.863 | 1.000 | 0.996 | 1.000 | – | 0.953 | **1.000** | 99% | 100% | 100% | 1.000 | 0.999 |
+| banksim | 0.990 | 0.999 | 0.999 | 1.000 | – | 0.998 | **1.000** | 89% | 99% | 100% | 1.000 | 0.999 |
+| ieee | 0.795 | 0.958 | 0.904 | 0.954 | 0.733 | 0.825 | **0.958** | 41% | 63% | 79% | 0.940 | 0.858 |
+| amlworld | 0.912 | 0.990 | 0.984 | 0.989 | – | 0.846 | **0.990** | 62% | 86% | 93% | 0.990 | 0.990 |
+| baf | 0.658 | 0.891 | 0.812 | 0.890 | 0.768 | – | **0.892** | 7% | 26% | 55% | 0.892 | – |
+| fraudecom | 0.641 | 0.646 | 0.644 | 0.643 | 0.639 | 0.516 | **0.645** | 1% | 8% | 31% | 0.643 | – |
+| **mean, 11 sources** | 0.799 | 0.925 | 0.889 | 0.926 | 0.714 | 0.753 | **0.926** | | | | 0.906 | |
+| **mean, v4's 9 sources** | 0.833 | 0.960 | | | | | **0.961** | | | | 0.936 | **0.916** |
+| generic (bank unknown) | 0.625 | 0.966 | 0.930 | – | 0.735 | – | **0.966** | 52% | 69% | 81% | 0.953 | 0.956 |
+
+- **fdh 0.691 → 0.893, 34% → 75% of its fraud at 1% FPR, 67% at 0.1%.** That is the
+  handbook benchmark's range on the handbook's data, reached with the handbook's
+  assumption. The terminal's week-old fraud share is the feature; the customer's own
+  (scenario 3, a compromised card for 14 days) is the rest.
+- **IEEE 0.940 → 0.958 (56% → 63%)** and **tabformer 0.983 → 0.986 (71% → 74%)**: the
+  card and the counterparty with a fresher label. Capital One +0.003, the rest within
+  ±0.001 - the simulators were saturated and the two new sources have no label history
+  that a shorter delay changes.
+- **Generic mode 0.953 → 0.966, recall 62% → 69%**: now above v4's 0.956 on a pool that
+  includes the two hardest sources, because the delayed-label features are the same
+  columns for every bank and the booster can use them without knowing whose they are.
+- Validation agrees with test for once (held-out half: fdh 0.904, IEEE 0.972, pooled
+  0.974), which is what a feature that fixes a mechanism rather than a fit looks like.
+- The receipt names which delay fired: a `wide` push on `cpty_fraud_share_fast` is the
+  one-week label, a push on `cpty_fraud_share_delayed` the 30-day one. A deployment whose
+  labels take a month should leave the `wide__*_fast` columns out of its requests (NaN,
+  which the booster learnt as "no labelled history at that delay yet", since every
+  entity's first week looks like that in training) rather than feed it labels it would
+  not have had.
+
+### Round 3 (v5-h200-h, what ships): label latency as a first-class thing, and the booster reads the transformer
+
+Three changes on the booster side, each its own `post` on the e checkpoint (the VAE never
+moved), compared on the same test rows as f:
+
+1. **Label-latency dropout** (`boost.fast_dropout` 0.3). The one-week block is only honest
+   for a deployment whose labels arrive within a week, and a deployment whose labels take
+   a month had, with f, two bad options: feed the model labels it would not have had, or
+   send NaN in columns the booster had only ever seen NaN on an entity's first week. Now a
+   random 30% of the booster's (and each specialist's) training rows have the whole block
+   blanked, the score API takes `label_delay_days` and blanks it past a week (the receipt
+   says "used", "blanked" or "not sent"), and the post stage evaluates the test split a
+   second time with the block blanked (`eval_delay30.json`): every bank gets a one-week
+   number and a one-month number, on the model page and below.
+2. **Recent-fraud windows** (`wide__*_fraud_{count,share}_fast_w7` / `_w30`): the same
+   count and share over the entity's rows in the 7 and 30 days before the one-week label
+   horizon, so a terminal compromised this month is not diluted by a clean history.
+3. **The history encoder's read-out as booster input** (`boost.history_features`, run i):
+   the sequence head beat the booster on tabformer (0.985 vs 0.980) from that 128-d
+   vector alone, and feeding it to the trees is the one stacking that cannot leak - the
+   encoder was trained on legitimate rows with no label in sight. The booster and the
+   specialists get it as `hist_0..127`, computed with the bank blanked for the generic
+   slice, and the receipt shows the block as one line.
+
+**Results of round 3** (same test rows; "30-day labels" is the second evaluation, with the
+one-week block blanked; the last two columns are the v4 release):
+
+| source | vae | booster | seq | local | device | graph | **blend** | r@0.1% | r@1% | r@5% | 30-day labels: blend / r@1% | v4 blend | v4 r@1% |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| fdh | 0.624 | 0.903 | 0.656 | 0.905 | – | 0.501 | **0.905** | 72% | 78% | 81% | 0.679 / 34% | 0.672 | 34% |
+| capone | 0.613 | 0.837 | 0.815 | 0.839 | – | 0.767 | **0.841** | 11% | 21% | 41% | 0.836 / 19% | 0.765 | 8% |
+| tabformer | 0.940 | 0.991 | 0.985 | 0.995 | – | 0.815 | **0.994** | 68% | 86% | 98% | 0.986 / 73% | 0.981 | 73% |
+| ulb | 0.962 | 0.986 | 0.987 | 0.985 | – | – | **0.984** | 80% | 89% | 92% | 0.984 / 89% | 0.982 | 84% |
+| paysim | 0.797 | 1.000 | 0.991 | 1.000 | – | 0.554 | **1.000** | 95% | 100% | 100% | 1.000 / 100% | 1.000 | 100% |
+| sparkov | 0.863 | 1.000 | 0.996 | 1.000 | – | 0.953 | **1.000** | 99% | 100% | 100% | 1.000 / 100% | 0.999 | 99% |
+| banksim | 0.990 | 0.999 | 0.999 | 1.000 | – | 0.998 | **1.000** | 88% | 99% | 100% | 0.999 / 99% | 0.999 | 97% |
+| ieee | 0.795 | 0.958 | 0.904 | 0.955 | 0.733 | 0.825 | **0.958** | 41% | 63% | 79% | 0.940 / 56% | 0.858 | 35% |
+| amlworld | 0.912 | 0.990 | 0.984 | 0.990 | – | 0.846 | **0.990** | 62% | 85% | 93% | 0.990 / 85% | 0.990 | 84% |
+| baf | 0.658 | 0.893 | 0.812 | 0.891 | 0.768 | – | **0.893** | 7% | 25% | 55% | 0.893 / 25% | – | – |
+| fraudecom | 0.641 | 0.645 | 0.644 | 0.639 | 0.639 | 0.516 | **0.641** | 1% | 10% | 32% | 0.641 / 9% | – | – |
+| **mean, 11 sources** | 0.799 | 0.927 | 0.889 | 0.927 | 0.714 | 0.753 | **0.928** | | | | 0.904 | | |
+| **mean, v4's 9 sources** | 0.833 | 0.963 | | | | | **0.963** | | | | 0.935 | **0.916** | |
+| generic (bank unknown) | 0.625 | 0.969 | 0.930 | – | 0.735 | – | **0.969** | 56% | 70% | 82% | 0.952 / 62% | 0.956 | 66% |
+
+- **Run h (1 + 2) is what ships: 0.963 mean over v4's nine banks, 0.928 over all eleven,
+  generic 0.969.** The recent-fraud windows did more than expected on tabformer, 0.986 →
+  0.994 and 74% → 86% of its fraud at 1% FPR (98% at 5%): card fraud on that file comes in
+  bursts, and a lifetime share buried this month's burst under years of clean history.
+  fdh went 0.893 → 0.905 (78% at 1%, 72% at 0.1%). The latency dropout cost nothing on
+  the one-week numbers (booster val AUC 0.9764 against f's 0.9762) and bought the second
+  column: scored as a deployment whose labels take a month, the same model lands within
+  0.001 of run e on every bank (0.935 mean, generic 0.952), i.e. exactly the 30-day model,
+  instead of somewhere undefined. Those are the two numbers a deployer should read, and the
+  model page shows both.
+- **Run i (the encoder's read-out as booster input) is a wash**: 0.9627 against h's 0.9634
+  over the nine, tabformer AUPRC +0.02, amlworld −0.003, everything else within 0.001. The
+  booster stopped earlier (937 rounds against 1,387) at the same validation AUC, so the
+  128 columns are not useless - they let the trees get there faster - but the velocity
+  and entity blocks already say what the summary says. The option stays in the code
+  (`boost.history_features`, `configs/gpu_hist.yaml`) as the documented negative result;
+  it is off in `gpu_full`.
+- A longer VAE (`gpu_long`: window 48, 40 epochs) was started alongside and stopped at
+  epoch 7 once h's numbers were in: the blender gives the VAE score a weight of about zero,
+  so a better novelty model would have changed the receipt and nothing the app flags on.
+  The config is kept for whoever wants the novelty score itself to be better.
