@@ -600,6 +600,11 @@ def test_public_mode_gates(client, monkeypatch):
     assert not any("| host " in ln for ln in client.get("/api/runs/test-run/log").json()["lines"])
     api_data._examples_cache.clear()
     assert client.get("/api/examples?source=fdh&fraud=0").status_code == 404   # the build's samples are not served publicly
+    # the data tab still has the corpus: the packaged statistics of the trained-on build, not the local one
+    ds = client.get("/api/datasets").json()
+    assert ds["stats_from"] == "packaged" and ds["public"] and ds["total_rows"] > 40_000_000 and ds["raw_dir"] is None
+    assert all(s["built"] and not s["raw_present"] for s in ds["sources"]) and ds["prepared"] == []
+    assert ds["sources"][0]["lock"]["files"][0]["sha256"]     # the recorded checksums stand in for a download manifest
     body = {"source": "fdh", "features": ex["features"], "wide": ex["wide"], "customer_id": "visitor-1", "remember": True, "ts": 1.7e9}
     codes = [client.post("/api/score", json=body).status_code for _ in range(5)]
     assert codes[:3] == [200, 200, 200] and 429 in codes[3:]

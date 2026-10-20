@@ -34,10 +34,16 @@ function renderSummary() {
   document.getElementById("corpus-summary").innerHTML = `
     <div class="stat"><b>${fmt.int(data.total_rows)}</b><span>transactions</span></div>
     <div class="stat"><b>${fmt.int(data.total_fraud)}</b><span>labelled fraud (${fmt.pct(data.total_fraud / Math.max(data.total_rows, 1), 3)})</span></div>
-    <div class="stat"><b>${built.length} / ${data.sources.length}</b><span>sources built, ${real} with real transactions</span></div>
+    <div class="stat"><b>${built.length} / ${data.sources.length}</b><span>sources ${data.public ? "in the corpus" : "built"}, ${real} with real transactions</span></div>
     <div class="stat"><b>${span.length ? fmt.date(lo).slice(0, 4) + "–" + fmt.date(hi).slice(0, 4) : "–"}</b><span>calendar span of dated sources</span></div>
-    <div class="stat"><b>${data.prepared.length}</b><span>prepared set${data.prepared.length === 1 ? "" : "s"}${data.prepared.length ? ": " + data.prepared.map((p) => p.name).join(", ") : ""}</span></div>`;
-  document.getElementById("data-lede").textContent = `${data.sources.length} public transaction datasets mapped onto one schema of ${schema.numeric.length} numeric and ${schema.categorical.length} categorical fields. Where a source has no notion of a field, the field is marked unobserved and the model's likelihood skips it.`;
+    ${data.public
+      ? `<div class="stat"><b>statistics only</b><span>the datasets themselves are not on this server; these are the counts of the build the models were trained on, and each source below says where to get it</span></div>`
+      : `<div class="stat"><b>${data.prepared.length}</b><span>prepared set${data.prepared.length === 1 ? "" : "s"}${data.prepared.length ? ": " + data.prepared.map((p) => p.name).join(", ") : ""}</span></div>`}`;
+  document.getElementById("data-lede").textContent = `${data.sources.length} public transaction datasets mapped onto one schema of ${schema.numeric.length} numeric and ${schema.categorical.length} categorical fields. Where a source has no notion of a field, the field is marked unobserved and the model's likelihood skips it.`
+    + (data.public ? " None of the data is redistributed here; six sources ship example rows, the rest link to their own pages." : "");
+  // a public site cannot rebuild anything
+  const pipeline = document.querySelector("#tab-data .pipeline-section");
+  if (pipeline) pipeline.classList.toggle("hidden", !!data.public);
 }
 
 function renderList() {
@@ -49,7 +55,7 @@ function renderList() {
       el("span", { class: "name" }, s.name),
       el("span", { class: "rows" }, st ? fmt.int(st.rows) : fmt.int(s.approx_rows) + " expected"),
       el("span", { class: "meta" },
-        el("span", { class: "pill " + (s.built ? "ok" : s.raw_present ? "" : "no") }, s.built ? "built" : s.raw_present ? "raw only" : "missing"),
+        el("span", { class: "pill " + (s.built ? "ok" : s.raw_present ? "" : "no") }, s.built ? (data.public ? (s.redistributable ? "examples here" : "in the corpus") : "built") : s.raw_present ? "raw only" : "missing"),
         " ", s.access === "kaggle" ? "kaggle" : "github", " ",
         st ? `fraud ${fmt.pct(st.fraud_rate, 2)}` : `fraud ≈${fmt.pct(s.label_rate_hint, 2)}`));
     host.append(row);
@@ -68,13 +74,13 @@ function showSource(key) {
   parts.push(`<h2>${esc(s.name)}</h2><p class="dim" style="margin:0">${esc(s.context)}</p>`);
   parts.push(`<dl class="kv">
     <dt>source</dt><dd><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.url)}</a></dd>
-    <dt>license</dt><dd>${esc(s.license)}</dd>
+    <dt>license</dt><dd>${s.license_url ? `<a href="${esc(s.license_url)}" target="_blank" rel="noopener">${esc(s.license)}</a>` : esc(s.license)}${data.public ? (s.redistributable ? " — example rows from this source ship with the site" : " — not redistributed; download it from the source to score its rows") : ""}</dd>
     <dt>cite</dt><dd>${esc(s.citation)}</dd>
     <dt>files</dt><dd><code>${s.files.map(esc).join("</code>, <code>")}</code>${s.lock ? " – sha256 " + s.lock.files.map((f) => `<code title="${esc(f.path)}">${f.sha256.slice(0, 12)}…</code>`).join(", ") : ""}</dd>
     ${s.notes ? `<dt>notes</dt><dd>${esc(s.notes)}</dd>` : ""}
   </dl>`);
   if (!st) {
-    parts.push(`<div class="notice warn">Not built. ${s.access === "kaggle" ? `Download it from Kaggle and drop the zip into <code>${esc(data.raw_dir)}/${esc(s.key)}/</code>, then press <b>Build unified parquet</b>.` : "Press <b>Fetch raw data</b> then <b>Build</b>."}</div>`);
+    parts.push(`<div class="notice warn">Not built. ${s.access === "kaggle" ? `Download it from Kaggle and drop the zip into <code>${esc(data.raw_dir || "data/raw")}/${esc(s.key)}/</code>, then press <b>Build unified parquet</b>.` : "Press <b>Fetch raw data</b> then <b>Build</b>."}</div>`);
     box.innerHTML = parts.join("");
     return;
   }
@@ -82,7 +88,7 @@ function showSource(key) {
   parts.push(`<table class="metric-table"><thead><tr><th>split</th><th>rows</th><th>fraud</th><th>rate</th></tr></thead><tbody>
     ${["train", "val", "test"].map((k) => `<tr><td>${k}</td><td>${fmt.int(sp[k].rows)}</td><td>${fmt.int(sp[k].fraud)}</td><td>${fmt.pct(sp[k].fraud / Math.max(sp[k].rows, 1), 2)}</td></tr>`).join("")}
     <tr><td><b>all</b></td><td><b>${fmt.int(st.rows)}</b></td><td><b>${fmt.int(st.fraud)}</b></td><td><b>${fmt.pct(st.fraud_rate, 3)}</b></td></tr></tbody></table>
-    <p class="dim small">${st.absolute_time ? `dated ${fmt.date(st.ts_min)} to ${fmt.date(st.ts_max)}` : "relative time only (simulation steps)"}; split is by time, oldest 70% train, next 10% validation, newest 20% test. built in ${st.build_seconds}s.</p>`);
+    <p class="dim small">${st.absolute_time ? `dated ${fmt.date(st.ts_min)} to ${fmt.date(st.ts_max)}` : "relative time only (simulation steps)"}; split is by time, oldest 70% train, next 10% validation, newest 20% test. built in ${st.build_seconds}s${data.stats_from === "packaged" ? " (on the machine that trained the models; statistics only here)" : ""}.</p>`);
   const aq = st.amount;
   parts.push(`<p class="small">Median legit amount ${fmt.num(aq.legit_quantiles["0.5"])}, fraud ${aq.fraud_quantiles["0.5"] != null ? fmt.num(aq.fraud_quantiles["0.5"]) : "–"} (99th pct legit ${fmt.num(aq.legit_quantiles["0.99"])}).</p>`);
   parts.push(`<div class="chart-pair">
