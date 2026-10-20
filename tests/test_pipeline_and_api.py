@@ -74,7 +74,7 @@ def test_training_run_artifacts(trained_run):
 def client(trained_run):
     from fraudvae.server.app import app
 
-    with TestClient(app) as c:
+    with TestClient(app, base_url="http://127.0.0.1") as c:   # a workbench answers only to its own names
         yield c
 
 
@@ -627,6 +627,18 @@ def test_public_mode_gates(client, monkeypatch):
     public._buckets.clear()
 
 
+def test_workbench_answers_only_its_own_names(client):
+    """dns rebinding: a page on a hostile site whose name resolves to 127.0.0.1 would otherwise
+    reach the workbench api (which trains, builds data and drives a rented box over ssh)"""
+    from fastapi.testclient import TestClient
+
+    from fraudvae.server.app import app
+
+    assert client.get("/api/meta").status_code == 200
+    with TestClient(app, base_url="http://evil.example") as other:
+        assert other.get("/api/meta").status_code == 400
+
+
 def test_request_hardening(client, monkeypatch):
     """what a hostile caller gets: run names that are paths are 404 before any file is touched,
     oversized payloads are 422 before any model runs, errors say nothing about the code in public
@@ -659,6 +671,13 @@ def test_request_hardening(client, monkeypatch):
     # a csv that is one long header row is refused by its width, not read into a frame
     wide = io.BytesIO(("," * 3001 + "\n1" + ",1" * 3001 + "\n").encode())
     assert client.post("/api/score/batch?source=fdh", files={"file": ("w.csv", wide.getvalue(), "text/csv")}).status_code == 413
+    # a scored file never carries a cell a spreadsheet would run: formula-shaped text is quoted
+    rows = pd.DataFrame([ex["features"] | {"source": "fdh", "memo": '=HYPERLINK("http://x")', "note": "-plain", "ok": "fine", "empty": ""}] * 2)
+    buf = io.BytesIO(); rows.to_csv(buf, index=False)
+    resp = client.post("/api/score/batch?source=fdh", files={"file": ("x.csv", buf.getvalue(), "text/csv")})
+    assert resp.status_code == 200
+    scored = pd.read_csv(io.BytesIO(resp.content))
+    assert scored["memo"].iloc[0].startswith("'=") and scored["note"].iloc[0] == "'-plain" and scored["ok"].iloc[0] == "fine"
     # the error for a malformed transaction names the exception on a workbench and does not in public
     junk = {"features": {"amount": "not a number", "x": [1, 2, 3]}, "source": "fdh"}
     r = client.post("/api/score", json=junk)
