@@ -213,7 +213,7 @@ EOF
 systemctl enable unattended-upgrades >/dev/null 2>&1 || true
 # the site's logs keep a week, compressed; the access log holds no full addresses (see nginx.conf)
 cat > /etc/logrotate.d/fraudvae <<'EOF'
-/var/log/nginx/fraudvae.access.log /var/log/nginx/fraudvae.error.log /srv/fraudvae/home/server.log {
+/var/log/nginx/fraudvae.access.log /var/log/nginx/fraudvae.error.log {
     daily
     rotate 7
     missingok
@@ -224,6 +224,16 @@ cat > /etc/logrotate.d/fraudvae <<'EOF'
     postrotate
         [ -f /run/nginx.pid ] && kill -USR1 "$(cat /run/nginx.pid)" || true
     endscript
+}
+# the app keeps this file open for its crash handler: copy and truncate rather than rename
+/srv/fraudvae/home/server.log {
+    daily
+    rotate 7
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
 }
 EOF
 
