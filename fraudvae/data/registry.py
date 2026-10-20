@@ -28,6 +28,11 @@ class Source:
     lfs_urls: tuple[tuple[str, str], ...] = ()   # (relative path, download url)
     extract_members: tuple[str, ...] = ()        # only pull these out of the archive (amlworld's zip is 8 GB)
     notes: str = ""
+    # whether the licence lets a few hundred labelled rows ship with the repository and the
+    # public site (data/examples/). False means "not stated" as much as "no": a source
+    # whose listing names no licence is not redistributed, whatever everyone else does
+    redistributable: bool = False
+    license_url: str = ""
 
 
 SOURCES: dict[str, Source] = {
@@ -74,6 +79,8 @@ SOURCES: dict[str, Source] = {
         kaggle_ref="datasets/ealtman2019/credit-card-transactions",
         kaggle_zip_names=("credit-card-transactions.zip", "archive.zip"),
         notes="same data as kaggle ealtman2019/credit-card-transactions, which also ships the users and cards tables",
+        redistributable=True,
+        license_url="https://github.com/IBM/TabFormer/blob/main/LICENSE",
     ),
     "ulb": Source(
         key="ulb",
@@ -89,6 +96,8 @@ SOURCES: dict[str, Source] = {
         kaggle_ref="datasets/mlg-ulb/creditcardfraud",
         kaggle_zip_names=("creditcardfraud.zip", "archive.zip"),
         notes="only amount + hour map onto the shared schema, V1..V28 live in their own block",
+        redistributable=True,
+        license_url="https://opendatacommons.org/licenses/dbcl/1-0/",
     ),
     "paysim": Source(
         key="paysim",
@@ -104,6 +113,8 @@ SOURCES: dict[str, Source] = {
         kaggle_ref="datasets/ealaxi/paysim1",
         kaggle_zip_names=("paysim1.zip", "archive.zip"),
         notes="balances before/after for both parties. isFlaggedFraud is a rule output and is NOT used as a feature",
+        redistributable=True,
+        license_url="https://creativecommons.org/licenses/by-sa/4.0/",
     ),
     "sparkov": Source(
         key="sparkov",
@@ -119,6 +130,8 @@ SOURCES: dict[str, Source] = {
         kaggle_ref="datasets/kartik2112/fraud-detection",
         kaggle_zip_names=("fraud-detection.zip", "archive.zip"),
         notes="train+test concatenated then re split by time like everything else",
+        redistributable=True,
+        license_url="https://creativecommons.org/publicdomain/zero/1.0/",
     ),
     "banksim": Source(
         key="banksim",
@@ -166,6 +179,8 @@ SOURCES: dict[str, Source] = {
         extract_members=("HI-Small_Trans.csv", "HI-Small_Patterns.txt"),
         notes="the kaggle zip holds six variants (8 GB); only HI-Small is used. amounts converted to USD with rough 2022 "
               "rates. fraud_scenario = laundering pattern from HI-Small_Patterns.txt (1 fan-out ... 8 random)",
+        redistributable=True,
+        license_url="https://cdla.dev/sharing-1-0/",
     ),
     # v5: the two sources with device telemetry. neither is card payments; both widen what
     # "generic" means and both carry the device block the seven older sources cannot fill
@@ -188,6 +203,8 @@ SOURCES: dict[str, Source] = {
         notes="only the Base variant is used (Variants I-V are biased resamples of the same generator). no timestamps "
               "beyond the month, so hour / dow are unobserved; the row order inside a month is kept as the time order. "
               "the paper's protocol (months 0-5 train, 6-7 test) is what the 70/10/20 time split gives here",
+        redistributable=True,
+        license_url="https://creativecommons.org/licenses/by-nc-sa/4.0/",
     ),
     "fraudecom": Source(
         key="fraudecom",

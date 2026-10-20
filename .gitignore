@@ -8,6 +8,8 @@ runs/
 *.npy
 *.npz
 *.parquet
+# ...except the example rows whose licences allow it (fraudvae examples)
+!data/examples/*.parquet
 
 # ssh keys / local app state
 .fraudvae/

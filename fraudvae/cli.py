@@ -2,6 +2,7 @@
 
   fraudvae fetch            download / locate raw datasets
   fraudvae build            raw -> unified parquet
+  fraudvae examples         write the redistributable example rows (data/examples/) from a build
   fraudvae prepare          parquet -> model arrays
   fraudvae train            train the VAE (+ booster, calibration, evaluation)
   fraudvae boost RUN        (re)train the supervised booster for a run
@@ -70,6 +71,7 @@ def _advise(argv):
 COMMANDS = {
     "fetch": lambda argv: __import__("fraudvae.data.fetch", fromlist=["main"]).main(argv),
     "build": lambda argv: __import__("fraudvae.data.build", fromlist=["main"]).main(argv),
+    "examples": lambda argv: __import__("fraudvae.data.examples", fromlist=["main"]).main(argv),
     "prepare": lambda argv: __import__("fraudvae.data.prepare", fromlist=["main"]).main(argv),
     "train": lambda argv: __import__("fraudvae.train", fromlist=["main"]).main(argv),
     "boost": lambda argv: __import__("fraudvae.model.booster", fromlist=["main"]).main(argv),
