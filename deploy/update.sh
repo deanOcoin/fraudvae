@@ -11,6 +11,7 @@ if [ -n "$SRC" ]; then
 else
   git -C "$APP" pull --ff-only
 fi
+[ -f /etc/fraudvae/pip-constraints.txt ] && export PIP_CONSTRAINT=/etc/fraudvae/pip-constraints.txt
 "$APP/.venv/bin/pip" install -q -e "$APP"
 chown -R fraudvae:fraudvae /srv/fraudvae/app
 # nginx config may have changed too (DOMAIN is whatever the live file says)
