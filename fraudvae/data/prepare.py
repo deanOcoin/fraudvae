@@ -40,6 +40,7 @@ import pyarrow.parquet as pq
 
 from ..paths import PREPARED_DIR, PROCESSED_DIR, ensure_dirs
 from . import schema
+from ..model.loading import load_checkpoint
 
 DERIVED_CATS = {"hour": 24, "dow": 7}   # numeric column -> number of classes
 SPLITS = ("train", "val", "test")
@@ -99,13 +100,11 @@ def _stats_from_run(run) -> dict:
     """{feature name: (mean, std)} from a trained run's checkpoint, so a set prepared here is
     standardised exactly like the one that run was trained on (calibrating / evaluating a
     gpu-trained model on a laptop-sized set, say)"""
-    import torch
-
     from ..paths import RUNS_DIR
 
     p = Path(run) if Path(run).exists() else RUNS_DIR / run
     p = p / "model.pt" if p.is_dir() else p
-    ck = torch.load(p, map_location="cpu", weights_only=False)
+    ck = load_checkpoint(p, "cpu")
     return {f["name"]: (float(f["mean"]), float(f["std"])) for f in ck["prepared_meta"]["numeric"]}
 
 

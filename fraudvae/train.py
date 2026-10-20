@@ -28,6 +28,7 @@ from .model.dataset import PreparedSet
 from .model.scoring import auroc, batches, history_window, score_split
 from .model.vae import build_model, save_checkpoint
 from .paths import RUNS_DIR, ensure_dirs
+from .model.loading import load_checkpoint
 
 
 def _best_device():
@@ -162,7 +163,7 @@ def train(cfg: Config, prepared="default", run_dir: Path | None = None, name: st
     start_epoch = 0
     best = -float("inf")
     if resume and Path(resume).exists():
-        ck = torch.load(resume, map_location=device, weights_only=False)
+        ck = load_checkpoint(resume, device)
         model.load_state_dict(ck["state_dict"])
         start_epoch = ck["extra"].get("epoch", 0) + 1
         best = ck["extra"].get("best", best)

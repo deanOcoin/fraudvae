@@ -28,6 +28,7 @@ import torch.nn as nn
 from ..data import schema
 from .dataset import PreparedSet
 from .scoring import auroc
+from .loading import load_checkpoint
 
 # which schema fields each head reads. groups are the NumericFeature / CategoricalFeature
 # .group tags; names are added on top. graph-block columns are listed by prefix.
@@ -130,7 +131,7 @@ def load_heads(run_dir: Path, device="cpu") -> dict[str, FieldHead]:
     """every head_<name>.pt in the run, by name. an empty dict for a run without heads."""
     heads = {}
     for p in sorted(Path(run_dir).glob("head_*.pt")):
-        ck = torch.load(p, map_location=device, weights_only=False)
+        ck = load_checkpoint(p, device)
         cfg = ck["config"]
         head = FieldHead(cfg["name"], cfg["num_idx"], cfg["cat_idx"], cfg["cat_sizes"], cfg["n_sources"], cfg["hidden"],
                          cfg.get("pres_num_idx"), cfg.get("pres_cat_idx"))

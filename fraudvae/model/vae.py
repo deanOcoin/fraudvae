@@ -19,6 +19,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from .loading import load_checkpoint as read_checkpoint
 
 LOG_2PI = math.log(2 * math.pi)
 
@@ -243,7 +244,7 @@ def save_checkpoint(path: Path, model: TabularVAE, meta: dict, cfg: dict, extra:
 
 
 def load_checkpoint(path: Path, device="cpu") -> tuple[TabularVAE, dict]:
-    ck = torch.load(path, map_location=device, weights_only=False)
+    ck = read_checkpoint(path, device)
     mc = ck["model_config"]
     model = TabularVAE(**mc)
     model.load_state_dict(ck["state_dict"])
