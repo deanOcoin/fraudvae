@@ -385,7 +385,8 @@ def get_metrics(name: str):
     out = {"metrics": [], "status": None, "run": None, "eval": None, "eval_delay": None, "calibration": None, "booster": None,
            "seqhead": None, "specialists": None, "graph": None, "text": None, "behaviour": None, "graph_bench": None,
            "heads": {},
-           "schema_version": inference.run_schema_version(d), "compatible": inference.run_schema_version(d) == SCHEMA_VERSION}
+           "schema_version": inference.run_schema_version(d), "compatible": inference.compatible_schema(inference.run_schema_version(d)),
+           "current_schema_version": SCHEMA_VERSION}
     p = d / "metrics.jsonl"
     if p.exists():
         for line in p.read_text().splitlines():

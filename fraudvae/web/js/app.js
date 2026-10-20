@@ -29,6 +29,15 @@ function tabHref(name) {
   return `${location.protocol}//${name === "score" ? "www" : SUBDOMAIN[name]}.${BASE}/`;
 }
 
+// "score a payment with it" on the model tab: on the subdomain site the score tab is another
+// host, and browser storage does not cross hosts, so the chosen version travels in the url
+export function scoreHref(run) {
+  return BASE ? `${tabHref("score")}?run=${encodeURIComponent(run)}` : "#score";
+}
+export function rememberRun(run) {
+  if (!BASE) { try { localStorage.setItem("fraudvae.run", run); } catch (_) {} }
+}
+
 function wireSubdomainLinks() {
   if (!BASE) return;
   document.querySelectorAll(".rail-link").forEach((a) => { if (SUBDOMAIN[a.dataset.tab]) a.href = tabHref(a.dataset.tab); });

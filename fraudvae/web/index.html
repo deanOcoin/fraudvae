@@ -66,7 +66,7 @@
                 <option value="7" selected>a week (fresh fraud history is used)</option>
                 <option value="30">a month (only month-old fraud history is used)</option>
               </select>
-              <small>How quickly a bank finds out a payment was fraud (chargebacks take weeks). The model only uses fraud history it would have known at the time: set this to a month and it stops reading last week's confirmed fraud at this merchant, card or device.</small>
+              <small>What the verdict may draw on. A week: the model may count fraud confirmed in the last seven days at this merchant, card or device, so a payment that follows a fresh run of fraud scores higher. A month: that week is hidden, as it is for a bank whose chargebacks take weeks to arrive, and the verdict rests on the payment itself and older history - typically a lower score for fraud that is part of a recent wave.</small>
             </label>
           </div>
           <div class="example-row">
@@ -169,16 +169,17 @@
     <section id="tab-model" class="tab hidden">
       <header class="page-head">
         <h1>Model &amp; training</h1>
-        <p class="lede">Every version of the model that was trained, oldest first, with what it was trained on, how long it took, and how it scores on data it never saw. Any of them can judge a payment on the Score tab.</p>
+        <p class="lede">Every version of the model that was trained, newest first: what it was trained on, how long it took, and how it scores on data it never saw. Select a version to see its full record below the list; <i>score a payment with it</i> opens the Score tab with that version chosen.</p>
       </header>
       <section class="timeline-section">
-        <div class="card-head"><h2>The six versions</h2><span class="dim">oldest first; the same payment can be scored on any of them from the Score tab</span></div>
-        <div class="timeline" id="timeline"></div>
+        <div class="card-head"><h2>The six versions</h2><span class="dim">newest first · the same payment can be scored on any of them</span></div>
+        <div class="gen-list" id="timeline"></div>
       </section>
-      <div class="runs-layout">
-        <div class="runs-list" id="runs-list"></div>
-        <div class="run-detail" id="run-detail"><p class="dim">Select a run.</p></div>
-      </div>
+      <section class="other-runs hidden" id="other-runs">
+        <div class="card-head"><h2>Other runs on this machine</h2><span class="dim">experiments and partial runs that are not one of the six</span></div>
+        <div class="gen-list compact" id="runs-list"></div>
+      </section>
+      <div class="run-detail" id="run-detail"><p class="dim">Select a version.</p></div>
       <section class="train-section" id="train-section">
         <div class="card-head"><h2>Train on this machine</h2><span class="dim" id="train-device"></span></div>
         <form id="train-form" class="train-form">
