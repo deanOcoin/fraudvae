@@ -77,8 +77,15 @@ if [ ! -x "$APP/.venv/bin/python" ]; then
 fi
 "$APP/.venv/bin/pip" install -q --upgrade pip wheel
 # torch's cpu wheel: a tenth of the size of the default cuda one, and the only one a vps can use
-"$APP/.venv/bin/pip" install -q torch --index-url https://download.pytorch.org/whl/cpu
-"$APP/.venv/bin/pip" install -q -e "$APP"
+"$APP/.venv/bin/pip" install -q "torch==${TORCH_VERSION:-2.14.1}" --index-url https://download.pytorch.org/whl/cpu
+# the exact versions the site was tested with, not the newest on the day (deploy/requirements.lock);
+# the package itself goes on top without resolving anything further
+if [ -f "$APP/deploy/requirements.lock" ]; then
+  "$APP/.venv/bin/pip" install -q -r "$APP/deploy/requirements.lock"
+  "$APP/.venv/bin/pip" install -q --no-deps -e "$APP"
+else
+  "$APP/.venv/bin/pip" install -q -e "$APP"
+fi
 "$APP/.venv/bin/python" -c 'import fraudvae, torch, lightgbm; print("fraudvae", fraudvae.__version__, "torch", torch.__version__, "lightgbm", lightgbm.__version__)'
 
 # the app makes these at start-up; under the unit's read-only view of /srv/fraudvae/app they must already exist
@@ -240,8 +247,17 @@ EOF
 if [ "$HARDEN_SSH" = 1 ]; then
   log "sshd: keys only"
   if [ -s /root/.ssh/authorized_keys ] && grep -Eq '^(ssh-(ed25519|rsa)|ecdsa-sha2|sk-)' /root/.ssh/authorized_keys; then
-    cat > /etc/ssh/sshd_config.d/10-fraudvae.conf <<'EOF'
-# written by deploy/install.sh --harden-ssh: this box is reached by key, as root or not at all
+    # a provider's image may ship an sshd_config without the Include line, in which case a
+    # drop-in is never read and its first-value-wins rule keeps the image's "yes" lines in
+    # force. So the settings go into the main file itself, at the top, every earlier mention
+    # removed, and the result is checked on sshd's own reading of the effective configuration
+    # (sshd -T) before the daemon is told about it. A failed check restores the backup
+    CFG=/etc/ssh/sshd_config
+    cp -a "$CFG" "$CFG.before-fraudvae"
+    KEYS='PasswordAuthentication|KbdInteractiveAuthentication|ChallengeResponseAuthentication|PermitEmptyPasswords|PermitRootLogin|PubkeyAuthentication|MaxAuthTries|LoginGraceTime|X11Forwarding|AllowTcpForwarding|AllowAgentForwarding|ClientAliveInterval|ClientAliveCountMax'
+    sed -i -E "/^[[:space:]]*#?[[:space:]]*($KEYS)[[:space:]]/Id" "$CFG"
+    { cat <<'EOF'
+# set by deploy/install.sh --harden-ssh: this box is reached by key, as root or not at all
 PasswordAuthentication no
 KbdInteractiveAuthentication no
 PermitEmptyPasswords no
@@ -255,8 +271,18 @@ AllowAgentForwarding no
 ClientAliveInterval 300
 ClientAliveCountMax 2
 EOF
-    if sshd -t; then systemctl reload ssh 2>/dev/null || systemctl reload sshd; echo "password logins are off; root logs in with a key only"
-    else rm -f /etc/ssh/sshd_config.d/10-fraudvae.conf; echo "sshd rejected the drop-in; nothing changed"; fi
+      cat "$CFG"; } > "$CFG.new" && mv "$CFG.new" "$CFG"
+    chmod 644 "$CFG"
+    rm -f /etc/ssh/sshd_config.d/10-fraudvae.conf
+    eff=$(sshd -T 2>/dev/null | grep -E "^(passwordauthentication|permitrootlogin|maxauthtries) " | tr '\n' ' ')
+    if sshd -t && printf '%s' "$eff" | grep -q "passwordauthentication no" && printf '%s' "$eff" | grep -q "permitrootlogin prohibit-password"; then
+      systemctl reload ssh 2>/dev/null || systemctl reload sshd
+      echo "verified on sshd's effective configuration: $eff"
+      echo "password logins are off; root logs in with a key only"
+    else
+      mv "$CFG.before-fraudvae" "$CFG"
+      echo "sshd did not take the settings (effective: $eff); the previous configuration is back, nothing changed"
+    fi
   else
     echo "root has no authorized key: left sshd alone (add your key first, then re-run with --harden-ssh)"
   fi

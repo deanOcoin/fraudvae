@@ -81,7 +81,9 @@ ssh root@SERVER 'bash /srv/fraudvae/app/deploy/install.sh --source /root/fraudva
 ```
 
 `install.sh` is idempotent: it installs the packages, makes the `fraudvae` user and the
-directories, copies the code, builds the virtualenv with the CPU build of torch, pulls any
+directories, copies the code, builds the virtualenv with the CPU build of torch and the
+exact package versions in `deploy/requirements.lock` (the ones the site was tested with;
+refresh the file from `pip freeze` on the box when you upgrade on purpose), pulls any
 generation that is missing from `/srv/fraudvae/runs`, writes `/etc/fraudvae/env` if there is
 none, installs the systemd unit and the nginx site, opens 80/443 and rate-limits 22 in ufw,
 gets a Let's Encrypt certificate with a renewal hook that reloads nginx, and sets up
@@ -105,7 +107,9 @@ through all of it.
 
 Two things the installer leaves to you. `--harden-ssh` turns password logins off and limits
 root to key authentication; it runs only when root already has an authorized key, so make
-sure you can log in with yours before you ask for it. And when the kernel has been updated,
+sure you can log in with yours before you ask for it, and keep that session open while it
+runs. It edits `sshd_config` directly and prints the settings as sshd itself reads them
+(`verified on sshd's effective configuration: ...`); if that line is missing, nothing changed. And when the kernel has been updated,
 `/var/run/reboot-required` exists and the box wants a reboot at a quiet moment (the service
 comes back on its own).
 
