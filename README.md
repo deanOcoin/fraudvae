@@ -40,8 +40,9 @@ them - and, since v5, the signals of five more modules - into one probability:
 ![score tab](docs/img/score.png)
 
 The other tabs: [data explorer](docs/img/data.png), [model & runs](docs/img/model.png)
-(and its [per-source results table](docs/img/model_results.png)),
-[compute / remote training](docs/img/compute.png), [how it works](docs/img/explain.png).
+(the generations and their [per-source results table](docs/img/model_results.png)),
+[compute / remote training](docs/img/compute.png), [how it works](docs/img/explain.png),
+[the story](docs/img/story.png).
 
 ## Quick start
 
