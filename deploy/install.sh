@@ -55,6 +55,15 @@ else
 fi
 
 log "virtualenv"
+# a vps whose virtual cpu hides the x86-64-v2 instructions (no sse4.2 / popcnt: "QEMU Virtual CPU
+# version 2.5+" on some hosts) cannot load the current numpy wheels, which require them; the
+# last numpy / scipy wheels built for the plain x86-64 baseline still can, so pin those there.
+# torch's cpu wheel and lightgbm have a baseline code path and run either way (more slowly)
+if ! grep -q -m1 -w sse4_2 /proc/cpuinfo; then
+  echo "cpu without sse4.2 ($(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2)): pinning numpy 2.2 / scipy 1.15 (baseline x86-64 wheels)"
+  printf 'numpy==2.2.6\nscipy==1.15.3\n' > /etc/fraudvae/pip-constraints.txt
+  export PIP_CONSTRAINT=/etc/fraudvae/pip-constraints.txt
+fi
 if [ ! -x "$APP/.venv/bin/python" ]; then
   python3 -m venv "$APP/.venv"
 fi
