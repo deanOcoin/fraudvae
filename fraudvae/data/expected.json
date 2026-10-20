@@ -1,0 +1,115 @@
+{
+ "note": "the raw files the shipped generations were built from: size and sha256 per file. `fraudvae fetch --verify` checks a download against these; a file that differs is a newer or different edition of the dataset and the numbers in the docs would not reproduce from it.",
+ "sources": {
+  "fdh": [
+   {
+    "path": "fdh/simulated-data-raw/data/2018-04-01.pkl",
+    "bytes": 562791,
+    "sha256": "6bb3398e858be68532e22522ed8dd52601fe507b6537f6bc2dde0abcdd3e4717"
+   }
+  ],
+  "capone": [
+   {
+    "path": "capone/DS/transactions.zip",
+    "bytes": 30522086,
+    "sha256": "7bd2d3f99bf8149d741fe7f9da252f117e8e987b1dd24c77afcd6d46e26a137a"
+   }
+  ],
+  "tabformer": [
+   {
+    "path": "tabformer/credit_card_transactions-ibm_v2.csv",
+    "bytes": 2350744057,
+    "sha256": "b01fa323c98522f8c710c7f7242581860c97c50183f1c5fa9e772e5c674a7f15"
+   },
+   {
+    "path": "tabformer/transactions.tgz",
+    "bytes": 278576638,
+    "sha256": "e9f589a0958f40d60f81b1a2e8428db86e00c05755caf44fb055827976c0efa2",
+    "alternative_to": "tabformer/credit_card_transactions-ibm_v2.csv",
+    "note": "the github lfs tarball; the csv above is what it extracts to"
+   }
+  ],
+  "ulb": [
+   {
+    "path": "ulb/creditcard.csv",
+    "bytes": 150828752,
+    "sha256": "76274b691b16a6c49d3f159c883398e03ccd6d1ee12d9d8ee38f4b4b98551a89"
+   }
+  ],
+  "paysim": [
+   {
+    "path": "paysim/PS_20174392719_1491204439457_log.csv",
+    "bytes": 493534783,
+    "sha256": "16910f90577b0d981bf8ff289714510bb89bc71bff7d3f220f024e287e4eea6b"
+   }
+  ],
+  "sparkov": [
+   {
+    "path": "sparkov/fraudTrain.csv",
+    "bytes": 351238196,
+    "sha256": "fd7139200dbfcbed0b6742bbe05a4f1abce532c4fef20918228a651647a3e75d"
+   },
+   {
+    "path": "sparkov/fraudTest.csv",
+    "bytes": 150354339,
+    "sha256": "12d553ab19440c752d2531ee1af44bb64f12cc3d3839f1649f19e81c230545f0"
+   }
+  ],
+  "banksim": [
+   {
+    "path": "banksim/bs140513_032310.csv",
+    "bytes": 48986035,
+    "sha256": "e37006f76d993bfaec3a02d717b4f0bdc1ebfa5d36449e91fb7c07e225278377"
+   }
+  ],
+  "ieee": [
+   {
+    "path": "ieee/train_transaction.csv",
+    "bytes": 683351067,
+    "sha256": "3a5c83ab6b3cc13dcabe5ffa9f522307fd5f7f7b6e6f6a60c32284ca6283d642"
+   },
+   {
+    "path": "ieee/train_identity.csv",
+    "bytes": 26529680,
+    "sha256": "b63c725d8377be90a995268d97f347c17d456b95db45807adcf9f59cd603c37c"
+   }
+  ],
+  "amlworld": [
+   {
+    "path": "amlworld/HI-Small_Trans.csv",
+    "bytes": 475664283,
+    "sha256": "b19d39f515523373f991b689c07e11e7b0b95c17a2c27a87d91584ae16c5b040"
+   }
+  ],
+  "baf": [
+   {
+    "path": "baf/Base.csv",
+    "bytes": 213427735,
+    "sha256": "7bf10a37ce07e72e14c1b09e5efee3d27261baff4facc7da767b0474dcf9b809"
+   }
+  ],
+  "fraudecom": [
+   {
+    "path": "fraudecom/Fraud_Data.csv",
+    "bytes": 16074450,
+    "sha256": "467b1144f3fe03f094816f04aee70434c51389c1ef1999b9d1927bb6bce72c74"
+   },
+   {
+    "path": "fraudecom/IpAddress_to_Country.csv",
+    "bytes": 4894783,
+    "sha256": "720d44848a2b965d17cf4d69e597fb5dbdcef65b78249a29a2f644a9a260594d"
+   }
+  ]
+ },
+ "repos": {
+  "fdh": {
+   "url": "https://github.com/Fraud-Detection-Handbook/simulated-data-raw",
+   "commit": "6e67dbd0a3bfe0d7ec33abc4bce5f37cd4ff0d6a",
+   "note": "183 daily pickles under data/; the clone's HEAD is what was built from"
+  },
+  "capone": {
+   "url": "https://github.com/CapitalOneRecruiting/DS",
+   "commit": "173ca4399629f1e4e74146107eb9bef1e7009741"
+  }
+ }
+}
