@@ -98,7 +98,7 @@ log "settings, unit, nginx"
 [ -f /etc/fraudvae/env ] || cp "$APP/deploy/env.example" /etc/fraudvae/env
 # the service reads the code and the generations and owns neither; it writes only its home
 chown -R root:fraudvae "$APP" "$RUNS" /etc/fraudvae
-chmod -R g-w,o-rwx "$APP" "$RUNS"
+chmod -R u=rwX,g=rX,o= "$APP" "$RUNS"      # the bundles unpack with owner-only modes: the group must read them
 chown -R fraudvae:fraudvae "$HOME_DIR"
 chmod 750 /srv/fraudvae "$HOME_DIR"
 chmod 640 /etc/fraudvae/env

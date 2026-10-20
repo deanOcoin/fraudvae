@@ -14,7 +14,7 @@ fi
 [ -f /etc/fraudvae/pip-constraints.txt ] && export PIP_CONSTRAINT=/etc/fraudvae/pip-constraints.txt
 "$APP/.venv/bin/pip" install -q -e "$APP"
 chown -R root:fraudvae "$APP"
-chmod -R g-w,o-rwx "$APP"
+chmod -R u=rwX,g=rX,o= "$APP"
 # nginx config may have changed too. install.sh records the names in /etc/fraudvae/site.conf;
 # an older installation is read off the certificate path in the live file
 DOMAIN=""; NAMES=""; APPNAMES=""
