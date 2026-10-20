@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Set up the public demonstration on a fresh Debian 12 / Ubuntu 22.04+ server, as root:
 #
-#   bash deploy/install.sh --domain fraudvae.example.org [--source /path/to/checkout | --git URL] [--email you@example.org]
+#   bash deploy/install.sh --domain fraudvae.example.org [--source /path/to/checkout | --git URL] [--email you@example.org | --no-email]
 #
 # What it does, in order, and all of it again without harm when re-run:
 #   1. packages: python3 + venv, nginx, certbot, git, ufw
@@ -24,6 +24,7 @@ while [ $# -gt 0 ]; do
     --source) SRC="$2"; shift 2 ;;
     --git) GIT_URL="$2"; shift 2 ;;
     --email) EMAIL="$2"; shift 2 ;;
+    --no-email) EMAIL="-"; shift ;;        # a certificate without an account e-mail (no expiry notices)
     --no-cert) NO_CERT=1; shift ;;
     *) echo "unknown option $1"; exit 2 ;;
   esac
@@ -132,7 +133,8 @@ EOF
   if [ "$NO_CERT" = 0 ] && [ -n "$EMAIL" ] && [ ! -e "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
     log "certificate for $DOMAIN"
     # one certificate for the domain and every subdomain (each validated over http)
-    certbot certonly --webroot -w /var/www/html $CERT_ARGS --non-interactive --agree-tos -m "$EMAIL" --expand \
+    if [ "$EMAIL" = "-" ]; then MAIL_ARGS="--register-unsafely-without-email"; else MAIL_ARGS="-m $EMAIL"; fi
+    certbot certonly --webroot -w /var/www/html $CERT_ARGS --non-interactive --agree-tos $MAIL_ARGS --expand \
       || echo "certbot failed (dns not pointing here yet for one of the names?); re-run install.sh once it does"
     if [ -e "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
       render_nginx 1 > /etc/nginx/sites-available/fraudvae
