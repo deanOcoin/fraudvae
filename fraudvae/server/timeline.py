@@ -76,6 +76,12 @@ def timeline() -> list[dict]:
                 ev = json.loads((d / "eval.json").read_text())
             except json.JSONDecodeError:
                 ev = None
+        trees = None
+        if (d / "booster.json").exists():
+            try:
+                trees = json.loads((d / "booster.json").read_text()).get("best_iteration")
+            except json.JSONDecodeError:
+                trees = None
         ev30 = None
         for f in sorted(d.glob("eval_delay*.json")):
             try:
@@ -102,6 +108,7 @@ def timeline() -> list[dict]:
             "post_minutes": log_t.get("post_minutes"),
             "vae_from": cur.get("vae_from"),
             "has_booster": r.get("has_booster"),
+            "booster_trees": trees,
             "has_blend": bool(ev and ev.get("with_booster")),
             "mean_test_auroc": r.get("mean_test_auroc"),
             "mean": r.get("mean"),
