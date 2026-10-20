@@ -101,11 +101,19 @@ still starts, novelty-only, and the sidebar tells you why.
 | fraudecom | e-commerce first purchases with shared device ids (v5) | 151k | 9.4% | kaggle |
 
 No dataset is redistributed here: each keeps its own licence (`docs/DATA_SOURCES.md`
-has the links, `fraudvae fetch` downloads what it can and says what needs a Kaggle
-login). The six sources whose licences allow it ship a few hundred labelled rows from
-the held-out test split in `data/examples/` (`fraudvae examples` regenerates them from
-a build), which is what the score tab's example picker uses on a machine without the
-data - the demonstration site included.
+has the links). All eleven are public. The GitHub-hosted ones need nothing; the Kaggle
+ones need a free Kaggle account (IEEE-CIS additionally means joining its competition
+and accepting the rules, and is non-commercial), and Kaggle refuses some VPN exit
+addresses. `fraudvae fetch` downloads what it can, says what to fetch by hand and where
+to put it (`scripts/kaggle_manual_download.md`), and then checks every file against
+`fraudvae/data/expected.json` - the size and sha256 of each raw file the shipped
+generations were built from (`fraudvae fetch --verify` does only the check). That
+check is the part that matters: datasets get re-uploaded and re-cut, and a file that
+differs will build and train but will not reproduce the numbers in the docs. The six
+sources whose licences allow it ship a few hundred labelled rows from the held-out
+test split in `data/examples/` (`fraudvae examples` regenerates them from a build),
+which is what the score tab's example picker uses on a machine without the data - the
+demonstration site included.
 
 Every source is mapped onto one schema (`fraudvae/data/schema.py`, v5): 95
 numeric fields (amount, hour, the customer's history in the last hour / day /
