@@ -21,7 +21,7 @@ if [ -f /etc/nginx/sites-available/fraudvae ]; then
   appnames=$(printf '%s' "$names" | sed "s/^$dom //")
   if [ -n "$dom" ] && [ -e "/etc/letsencrypt/live/$dom/fullchain.pem" ]; then
     sed -e "s/APPNAMES/$appnames/g" -e "s/NAMES/$names/g" -e "s/DOMAIN/$dom/g" "$APP/deploy/nginx.conf" \
-      | sed "s|    # ssl_certificate / ssl_certificate_key: written by certbot|    ssl_certificate /etc/letsencrypt/live/$dom/fullchain.pem;\n    ssl_certificate_key /etc/letsencrypt/live/$dom/privkey.pem;\n    include /etc/letsencrypt/options-ssl-nginx.conf;\n    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;|" \
+      | sed "s|    # ssl_certificate / ssl_certificate_key: written by certbot|    ssl_certificate /etc/letsencrypt/live/$dom/fullchain.pem;\n    ssl_certificate_key /etc/letsencrypt/live/$dom/privkey.pem;|" \
       > /etc/nginx/sites-available/fraudvae.new
     if ! cmp -s /etc/nginx/sites-available/fraudvae.new /etc/nginx/sites-available/fraudvae; then
       mv /etc/nginx/sites-available/fraudvae.new /etc/nginx/sites-available/fraudvae
