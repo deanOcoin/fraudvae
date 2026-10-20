@@ -95,16 +95,32 @@ systemctl daemon-reload
 systemctl enable fraudvae >/dev/null
 systemctl restart fraudvae
 
+# every tab of the site is also a subdomain (app.js routes by host); an ip gets no subdomains
+SUBS="www score data models define story api"
+if printf '%s' "$DOMAIN" | grep -Eq '^[0-9.]+$'; then
+  NAMES="$DOMAIN"; APPNAMES="$DOMAIN"; CERT_ARGS=""
+else
+  NAMES="$DOMAIN"; APPNAMES=""; CERT_ARGS="-d $DOMAIN"
+  for s in $SUBS; do NAMES="$NAMES $s.$DOMAIN"; APPNAMES="$APPNAMES $s.$DOMAIN"; CERT_ARGS="$CERT_ARGS -d $s.$DOMAIN"; done
+  APPNAMES="${APPNAMES# }"
+fi
+render_nginx() {
+  sed -e "s/APPNAMES/$APPNAMES/g" -e "s/NAMES/$NAMES/g" -e "s/DOMAIN/$DOMAIN/g" "$APP/deploy/nginx.conf" \
+    | sed "s|    # ssl_certificate / ssl_certificate_key: written by certbot|    ssl_certificate /etc/letsencrypt/live/$DOMAIN/fullchain.pem;\n    ssl_certificate_key /etc/letsencrypt/live/$DOMAIN/privkey.pem;\n    include /etc/letsencrypt/options-ssl-nginx.conf;\n    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;|"
+}
 if [ -n "$DOMAIN" ]; then
-  sed "s/DOMAIN/$DOMAIN/g" "$APP/deploy/nginx.conf" > /etc/nginx/sites-available/fraudvae
-  if [ ! -e "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
+  sed -e "s/APPNAMES/$APPNAMES/g" -e "s/NAMES/$NAMES/g" -e "s/DOMAIN/$DOMAIN/g" "$APP/deploy/nginx.conf" > /etc/nginx/sites-available/fraudvae
+  mkdir -p /var/www/html
+  if [ -e "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
+    render_nginx 1 > /etc/nginx/sites-available/fraudvae
+  else
     # no certificate yet: serve plain http until certbot has run, so its challenge can be answered
     python3 - "$DOMAIN" <<'EOF'
 import re, sys
 p = "/etc/nginx/sites-available/fraudvae"
 s = open(p).read()
-# drop the https server block and let the http one proxy instead of redirecting
-s = re.sub(r"\nserver \{\n    listen 443 ssl.*", "\n", s, flags=re.S)
+# drop the https server blocks and let the http one proxy instead of redirecting
+s = re.sub(r"\n# the bare domain is the www host\nserver \{\n    listen 443 ssl.*", "\n", s, flags=re.S)
 s = s.replace("    location / { return 301 https://$host$request_uri; }",
               "    location / { proxy_pass http://fraudvae_app; proxy_set_header Host $host; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Real-IP $remote_addr; }")
 open(p, "w").write(s)
@@ -115,12 +131,11 @@ EOF
   nginx -t && systemctl reload nginx
   if [ "$NO_CERT" = 0 ] && [ -n "$EMAIL" ] && [ ! -e "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
     log "certificate for $DOMAIN"
-    certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m "$EMAIL" --redirect || echo "certbot failed (dns not pointing here yet?); re-run install.sh once it does"
-    # certbot edited the http-only file in place; put the full config back with its certificate lines
+    # one certificate for the domain and every subdomain (each validated over http)
+    certbot certonly --webroot -w /var/www/html $CERT_ARGS --non-interactive --agree-tos -m "$EMAIL" --expand \
+      || echo "certbot failed (dns not pointing here yet for one of the names?); re-run install.sh once it does"
     if [ -e "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
-      sed "s/DOMAIN/$DOMAIN/g" "$APP/deploy/nginx.conf" \
-        | sed "s|    # ssl_certificate / ssl_certificate_key: written by certbot|    ssl_certificate /etc/letsencrypt/live/$DOMAIN/fullchain.pem;\n    ssl_certificate_key /etc/letsencrypt/live/$DOMAIN/privkey.pem;\n    include /etc/letsencrypt/options-ssl-nginx.conf;\n    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;|" \
-        > /etc/nginx/sites-available/fraudvae
+      render_nginx 1 > /etc/nginx/sites-available/fraudvae
       nginx -t && systemctl reload nginx
     fi
   fi
