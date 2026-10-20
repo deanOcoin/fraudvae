@@ -17,10 +17,13 @@ const GROUP_NOTE = {
   ulb_pca: "anonymised PCA components, ULB only",
 };
 
+let models = [];   // the generation timeline, for the picker and the comparison strip
+
 export async function initScore(appState) {
   state = appState;
   schema = state.schema || (await get("/api/schema"));
   buildSourceSelect();
+  await buildRunSelect();
   buildFields();
   wireForm();
   await loadLatentBackground();
@@ -40,6 +43,25 @@ function updateLede() {
       : " (No booster in this run: the verdict is the novelty score alone.)";
     lede.textContent = `The ${dim} VAE reconstructs the transaction from a low-dimensional summary of normal traffic across ${m.sources.length} datasets; what it cannot reconstruct is novelty.${hybrid}`;
   }
+}
+
+async function buildRunSelect() {
+  const sel = document.getElementById("run-select");
+  if (!sel) return;
+  try { models = (await get("/api/models")).models; } catch (e) { models = []; }
+  const active = state.meta?.active_run?.name;
+  sel.innerHTML = "";
+  const shown = models.filter((m) => m.milestone || m.name === active);
+  const best = shown.reduce((a, b) => (b.mean_test_auroc ?? -1) > (a?.mean_test_auroc ?? -1) ? b : a, null);
+  for (const m of [...shown].reverse()) {
+    const tag = m.name === best?.name ? "  — newest, best" : (m.schema_version < 5 ? `  — schema v${m.schema_version}` : "");
+    sel.append(el("option", { value: m.name }, `${m.version} · ${m.label}${tag}`));
+  }
+  let want = null;
+  try { want = localStorage.getItem("fraudvae.run"); localStorage.removeItem("fraudvae.run"); } catch (_) {}
+  sel.value = (want && shown.some((m) => m.name === want)) ? want : (active && shown.some((m) => m.name === active) ? active : (best?.name || sel.value));
+  sel.addEventListener("change", () => { if (lastResult) score(lastResult._label); });
+  document.getElementById("compare-all")?.addEventListener("change", () => { if (lastResult) score(lastResult._label); });
 }
 
 function buildSourceSelect() {
@@ -122,12 +144,16 @@ function readForm() {
   const fd = new FormData(form);
   const features = {};
   for (const [k, v] of fd.entries()) {
-    if (k === "source" || k === "fpr_target" || k === "label_delay_days") continue;
+    if (k === "source" || k === "fpr_target" || k === "label_delay_days" || k === "run" || k === "compare_all") continue;
     if (v === "" || v == null) continue;
     features[k] = v;
   }
   const req = { source: fd.get("source") || null, fpr_target: fd.get("fpr_target"), features, wide: loadedWide, entities: loadedEntities,
                 label_delay_days: Number(fd.get("label_delay_days") || 7) };
+  // which generation scores it, and whether every generation should
+  const runSel = document.getElementById("run-select");
+  if (runSel && runSel.value) req.run = runSel.value;
+  if (document.getElementById("compare-all")?.checked) req.compare = models.filter((m) => m.milestone).map((m) => m.name);
   // v5: history as json in the textarea (a list of {features, ts|secs_before}), and/or a customer id
   const histEl = document.getElementById("history-json");
   if (histEl && histEl.value.trim()) {
@@ -153,9 +179,20 @@ function readForm() {
   return req;
 }
 
+// a form reset must not forget which generation the visitor picked, the compare tick, the
+// alert budget or the label latency: those are settings, not the transaction
+function resetKeepingSettings(form) {
+  const keep = ["run-select", "compare-all", "fpr-select", "delay-select"].map((id) => {
+    const e = document.getElementById(id);
+    return e ? [e, e.type === "checkbox" ? e.checked : e.value] : null;
+  }).filter(Boolean);
+  form.reset();
+  for (const [e, v] of keep) { if (e.type === "checkbox") e.checked = v; else e.value = v; }
+}
+
 function fillForm(features, source) {
   const form = document.getElementById("score-form");
-  form.reset();
+  resetKeepingSettings(form);
   if (source != null) document.getElementById("source-select").value = source;
   for (const [k, v] of Object.entries(features)) {
     const inp = form.elements[k];
@@ -177,7 +214,7 @@ function wireForm() {
     await score();
   });
   document.getElementById("clear-form").addEventListener("click", () => {
-    form.reset(); markUnused(); showSourceHint();
+    resetKeepingSettings(form); markUnused(); showSourceHint();
     loadedWide = null; loadedEntities = null;
     document.getElementById("example-note").textContent = "";
   });
@@ -228,6 +265,15 @@ async function score(label = null) {
 }
 
 function zClass(z) { return z >= 3 ? "hot" : z >= 1.5 ? "warm" : z < 0.5 ? "cold" : ""; }
+
+// right or wrong, in words: a labelled row scored against the model's flag
+function verdictCall(label, flag) {
+  if (flag == null) return null;
+  if (label && flag) return { ok: true, cls: "call ok", text: "caught" };
+  if (label && !flag) return { ok: false, cls: "call bad", text: "missed" };
+  if (!label && flag) return { ok: false, cls: "call bad", text: "false alarm" };
+  return { ok: true, cls: "call ok", text: "correctly passed" };
+}
 
 function fmtVal(c) {
   if (c.kind === "categorical") {
@@ -293,7 +339,35 @@ function renderReceipt(r, label) {
   } else {
     lines.push(`<div class="rc-verdict ${verdictClass}"><span class="big">${pct == null ? fmt.num(nov.score, 2) : pctText(pct, "")}</span>${pct == null ? "raw score" : "percentile of legit traffic"}<br>${verdictText}</div>`);
   }
-  if (label != null) lines.push(`<div class="rc-line"><span class="k">ground truth</span><span>${label ? "FRAUD" : "legitimate"}</span></div>`);
+  if (label != null) {
+    // an example row carries its label: say in words whether this verdict was right
+    const call = verdictCall(label, flagged);
+    lines.push(`<div class="rc-line"><span class="k">ground truth</span><span>${label ? "FRAUD" : "legitimate"}${call ? ` <span class="${call.cls}">· ${esc(call.text)}</span>` : ""}</span></div>`);
+  }
+  if (r.model) {
+    const tl = models.find((m) => m.name === r.model.run);
+    lines.push(`<div class="rc-line"><span class="k">scored by</span><span>${esc(tl ? `${tl.version} · ${tl.label}` : r.model.run)}</span></div>`);
+    if (r.model.note) lines.push(`<div class="rc-line"><span class="k"></span><span class="dim">${esc(r.model.note)}${r.model.bank_known ? "" : "; this bank is unknown to it, scored as generic"}</span></div>`);
+  }
+  // ---- every generation on the same transaction ----
+  if (r.compare && r.compare.length > 1) {
+    lines.push(`<div class="rc-compare">`);
+    lines.push(`<div class="rc-sub">GENERATIONS  <span class="dim">the same transaction on each</span></div>`);
+    lines.push(`<div class="rc-line head"><span class="k">model</span><span>p(fraud) or novelty pct · verdict</span></div>`);
+    const byOrder = [...r.compare].sort((a, b) => (models.find((m) => m.name === a.run)?.order ?? 99) - (models.find((m) => m.name === b.run)?.order ?? 99));
+    for (const c of byOrder) {
+      const tl = models.find((m) => m.name === c.run);
+      const name = tl ? `${tl.version} ${tl.label}` : c.run;
+      const val = c.p_fraud != null ? `${(100 * c.p_fraud).toFixed(c.p_fraud < 0.1 ? 2 : 1)}%` : (c.novelty_percentile != null ? `${pctText(c.novelty_percentile, "")} pct` : "–");
+      const fl = c.flag == null ? (c.novelty_flag == null ? "" : (c.novelty_flag ? "  FLAG" : "  ok")) : (c.flag ? "  FLAG" : "  ok");
+      const hot = (c.flag ?? c.novelty_flag) ? "z hot" : "";
+      const extra = c.bank_known === false ? " (bank unknown)" : "";
+      const call = label != null ? verdictCall(label, c.flag ?? c.novelty_flag) : null;
+      const mark = call ? ` <span class="${call.cls}" title="${esc(call.text)}">${call.ok ? "✓" : "✗"}</span>` : "";
+      lines.push(`<div class="rc-line ${c.run === r.model?.run ? "me" : ""}"><span>${esc(name)}${esc(extra)}</span><span class="${hot}">${val}${fl}${mark}</span></div>`);
+    }
+    lines.push(`</div>`);
+  }
 
   // ---- supervised evidence ----
   if (sup) {

@@ -4,15 +4,17 @@ import { initData } from "./data.js";
 import { initModel } from "./model.js";
 import { initCompute } from "./compute.js";
 import { initExplain } from "./explain.js";
+import { initStory } from "./story.js";
 
-const TABS = ["score", "data", "model", "compute", "explain"];
+const TABS = ["score", "data", "model", "compute", "explain", "story"];
 const inited = {};
-const initers = { score: initScore, data: initData, model: initModel, compute: initCompute, explain: initExplain };
+const initers = { score: initScore, data: initData, model: initModel, compute: initCompute, explain: initExplain, story: initStory };
 
 export const state = { meta: null, schema: null };
 
 function showTab(name) {
   if (!TABS.includes(name)) name = "score";
+  if (name === "compute" && state.meta?.public?.public) name = "score";   // no remote training on the public site
   for (const t of TABS) {
     document.getElementById(`tab-${t}`).classList.toggle("hidden", t !== name);
   }
@@ -33,6 +35,9 @@ export async function refreshMeta() {
   }
   const m = state.meta.active_run;
   const box = document.getElementById("rail-model");
+  // the public site has no remote-training tab
+  const rc = document.getElementById("rail-compute");
+  if (rc) rc.classList.toggle("hidden", !!state.meta.public?.public);
   if (!m) {
     box.textContent = "no trained model loaded yet\n→ Model & training";
   } else {
