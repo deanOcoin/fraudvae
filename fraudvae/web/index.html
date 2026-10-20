@@ -51,12 +51,12 @@
               <small>How many honest payments you accept flagging by mistake. The flagging threshold is set so that exactly this share of legitimate traffic lands above it; a bigger budget catches more fraud at the price of more false alarms.</small>
             </label>
             <label class="field">
-              <span>Model generation</span>
+              <span>Model version</span>
               <select name="run" id="run-select"></select>
               <small id="run-hint">Which version of the model judges this payment. The newest is the default and the best; the earlier ones are kept so you can see how much each step of the development changed the answer.</small>
             </label>
             <label class="field check">
-              <span>Compare across generations</span>
+              <span>Compare every version</span>
               <span class="checkline"><input type="checkbox" name="compare_all" id="compare-all"><span>score it on every version, side by side</span></span>
               <small>Shows every version's verdict side by side under the main one. Each adds a fraction of a second.</small>
             </label>
@@ -197,7 +197,7 @@
     <section id="tab-compute" class="tab hidden">
       <header class="page-head">
         <h1>Compute &amp; remote GPU</h1>
-        <p class="lede">Benchmarks the real model on this machine, estimates the full run, and if that is unreasonable walks you through renting a GPU (vast.ai or any box you can ssh into) and training there with one click.</p>
+        <p class="lede">Times the real model on this machine, estimates how long the full training would take here, and if that is unreasonable walks you through renting a GPU (vast.ai or any server you can ssh into) and training there with one click.</p>
       </header>
       <div class="compute-grid">
         <section class="advisor" id="advisor">
