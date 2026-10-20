@@ -275,7 +275,8 @@ EOF
     chmod 644 "$CFG"
     rm -f /etc/ssh/sshd_config.d/10-fraudvae.conf
     eff=$(sshd -T 2>/dev/null | grep -E "^(passwordauthentication|permitrootlogin|maxauthtries) " | tr '\n' ' ')
-    if sshd -t && printf '%s' "$eff" | grep -q "passwordauthentication no" && printf '%s' "$eff" | grep -q "permitrootlogin prohibit-password"; then
+    # sshd -T prints prohibit-password in its older spelling, without-password: both are the setting
+    if sshd -t && printf '%s' "$eff" | grep -q "passwordauthentication no" && printf '%s' "$eff" | grep -Eq "permitrootlogin (prohibit|without)-password"; then
       systemctl reload ssh 2>/dev/null || systemctl reload sshd
       echo "verified on sshd's effective configuration: $eff"
       echo "password logins are off; root logs in with a key only"
