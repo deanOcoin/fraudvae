@@ -594,7 +594,10 @@ def test_public_mode_gates(client, monkeypatch):
     meta = client.get("/api/meta").json()
     assert meta["host"] is None and meta["data_dir"] is None and meta["public"]["public"] is True
     mx = client.get("/api/runs/test-run/metrics").json()
-    assert mx["remote"] is None and "host" not in (mx["run"] or {})
+    assert mx["remote"] is None and "host" not in (mx["run"] or {}) and "pid" not in (mx["status"] or {})
+    listed = client.get("/api/runs").json()["runs"][0]
+    assert "host" not in listed["run"] and "pid" not in listed["status"] and listed["remote"] is None
+    assert not any("| host " in ln for ln in client.get("/api/runs/test-run/log").json()["lines"])
     api_data._examples_cache.clear()
     assert client.get("/api/examples?source=fdh&fraud=0").status_code == 404   # the build's samples are not served publicly
     body = {"source": "fdh", "features": ex["features"], "wide": ex["wide"], "customer_id": "visitor-1", "remember": True, "ts": 1.7e9}

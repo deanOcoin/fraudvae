@@ -17,6 +17,7 @@ first layer of rate limiting and the request size cap."""
 from __future__ import annotations
 
 import os
+import re
 import threading
 import time
 
@@ -82,6 +83,30 @@ def forbid(what: str):
     if PUBLIC:
         raise HTTPException(403, f"{what} is not available on the public site; run the app on your own machine for that "
                                  f"(see the repository's README)")
+
+
+_HOST_RE = re.compile(r" \| host \S+")
+
+
+def scrub_run(info: dict) -> dict:
+    """a run's listing entry without the machine it ran on: the host name and process id in
+    run.json / status.json, and whether it was fetched from a box"""
+    if not PUBLIC or not isinstance(info, dict):
+        return info
+    out = dict(info)
+    if isinstance(out.get("run"), dict):
+        out["run"] = {k: v for k, v in out["run"].items() if k not in ("host", "pid")}
+    if isinstance(out.get("status"), dict):
+        out["status"] = {k: v for k, v in out["status"].items() if k != "pid"}
+    out["remote"] = None
+    return out
+
+
+def scrub_log_lines(lines: list[str]) -> list[str]:
+    """the training log's header names the host; a public site does not"""
+    if not PUBLIC:
+        return lines
+    return [_HOST_RE.sub("", ln) for ln in lines]
 
 
 def limits() -> dict:

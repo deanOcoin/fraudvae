@@ -167,7 +167,7 @@ async def post_score_batch(request: Request, file: UploadFile = File(...), sourc
 @router.get("/runs")
 def get_runs():
     m = inference.active()
-    return _clean({"runs": inference.list_runs(), "active": m.name if m else None})
+    return _clean({"runs": [public.scrub_run(r) for r in inference.list_runs()], "active": m.name if m else None})
 
 
 @router.post("/runs/{name}/load")
@@ -226,12 +226,8 @@ def get_metrics(name: str):
         c = json.loads(cal.read_text())
         c.pop("baselines", None)   # big and not interesting for the ui
         out["calibration"] = c
-    if public.PUBLIC:
-        # where a run was fetched from is the owner's business, not a visitor's
-        out["remote"] = None
-        if out.get("run"):
-            out["run"] = {k: v for k, v in out["run"].items() if k not in ("host", "pid")}
-    return _clean(out)
+    # where a run was fetched from is the owner's business, not a visitor's
+    return _clean(public.scrub_run(out))
 
 
 @router.get("/runs/{name}/log")
@@ -240,7 +236,7 @@ def get_log(name: str, tail: int = 300):
     for fname in ("train.log", "launcher.log"):
         p = d / fname
         if p.exists():
-            lines = p.read_text(errors="replace").splitlines()
+            lines = public.scrub_log_lines(p.read_text(errors="replace").splitlines())
             return {"lines": lines[-tail:], "n": len(lines)}
     return {"lines": [], "n": 0}
 
