@@ -1,4 +1,4 @@
-// "the story" tab: how the model got here, in two registers (the full account and a plain
+// the "development process" tab: how the model got here, in two registers (the full account and a plain
 // one), plus the datasets with their licences and how to train it yourself. Static html
 // partials with the live model timeline filled in where the text quotes numbers.
 import { get, fmt, el } from "./api.js";
