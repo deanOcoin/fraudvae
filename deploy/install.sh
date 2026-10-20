@@ -142,7 +142,7 @@ EOF
       if dig +short "$n" @1.1.1.1 | grep -qx "$MYIP"; then LIVE_ARGS="$LIVE_ARGS -d $n"; else echo "  $n does not resolve to $MYIP yet: left off the certificate for now"; fi
     done
     CERT_ARGS="$LIVE_ARGS"
-    certbot certonly --webroot -w /var/www/html $CERT_ARGS --non-interactive --agree-tos $MAIL_ARGS --expand \
+    certbot certonly --webroot -w /var/www/html $CERT_ARGS --cert-name "$DOMAIN" --non-interactive --agree-tos $MAIL_ARGS --expand \
       || echo "certbot failed (dns not pointing here yet for one of the names?); re-run install.sh once it does"
     if [ -e "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
       render_nginx 1 > /etc/nginx/sites-available/fraudvae
