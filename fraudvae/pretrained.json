@@ -1,0 +1,126 @@
+{
+ "tag": "pretrained",
+ "repo": "deanOcoin/fraudvae",
+ "models": {
+  "cpu_small-8src": {
+   "assets": {
+    "cpu_small-8src.tar.gz": {
+     "bytes": 2720992,
+     "sha256": "18fa11dccac89f6b3d0e3eafd4641b17b825929aac15435f63de5b80f7448a0e",
+     "optional": false,
+     "contents": "the run"
+    }
+   },
+   "version": "v3",
+   "label": "on a laptop",
+   "hardware": "2 x86-64 CPU cores, no GPU",
+   "corpus": "8 sources, capped at 1.5M rows per source (4M rows)",
+   "changed": "Baseline.",
+   "schema_version": 3,
+   "params": 635179
+  },
+  "gpu_full-4090": {
+   "assets": {
+    "gpu_full-4090.tar.gz": {
+     "bytes": 8571631,
+     "sha256": "542b182852c56fe001b0f5f4fb94c4b0633e7246232a4ee77d3e55d55a2c8e5f",
+     "optional": false,
+     "contents": "the run"
+    }
+   },
+   "version": "v3",
+   "label": "on the full corpus",
+   "hardware": "1x NVIDIA RTX 4090 (rented), 16 CPU cores",
+   "corpus": "8 sources, every row (29M)",
+   "changed": "More data, same features.",
+   "schema_version": 3,
+   "params": 2188715
+  },
+  "gpu_full-4090-v4": {
+   "assets": {
+    "gpu_full-4090-v4.tar.gz": {
+     "bytes": 12630457,
+     "sha256": "99ab6f779019076e2dabaa42254216877a990d8910c279649bb1cec53d79a56e",
+     "optional": false,
+     "contents": "the run"
+    }
+   },
+   "version": "v4",
+   "label": "labels, context and the blend",
+   "hardware": "1x NVIDIA RTX 4090 (rented), 16 CPU cores",
+   "corpus": "9 sources (AMLworld added), every row (29M)",
+   "changed": "Booster + context features + blend.",
+   "schema_version": 4,
+   "params": 2254204
+  },
+  "v5-h200-e": {
+   "assets": {
+    "v5-h200-e.tar.gz": {
+     "bytes": 364078983,
+     "sha256": "08dd88bdd50295e3ecce2c53870138dc4434cba56388a127204e4167e9dbf609",
+     "optional": false,
+     "contents": "the run"
+    },
+    "v5-h200-e-graph-paysim.tar.gz": {
+     "bytes": 548445403,
+     "sha256": "92fda8dfe2700fab80029e3d5bca904d63465fc1af558122e7fc09e5e0a12d8a",
+     "optional": true,
+     "contents": "graph/paysim.pt (optional)"
+    }
+   },
+   "version": "v5",
+   "label": "history, entities, modules",
+   "hardware": "1x NVIDIA H200 NVL (rented), 64 CPU cores, 188 GB RAM",
+   "corpus": "11 sources (BAF, fraudecom added), every row (30M train / 4.3M val / 8.6M test)",
+   "changed": "Two sources, the entity and wide blocks, five modules, history in the VAE.",
+   "schema_version": 5,
+   "params": 3011714
+  },
+  "v5-h200-f": {
+   "assets": {
+    "v5-h200-f.tar.gz": {
+     "bytes": 365564595,
+     "sha256": "ed8b9bcf146fa5058ec05593e2f4227f03dd0aca1d9404520829696001214780",
+     "optional": false,
+     "contents": "the run"
+    },
+    "v5-h200-f-graph-paysim.tar.gz": {
+     "bytes": 548445410,
+     "sha256": "eb7dc61a8aa790ebb551327644af751e7637484ae7d78b99d620e9a8f29fd282",
+     "optional": true,
+     "contents": "graph/paysim.pt (optional)"
+    }
+   },
+   "version": "v5",
+   "label": "one-week fraud labels",
+   "hardware": "the VAE checkpoint of e; booster side refit on the H200 box (64 CPU cores)",
+   "corpus": "as e",
+   "changed": "Label delay 7 days for the booster.",
+   "schema_version": 5,
+   "params": 3011714
+  },
+  "v5-h200-h": {
+   "assets": {
+    "v5-h200-h.tar.gz": {
+     "bytes": 360616298,
+     "sha256": "1a9c7c77f64631892715a494223d3cecd3f0eaeb83837a3e8921876082623017",
+     "optional": false,
+     "contents": "the run"
+    },
+    "v5-h200-h-graph-paysim.tar.gz": {
+     "bytes": 548445586,
+     "sha256": "bd8e21c7a3802953560c9a9621d75aa05c763855cda150e5080ea5574fb4bdc2",
+     "optional": true,
+     "contents": "graph/paysim.pt (optional)"
+    }
+   },
+   "version": "v5",
+   "label": "recent-fraud windows, latency as a setting",
+   "hardware": "the VAE checkpoint of e; booster side refit on the H200 box (64 CPU cores)",
+   "corpus": "as e",
+   "changed": "Recent-fraud windows, latency dropout, both evaluations.",
+   "schema_version": 5,
+   "params": 3011714
+  }
+ }
+}

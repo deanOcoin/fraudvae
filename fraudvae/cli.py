@@ -9,6 +9,7 @@
   fraudvae post RUN         booster + calibration + evaluation for an existing run (new --config ok)
   fraudvae calibrate RUN    (re)compute thresholds for a run
   fraudvae evaluate RUN     test metrics for a run
+  fraudvae models ...       list / pull / pack the pretrained generations (github releases)
   fraudvae serve            web ui
   fraudvae key              print the app's ssh public key
   fraudvae advise           local vs remote compute recommendation
@@ -79,6 +80,7 @@ COMMANDS = {
     "graph-bench": lambda argv: __import__("fraudvae.graph.bench", fromlist=["main"]).main(argv),
     "calibrate": lambda argv: __import__("fraudvae.calibrate", fromlist=["main"]).main(argv),
     "evaluate": lambda argv: __import__("fraudvae.evaluate", fromlist=["main"]).main(argv),
+    "models": lambda argv: __import__("fraudvae.models", fromlist=["main"]).main(argv),
     "serve": _serve,
     "key": _key,
     "advise": _advise,
