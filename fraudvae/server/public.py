@@ -36,10 +36,15 @@ batch_slots = threading.BoundedSemaphore(BATCH_CONCURRENCY)
 
 
 def client_ip(request: Request) -> str:
-    """the visitor's address: nginx passes it in X-Forwarded-For, otherwise the socket's"""
+    """the visitor's address as nginx saw it. X-Real-IP is set (overwritten) by nginx; the
+    *last* X-Forwarded-For entry is the one nginx appended, so a visitor who sends their own
+    X-Forwarded-For cannot pick which bucket they are charged to. Without a proxy, the socket."""
+    real = request.headers.get("x-real-ip")
+    if real:
+        return real.strip()
     fwd = request.headers.get("x-forwarded-for")
     if fwd:
-        return fwd.split(",")[0].strip()
+        return fwd.split(",")[-1].strip()
     return request.client.host if request.client else "unknown"
 
 

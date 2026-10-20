@@ -38,7 +38,7 @@ log() { printf '\n== %s\n' "$*"; }
 log "packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq python3 python3-venv python3-pip nginx certbot python3-certbot-nginx git rsync ufw curl >/dev/null
+apt-get install -y -qq python3 python3-venv python3-pip nginx certbot python3-certbot-nginx git rsync ufw curl libgomp1 >/dev/null
 
 log "user and directories"
 id fraudvae >/dev/null 2>&1 || useradd --system --home-dir /srv/fraudvae --shell /usr/sbin/nologin fraudvae
@@ -64,8 +64,11 @@ fi
 "$APP/.venv/bin/pip" install -q -e "$APP"
 "$APP/.venv/bin/python" -c 'import fraudvae, torch, lightgbm; print("fraudvae", fraudvae.__version__, "torch", torch.__version__, "lightgbm", lightgbm.__version__)'
 
+# the app makes these at start-up; under the unit's read-only view of /srv/fraudvae/app they must already exist
+mkdir -p "$APP/data/raw" "$APP/data/processed" "$APP/data/prepared"
+
 log "pretrained generations in $RUNS"
-present=$(ls -d "$RUNS"/*/model.pt 2>/dev/null | wc -l)
+present=$(ls -d "$RUNS"/*/model.pt 2>/dev/null | wc -l || true)
 echo "$present generation(s) already here"
 if [ "$present" -lt 6 ]; then
   echo "pulling the rest from the github release (large: ~1.1 GB)"
@@ -126,4 +129,4 @@ ufw status | head -8
 log "done"
 sleep 3
 systemctl --no-pager --lines=5 status fraudvae || true
-curl -s -m 5 http://127.0.0.1:8765/api/meta | head -c 300; echo
+curl -s -m 5 http://127.0.0.1:8765/api/meta | head -c 300 || true; echo
