@@ -95,7 +95,8 @@ async def _lifespan(app):
     _log("shutting down")
 
 
-app = FastAPI(title="fraudvae", version=__version__, docs_url="/api/docs", redoc_url=None, lifespan=_lifespan)
+app = FastAPI(title="fraudvae", version=__version__, docs_url=None, redoc_url=None, openapi_url="/api/openapi.json",
+              lifespan=_lifespan)
 app.include_router(api_data.router)
 app.include_router(api_model.router)
 if not public.PUBLIC:
@@ -103,13 +104,38 @@ if not public.PUBLIC:
     # a workbench feature, never a public one
     app.include_router(api_remote.router)
 
+# what the public site answers with 403 is not part of its api either: the reference lists only
+# what a visitor can call
+_HIDDEN = {"/api/train/local", "/api/data/fetch", "/api/data/build", "/api/data/prepare", "/api/tasks",
+           "/api/tasks/{task_id}", "/api/runs/{name}/load", "/api/history/{source}/{customer_id}"}
+_openapi_full = app.openapi
+
+
+def _openapi():
+    schema = _openapi_full()
+    if public.PUBLIC:
+        return {**schema, "paths": {k: v for k, v in schema["paths"].items() if k not in _HIDDEN}}
+    return schema
+
+
+app.openapi = _openapi
+
+
+@app.get("/api/docs", include_in_schema=False)
+def api_docs():
+    """the interactive api reference. swagger-ui is served from this origin (fraudvae/web/vendor), and
+    the page has no inline script, so the site's content security policy can be script-src 'self'"""
+    return FileResponse(WEB_DIR / "apidocs.html")
+
 
 @app.get("/api/meta")
 def meta():
     m = inference.active()
     dev = "cuda" if torch.cuda.is_available() else ("mps" if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available() else "cpu")
     return {
-        "version": __version__, "host": None if public.PUBLIC else socket.gethostname(), "platform": platform.platform(),
+        "version": __version__, "host": None if public.PUBLIC else socket.gethostname(),
+        # the kernel and libc versions are of no use to a visitor and of some to an attacker
+        "platform": platform.system() if public.PUBLIC else platform.platform(),
         "python": platform.python_version(), "torch": torch.__version__, "device": dev, "uptime": time.time() - _started,
         "data_dir": None if public.PUBLIC else str(DATA_DIR), "runs_dir": None if public.PUBLIC else str(RUNS_DIR),
         "server_log": None if public.PUBLIC else str(SERVER_LOG),
