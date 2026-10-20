@@ -275,7 +275,11 @@ time and numbers.
 `docs/DEPLOY.md`: `FRAUDVAE_PUBLIC=1` turns the app into the demonstration site ([finfraud.dev](https://www.finfraud.dev)) -
 no training, no data build, no remote routes, no visitor state, rate limits per
 address - and `deploy/` has the install script, the systemd unit and the nginx
-configuration the site runs on.
+configuration the site runs on. `SECURITY.md` says what the site exposes, what it
+does not, and how the server is held in place; it also covers the one thing worth
+knowing on a laptop, which is that a run directory is read with torch's
+`weights_only` loader and the pretrained bundles are checksummed before they are
+unpacked.
 
 ## Remote training
 

@@ -20,11 +20,14 @@ site was put up.
 - **Rate limits.** A token bucket per client address (behind nginx's own `limit_req`, which
   is coarser and runs first): 60 scores a minute with a burst of 20, 4 batch uploads a minute
   of at most 5,000 rows each with two running at once server-wide, a comparison across at
-  most 6 generations per request. 429 with `Retry-After` past that. All of it is in
-  `deploy/env.example`.
-- **Fewer details in the metadata.** `/api/meta` drops the host name and file paths; a run's
-  metrics drop where it was fetched from and the training process id; `remote.json` never
-  leaves the machine that trained a run (`fraudvae models pack` excludes it).
+  most 6 generations per request. 429 with `Retry-After` past that. On top of the buckets a
+  global ceiling: four transactions scoring at once across every visitor, then a 503 with
+  `Retry-After` after a three-second wait. All of it is in `deploy/env.example`.
+- **Fewer details in the metadata.** `/api/meta` drops the host name, file paths and the
+  kernel version; a run's metrics drop where it was fetched from and the training process id;
+  `remote.json` never leaves the machine that trained a run (`fraudvae models pack` excludes
+  it); the API reference lists only the endpoints a visitor can call; a scoring error says
+  the request could not be scored and no more.
 
 Everything else - the examples (from `data/examples/`, the redistributable sources only; the
 build's own samples file is never read in public mode even if it is on the disk), the
@@ -72,13 +75,17 @@ scp -r ~/fraudvae/runs root@SERVER:/srv/fraudvae/runs  # ~4 GB with the paysim g
 
 # 3. everything else
 ssh root@SERVER 'bash /root/fraudvae/deploy/install.sh --source /root/fraudvae --domain fraudvae.example.org --email you@example.org'
+
+# 4. once you have logged in with a key: no more passwords over ssh
+ssh root@SERVER 'bash /srv/fraudvae/app/deploy/install.sh --source /root/fraudvae --domain fraudvae.example.org --email you@example.org --harden-ssh'
 ```
 
 `install.sh` is idempotent: it installs the packages, makes the `fraudvae` user and the
 directories, copies the code, builds the virtualenv with the CPU build of torch, pulls any
 generation that is missing from `/srv/fraudvae/runs`, writes `/etc/fraudvae/env` if there is
-none, installs the systemd unit and the nginx site, opens 22/80/443 in ufw and gets a
-Let's Encrypt certificate. Afterwards:
+none, installs the systemd unit and the nginx site, opens 80/443 and rate-limits 22 in ufw,
+gets a Let's Encrypt certificate with a renewal hook that reloads nginx, and sets up
+fail2ban, unattended upgrades and log rotation. Afterwards:
 
 ```bash
 systemctl status fraudvae            # the app (uvicorn on 127.0.0.1:8765)
@@ -88,10 +95,19 @@ bash /srv/fraudvae/app/deploy/update.sh            # after `git pull` / with --s
 ```
 
 The systemd unit runs the service as an unprivileged user with a read-only view of the
-system, a 12 GB memory ceiling and no ability to gain privileges; nginx terminates TLS, caps
-request bodies at 6 MB, limits requests per address and adds the security headers. There is
-no database, no cookie and no session: the site has nothing to leak that is not already
-public.
+system, a 12 GB memory ceiling, no capabilities, a system-call allow-list and no network
+beyond localhost; nginx terminates TLS, caps request bodies at 6 MB, limits requests per
+address, adds the security headers and answers only for the site's own names. fail2ban
+watches sshd and nginx's rate limiter, security updates install themselves, the access log
+is anonymised and kept a week. There is no database, no cookie and no session: the site has
+nothing to leak that is not already public. `SECURITY.md` at the root of the repository goes
+through all of it.
+
+Two things the installer leaves to you. `--harden-ssh` turns password logins off and limits
+root to key authentication; it runs only when root already has an authorized key, so make
+sure you can log in with yours before you ask for it. And when the kernel has been updated,
+`/var/run/reboot-required` exists and the box wants a reboot at a quiet moment (the service
+comes back on its own).
 
 ### Cloudflare in front, or not
 
