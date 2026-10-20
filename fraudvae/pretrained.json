@@ -5,8 +5,8 @@
   "cpu_small-8src": {
    "assets": {
     "cpu_small-8src.tar.gz": {
-     "bytes": 2720992,
-     "sha256": "18fa11dccac89f6b3d0e3eafd4641b17b825929aac15435f63de5b80f7448a0e",
+     "bytes": 2720981,
+     "sha256": "ca0dbb128b95c776814c85a80bf6c1c9854b8ff0d04285654f575bb688a39dfd",
      "optional": false,
      "contents": "the run"
     }
@@ -22,8 +22,8 @@
   "gpu_full-4090": {
    "assets": {
     "gpu_full-4090.tar.gz": {
-     "bytes": 8571631,
-     "sha256": "542b182852c56fe001b0f5f4fb94c4b0633e7246232a4ee77d3e55d55a2c8e5f",
+     "bytes": 8571622,
+     "sha256": "75d2f0306e80f11083a739fffa392a72fa80f0922b12aae43b354e96cd9ad9a4",
      "optional": false,
      "contents": "the run"
     }
@@ -39,8 +39,8 @@
   "gpu_full-4090-v4": {
    "assets": {
     "gpu_full-4090-v4.tar.gz": {
-     "bytes": 12630457,
-     "sha256": "99ab6f779019076e2dabaa42254216877a990d8910c279649bb1cec53d79a56e",
+     "bytes": 12630463,
+     "sha256": "2a6186c77d1bf32acdde650c3769da28d5598b6d0508ccf60fa7b5436c0d26ea",
      "optional": false,
      "contents": "the run"
     }
