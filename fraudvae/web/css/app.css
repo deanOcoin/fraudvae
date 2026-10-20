@@ -54,8 +54,12 @@ b { font-weight: 600; }
   background: var(--ink); color: #c9d3de;
   display: flex; flex-direction: column; padding: 1.4rem 1rem;
 }
-.brand { color: #fff; text-decoration: none; font-weight: 700; font-size: 1.15rem; display: flex; align-items: center; gap: 0.55rem; margin-bottom: 2rem; }
-.brand-mark { width: 14px; height: 14px; border-radius: 50%; background: conic-gradient(var(--accent) 0 70%, var(--alarm) 70% 100%); box-shadow: 0 0 0 3px rgba(255,255,255,0.12); }
+.brand { color: #fff; text-decoration: none; font-weight: 400; font-size: 1.2rem; letter-spacing: -0.01em; display: flex; align-items: center; gap: 0.5rem; margin-bottom: 2rem; }
+.brand-mark { width: 24px; height: 24px; flex: 0 0 auto; filter: drop-shadow(0 0 4px rgba(95,199,207,0.35)); }
+.brand-word b { font-weight: 700; }
+.brand:hover .brand-mark { filter: drop-shadow(0 0 6px rgba(95,199,207,0.6)); }
+.rail-change { display: block; margin: -0.3rem 0 0.8rem; color: #9fb7cc; }
+.rail-change:hover { color: #fff; }
 .rail-link { display: block; color: #c9d3de; text-decoration: none; padding: 0.5rem 0.65rem; border-radius: var(--radius); margin-bottom: 2px; }
 .rail-link:hover { background: rgba(255,255,255,0.07); color: #fff; }
 .rail-link.active { background: rgba(255,255,255,0.14); color: #fff; font-weight: 600; }
@@ -104,13 +108,32 @@ input[type=number] { font-variant-numeric: tabular-nums; }
 .fgrid label.unused span { color: var(--ink-3); }
 .fgrid label.unused input, .fgrid label.unused select { background: var(--paper); }
 .fgrid small { color: var(--ink-3); font-size: 0.75rem; }
-.form-actions { margin-top: 1.5rem; display: flex; gap: 1rem; align-items: center; }
+/* the action bar stays at the bottom edge of the window while the form is in view, so the
+   button is one click away from any field; it is not pressed for the visitor */
+.form-actions { position: sticky; bottom: 0; z-index: 4; margin: 1.2rem -1.6rem -1.4rem; padding: 0.8rem 1.6rem; display: flex; gap: 0.9rem; align-items: center; flex-wrap: wrap; background: color-mix(in srgb, var(--panel) 92%, transparent); backdrop-filter: blur(6px); border-top: 1px solid var(--line-2); border-radius: 0 0 var(--radius) var(--radius); }
+.form-actions .actions-note { margin-left: auto; font-size: 0.8rem; }
+.btn.primary.attention { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); animation: fv-pulse 1.6s ease-in-out 3; }
+@keyframes fv-pulse { 0%, 100% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); } 50% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 12%, transparent); } }
+.rc-stale { background: var(--amber-soft); color: #6b4300; font-size: 0.8rem; padding: 0.35rem 0.7rem; border-radius: 6px; margin-bottom: 0.6rem; }
+/* folded field groups: the summary carries the name, the note and how much of it is filled */
+.fgroup.fold { margin-top: 0.9rem; border: 1px solid var(--line-2); border-radius: 8px; padding: 0 0.9rem; }
+.fgroup.fold > summary { display: flex; justify-content: space-between; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; padding: 0.6rem 0; cursor: pointer; list-style: none; }
+.fgroup.fold > summary::-webkit-details-marker { display: none; }
+.fgroup.fold > summary::before { content: "▸"; color: var(--ink-3); font-size: 0.8rem; margin-right: 0.1rem; }
+.fgroup.fold[open] > summary::before { content: "▾"; }
+.fgroup.fold > summary h3 { font-size: 0.98rem; display: inline; }
+.fgroup.fold > summary .dim { font-size: 0.82rem; flex: 1 1 auto; }
+.fgroup.fold > summary .fcount { font-size: 0.78rem; color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.fgroup.fold > summary .fcount.some { color: var(--accent); font-weight: 600; }
+.fgroup.fold > .fgrid { padding: 0.2rem 0 0.9rem; }
 details.batch { margin-top: 2rem; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 0.8rem 1.2rem; max-width: 72ch; }
 details.batch summary { cursor: pointer; font-weight: 500; }
 .batch-form { display: flex; gap: 0.8rem; align-items: center; flex-wrap: wrap; }
 
 /* the receipt */
-.receipt-col { position: sticky; top: 1.5rem; display: flex; flex-direction: column; gap: 1.2rem; }
+/* the receipt keeps its place beside the form however far the form is scrolled; a long receipt
+   scrolls inside its own column, so the verdict at its top stays in view */
+.receipt-col { position: sticky; top: 1rem; max-height: calc(100vh - 2rem); overflow-y: auto; display: flex; flex-direction: column; gap: 1.2rem; padding-right: 2px; scrollbar-width: thin; }
 .receipt {
   background: var(--receipt); font-family: var(--mono); font-size: 0.84rem; color: var(--ink);
   padding: 1.3rem 1.3rem 1.6rem; position: relative; border: 1px solid var(--line);
@@ -288,7 +311,7 @@ details.batch summary { cursor: pointer; font-weight: 500; }
 
 @media (max-width: 1100px) {
   .score-grid, .data-layout, .compute-grid { grid-template-columns: 1fr; }
-  .receipt-col { position: static; }
+  .receipt-col { position: static; max-height: none; overflow: visible; }
   .remote-steps { grid-template-columns: 1fr; }
 }
 @media (max-width: 760px) {
@@ -328,7 +351,8 @@ details.batch summary { cursor: pointer; font-weight: 500; }
 
 /* ---------- glossary: a word's definition on demand ---------- */
 /* terms carry no mark at all; the box is plain monospace text */
-.term { cursor: inherit; }
+/* a word with a definition behind it: set a little apart, not enough to shout */
+.term { cursor: inherit; font-style: italic; font-weight: 500; }
 #term-box {
   display: none; position: absolute; z-index: 50; max-width: 380px;
   font-family: var(--mono); font-size: 0.8rem; line-height: 1.45; color: var(--ink);
@@ -346,6 +370,8 @@ details.batch summary { cursor: pointer; font-weight: 500; }
   h1 { font-size: 1.5rem; }
   .page-head { margin-bottom: 1rem; }
   .score-form { padding: 1rem 0.9rem; }
+  .form-actions { margin: 1rem -0.9rem -1rem; padding: 0.7rem 0.9rem; }
+  .form-actions .actions-note { display: none; }
   .fgrid { grid-template-columns: 1fr 1fr; gap: 0.5rem 0.7rem; }
   .example-row { gap: 0.4rem; }
   .receipt { font-size: 0.8rem; padding: 1rem 0.9rem 1.3rem; }
@@ -370,7 +396,13 @@ details.batch summary { cursor: pointer; font-weight: 500; }
   #term-box { font-size: 0.78rem; }
 }
 @media (max-width: 480px) {
-  .fgrid { grid-template-columns: 1fr; }
+  /* two fields per row on a phone: half the scrolling, and the labels still read */
+  .fgrid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem 0.55rem; }
+  .fgrid label { font-size: 0.82rem; }
+  .fgrid label span { line-height: 1.25; }
+  .fgrid input, .fgrid select { min-width: 0; padding-left: 0.5rem; padding-right: 0.3rem; }
+  .form-actions { gap: 0.5rem 0.8rem; }
+  .form-actions #score-status { font-size: 0.78rem; line-height: 1.3; }
   .corpus-summary .stat { flex: 1 1 40%; }
 }
 

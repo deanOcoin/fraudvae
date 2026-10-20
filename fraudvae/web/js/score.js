@@ -1,11 +1,15 @@
 // score tab: the form, the receipt, the latent map
 import { get, post, fmt, el, esc, palette } from "./api.js";
+import { getSelectedRun, setSelectedRun, selectedModel, refreshModels } from "./app.js";
 
 let schema, state;
 let latentChart = null;
 let latentBackground = null;   // {xy, y, src} from the active run
 let lastResult = null;
 let showAll = false;
+// the label of the loaded example, while the form has not been edited since: the receipt
+// then says whether the verdict was right
+let pendingLabel = null;
 
 const GROUP_ORDER = ["core", "velocity", "merchant", "account", "ext", "ulb_pca"];
 const GROUP_NOTE = {
@@ -28,43 +32,77 @@ export async function initScore(appState) {
   wireForm();
   await loadLatentBackground();
   window.addEventListener("metachanged", () => { loadLatentBackground(); updateLede(); });
+  // the version chosen elsewhere (the model tab on a one-host workbench) reaches the picker here
+  window.addEventListener("runselected", (e) => {
+    const sel = document.getElementById("run-select");
+    if (sel && e.detail && sel.value !== e.detail && [...sel.options].some((o) => o.value === e.detail)) { sel.value = e.detail; onRunChanged(); }
+  });
   updateLede();
 }
 
+// the introduction describes the version that will score, not the server's default
 function updateLede() {
-  const m = state.meta?.active_run;
+  const m = selectedModel();
   const lede = document.getElementById("score-lede");
   if (!m) {
-    lede.textContent = "No trained model is loaded. Train one in Model & training (a few minutes on the smoke config) and come back.";
-  } else {
-    const dim = m.params ? `${(m.params / 1e6).toFixed(1)}-million-parameter ` : "";
-    const hybrid = m.has_booster
-      ? ` A second model, ${m.booster_trees ? m.booster_trees + " decision trees" : "boosted decision trees"} trained on the labelled fraud, adds what known fraud looks like; a small per-bank blend turns the two into the probability the verdict is read from.`
-      : " (No booster in this version: the verdict is the novelty score alone.)";
-    lede.textContent = `Describe one payment and the model says how likely it is to be fraud, with its reasons. A ${dim}VAE trained on legitimate payments from ${m.sources.length} datasets flags what it cannot explain from what it knows of normal traffic.${hybrid}`;
+    lede.textContent = state.meta?.active_run ? "Describe one payment and the model says how likely it is to be fraud, with its reasons."
+      : "No trained model is loaded. Train one in Model & training (a few minutes on the smoke config) and come back.";
+    return;
   }
+  const dim = m.params ? `${(m.params / 1e6).toFixed(1)}-million-parameter ` : "";
+  const n = (m.sources || []).length;
+  const hybrid = m.has_booster
+    ? ` A second model, ${m.booster_trees ? m.booster_trees.toLocaleString() + " decision trees" : "boosted decision trees"} trained on the labelled fraud, adds what known fraud looks like; a small per-bank blend turns the two into the probability the verdict is read from.`
+    : " This version has no second model: the verdict is the novelty score alone, and it knows an older, smaller set of fields.";
+  const who = m.version && m.label ? `${m.version}, ${m.label}: a` : "A";
+  lede.textContent = `Describe one payment and the model says how likely it is to be fraud, with its reasons. ${who} ${dim}VAE trained on legitimate payments from ${n} dataset${n === 1 ? "" : "s"} flags what it cannot explain from what it knows of normal traffic.${hybrid}`;
 }
 
 async function buildRunSelect() {
   const sel = document.getElementById("run-select");
   if (!sel) return;
-  try { models = (await get("/api/models")).models; } catch (e) { models = []; }
+  models = state.models?.length ? state.models : await refreshModels();
   const active = state.meta?.active_run?.name;
   sel.innerHTML = "";
   const shown = models.filter((m) => m.milestone || m.name === active);
   const best = shown.reduce((a, b) => (b.mean_test_auroc ?? -1) > (a?.mean_test_auroc ?? -1) ? b : a, null);
   for (const m of [...shown].reverse()) {
-    const tag = m.name === best?.name ? "  — newest, best" : (m.schema_version < 5 ? `  — schema v${m.schema_version}` : "");
+    const tag = m.name === best?.name ? "  — newest, best" : (m.schema_version < 5 ? `  — older field set (v${m.schema_version})` : "");
     sel.append(el("option", { value: m.name }, `${m.version} · ${m.label}${tag}`));
   }
-  // a version chosen on the model tab arrives in the url (?run=, across hosts) or, on a
-  // one-host workbench, in browser storage
-  let want = new URLSearchParams(location.search).get("run");
-  if (want) history.replaceState(null, "", location.pathname + location.hash);
-  else { try { want = localStorage.getItem("fraudvae.run"); localStorage.removeItem("fraudvae.run"); } catch (_) {} }
+  // the version selected on the model tab (kept across tabs and hosts), else the default
+  const want = getSelectedRun();
   sel.value = (want && shown.some((m) => m.name === want)) ? want : (active && shown.some((m) => m.name === active) ? active : (best?.name || sel.value));
-  sel.addEventListener("change", () => { if (lastResult) score(lastResult._label); });
-  document.getElementById("compare-all")?.addEventListener("change", () => { if (lastResult) score(lastResult._label); });
+  if (sel.value !== want) setSelectedRun(sel.value);
+  sel.addEventListener("change", () => { setSelectedRun(sel.value); onRunChanged(); });
+  document.getElementById("compare-all")?.addEventListener("change", () => markDirty("settings changed"));
+}
+
+// a different version will score next: say so, show its map, do not score until asked
+function onRunChanged() {
+  updateLede();
+  loadLatentBackground();
+  markDirty("the model version changed");
+}
+
+// a verdict belongs to the inputs it was computed from: once they change, it is stale until
+// the button is pressed again (nothing scores on its own)
+let dirtyReason = null;
+function markDirty(reason) {
+  if (!lastResult) return;
+  dirtyReason = reason || "inputs changed";
+  document.getElementById("score-btn")?.classList.add("attention");
+  const status = document.getElementById("score-status");
+  if (status) status.textContent = `${dirtyReason} — the verdict shown is for the previous inputs`;
+  const r = document.getElementById("receipt");
+  let bar = document.getElementById("rc-stale");
+  if (!bar) { bar = el("div", { id: "rc-stale", class: "rc-stale" }); r.prepend(bar); }
+  bar.textContent = `${dirtyReason} — press Score transaction for a new verdict`;
+}
+function clearDirty() {
+  dirtyReason = null;
+  document.getElementById("score-btn")?.classList.remove("attention");
+  document.getElementById("rc-stale")?.remove();
 }
 
 function buildSourceSelect() {
@@ -96,15 +134,30 @@ function buildFields() {
     // categoricals first in core so channel/type/category lead, numbers after
     for (const c of cats) grid.append(catField(c));
     for (const f of nums) grid.append(numField(f));
-    const body = g === "ulb_pca"
-      ? el("details", {}, el("summary", { class: "dim" }, "28 PCA components (only meaningful for the ULB context)"), grid)
-      : grid;
-    const group = el("div", { class: "fgroup", "data-group": g },
-      el("div", { class: "fgroup-head" }, el("h3", {}, schema.groups[g] || g), el("span", { class: "dim" }, GROUP_NOTE[g] || "")),
-      body);
-    host.append(group);
+    const n = nums.length + cats.length;
+    // the transaction itself and the customer's history stay open; the rest folds, with a
+    // count of what is filled in so a loaded example is not hidden from view
+    if (g === "core" || g === "velocity") {
+      host.append(el("div", { class: "fgroup", "data-group": g },
+        el("div", { class: "fgroup-head" }, el("h3", {}, schema.groups[g] || g), el("span", { class: "dim" }, GROUP_NOTE[g] || "")),
+        grid));
+    } else {
+      host.append(el("details", { class: "fgroup fold", "data-group": g },
+        el("summary", {}, el("h3", {}, schema.groups[g] || g), el("span", { class: "dim" }, GROUP_NOTE[g] || ""), el("span", { class: "fcount", "data-total": n }, `0 of ${n} filled`)),
+        grid));
+    }
   }
   markUnused();
+  updateFoldCounts();
+}
+
+function updateFoldCounts() {
+  document.querySelectorAll("#field-groups details.fold").forEach((d) => {
+    const total = d.querySelectorAll("label[data-feature]").length;
+    const filled = [...d.querySelectorAll("label[data-feature] input, label[data-feature] select")].filter((e) => e.value !== "").length;
+    const c = d.querySelector(".fcount");
+    if (c) { c.textContent = `${filled} of ${total} filled`; c.classList.toggle("some", filled > 0); }
+  });
 }
 
 function numField(f) {
@@ -208,6 +261,7 @@ function fillForm(features, source) {
   }
   markUnused();
   showSourceHint();
+  updateFoldCounts();
 }
 
 function wireForm() {
@@ -216,10 +270,21 @@ function wireForm() {
     ev.preventDefault();
     await score();
   });
+  // typing or picking anything makes the current verdict stale; nothing scores on its own
+  const SETTINGS = new Set(["run-select", "compare-all", "fpr-select", "delay-select", "source-select"]);
+  const touched = (e) => {
+    if (e.target.id === "run-select") return;
+    if (!SETTINGS.has(e.target.id)) pendingLabel = null;   // an edited example is no longer the labelled row
+    updateFoldCounts();
+    markDirty(SETTINGS.has(e.target.id) ? "settings changed" : "inputs changed");
+  };
+  form.addEventListener("input", touched);
+  form.addEventListener("change", touched);
   document.getElementById("clear-form").addEventListener("click", () => {
-    resetKeepingSettings(form); markUnused(); showSourceHint();
-    loadedWide = null; loadedEntities = null;
+    resetKeepingSettings(form); markUnused(); showSourceHint(); updateFoldCounts();
+    loadedWide = null; loadedEntities = null; pendingLabel = null;
     document.getElementById("example-note").textContent = "";
+    markDirty("the form was cleared");
   });
   document.querySelectorAll("[data-example]").forEach((b) => b.addEventListener("click", async () => {
     const want = b.dataset.example;
@@ -235,19 +300,21 @@ function wireForm() {
       const wideNote = (ex.wide ? `, + ${Object.keys(ex.wide).length} raw source columns` : "")
         + (loadedEntities ? `, entities: ${Object.keys(loadedEntities).join("/")}` : "");
       document.getElementById("example-note").textContent = `${ex.txn_id} (${ex.split} split, labelled ${ex.is_fraud ? "fraud" : "legitimate"}${scen}${wideNote})`;
-      await score(ex.is_fraud);
+      pendingLabel = ex.is_fraud;
+      markDirty("an example was loaded");
+      document.getElementById("score-btn")?.classList.add("attention");
     } catch (e) {
       document.getElementById("example-note").textContent = e.message;
     }
   }));
-  document.getElementById("fpr-select").addEventListener("change", () => { if (lastResult) score(lastResult._label); });
-  document.getElementById("delay-select").addEventListener("change", () => { if (lastResult) score(lastResult._label); });
   document.getElementById("batch-form").addEventListener("submit", batchScore);
 }
 
-async function score(label = null) {
+
+async function score() {
   const btn = document.getElementById("score-btn");
   const status = document.getElementById("score-status");
+  const label = pendingLabel;
   let req;
   try { req = readForm(); } catch (e) { status.textContent = e.message; return; }
   if (!Object.keys(req.features).length) { status.textContent = "fill in at least one field"; return; }
@@ -257,8 +324,11 @@ async function score(label = null) {
     r._label = label;
     lastResult = r;
     showAll = false;
+    clearDirty();
     renderReceipt(r, label);
     plotLatent(r);
+    // on a phone the receipt sits below the form: bring it up
+    if (window.innerWidth < 900) document.getElementById("receipt").scrollIntoView({ behavior: "smooth", block: "start" });
     status.textContent = `${r.observed_features} fields observed, ${r.n_samples} posterior samples${r.supervised ? ", booster + blend" : ""}${r.sequence ? `, ${r.sequence.n_history} past txns` : ""}`;
   } catch (e) {
     status.textContent = e.message;
@@ -496,7 +566,7 @@ function renderReceipt(r, label) {
 // ---- latent map -----------------------------------------------------------------
 
 async function loadLatentBackground() {
-  const run = state.meta?.active_run?.name;
+  const run = selectedModel()?.name || state.meta?.active_run?.name;
   latentBackground = null;
   if (!run) { drawLatent(); return; }
   try {

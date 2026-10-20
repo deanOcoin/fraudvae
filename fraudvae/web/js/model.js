@@ -1,6 +1,6 @@
 // model & training tab: the versions (newest first, one selected), the selected run's record, local training
 import { get, post, pollTask, fmt, el, esc, palette } from "./api.js";
-import { refreshMeta, scoreHref, rememberRun } from "./app.js";
+import { refreshMeta, refreshModels, scoreHref, rememberRun, getSelectedRun, setSelectedRun, state as appState } from "./app.js";
 
 let runs = [];
 let timelineItems = [];
@@ -29,10 +29,13 @@ export async function initModel(state) {
   document.getElementById("train-device").textContent = `this machine: ${state.meta?.device || "?"}, torch ${state.meta?.torch || ""}`;
   document.getElementById("train-form").addEventListener("submit", startTraining);
   window.addEventListener("tabshown", (e) => { if (e.detail === "model") loadRuns(); });
+  // the picker on the score tab changed the selection (one-host workbench): follow it here
+  window.addEventListener("runselected", (e) => { if (e.detail && e.detail !== selected && runs.some((r) => r.name === e.detail)) selectRun(e.detail); });
 }
 
 async function loadTimeline() {
-  try { timelineItems = (await get("/api/models")).models.filter((m) => m.milestone); } catch (e) { timelineItems = []; }
+  const all = appState.models?.length ? appState.models : await refreshModels();
+  timelineItems = all.filter((m) => m.milestone);
 }
 
 const best = () => timelineItems.reduce((a, b) => (b.mean_test_auroc ?? -1) > (a?.mean_test_auroc ?? -1) ? b : a, null);
@@ -85,7 +88,11 @@ function renderTimeline() {
 async function loadRuns() {
   const r = await get("/api/runs");
   runs = r.runs; active = r.active;
-  if (!selected) selected = active || best()?.name || runs[0]?.name || null;
+  if (!selected) {
+    const want = getSelectedRun();
+    selected = (want && runs.some((x) => x.name === want)) ? want : (active || best()?.name || runs[0]?.name || null);
+    if (selected && selected !== want) setSelectedRun(selected);
+  }
   renderTimeline();
   renderRuns();
   if (selected) showRun(selected);
@@ -111,6 +118,7 @@ function renderRuns() {
 
 function selectRun(name, { scroll = false } = {}) {
   selected = name;
+  setSelectedRun(name);
   renderTimeline();
   renderRuns();
   showRun(name, scroll);

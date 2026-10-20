@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>fraudvae</title>
+<title>FinFraud</title>
+<link rel="icon" type="image/svg+xml" href="/static/img/mark.svg">
 <link rel="stylesheet" href="/static/vendor/katex/katex.min.css">
 <link rel="stylesheet" href="/static/css/fonts.css">
 <link rel="stylesheet" href="/static/css/app.css">
@@ -11,7 +12,7 @@
 <body>
 <div class="shell">
   <nav class="rail" aria-label="Sections">
-    <a class="brand" href="#score"><span class="brand-mark" aria-hidden="true"></span>fraudvae</a>
+    <a class="brand" href="#score"><svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M8.92 20.46 A9 9 0 1 1 20.46 15.08" stroke="#5fc7cf" stroke-width="3"/><path d="M19.79 16.5 A9 9 0 0 1 10.44 20.86" stroke="#ff5d73" stroke-width="3"/><path d="M12 12 L14.32 16.98" stroke="#fff" stroke-width="2"/><circle cx="12" cy="12" r="1.9" fill="#fff"/></svg><span class="brand-word">Fin<b>Fraud</b></span></a>
     <a href="#score" data-tab="score" class="rail-link">Score a transaction</a>
     <a href="#data" data-tab="data" class="rail-link">Training data</a>
     <a href="#model" data-tab="model" class="rail-link">Model &amp; training</a>
@@ -20,13 +21,14 @@
     <a href="#story" data-tab="story" class="rail-link">Development process</a>
     <div class="rail-foot">
       <div id="rail-model" class="rail-model">loading…</div>
+      <a href="#model" data-tab="model" class="rail-dim rail-change">change the model version →</a>
       <a href="/api/docs" class="rail-dim" target="_blank" rel="noopener">API docs</a>
     </div>
   </nav>
 
   <main class="content">
     <!-- ================= SCORE ================= -->
-    <section id="tab-score" class="tab">
+    <section id="tab-score" class="tab hidden">
       <header class="page-head">
         <h1>Score a transaction</h1>
         <p class="lede" id="score-lede">Describe one payment and the model says how likely it is to be fraud, with its reasons. Two models look at it: one that learnt what normal payments look like and flags what it cannot explain, and one that learnt what known fraud looks like from labelled examples.</p>
@@ -107,6 +109,7 @@
           <div class="form-actions">
             <button type="submit" class="btn primary" id="score-btn">Score transaction</button>
             <span id="score-status" class="dim"></span>
+            <span class="dim actions-note">nothing scores until this is pressed</span>
           </div>
         </form>
 
