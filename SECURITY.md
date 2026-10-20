@@ -53,6 +53,11 @@ at most 100 characters): there is no way to build a path from it. In public mode
 from the scorer says that the request could not be scored, not which exception where; the
 detail goes to the server log.
 
+Scoring a batch runs in a worker thread, never on the event loop, so the seconds a 5,000-row
+file takes cannot stall every other request. A scored file comes back with its own text
+cells; one that a spreadsheet would read as a formula (`=`, `+`, `-`, `@` first) is prefixed
+with an apostrophe, so a file passed on to a colleague cannot run anything when opened.
+
 ## What the browser is told
 
 Every script, style, font and library the pages use is served from the site itself
@@ -63,6 +68,16 @@ run. The other headers are the usual set - `X-Content-Type-Options`, `X-Frame-Op
 opener and resource policies - and the server answers only for its own host names: a request
 for any other name, or for the bare IP address, gets no response (nginx closes the connection
 on port 80 and refuses the TLS handshake on 443).
+
+## The workbench on a laptop
+
+`fraudvae serve` without `FRAUDVAE_PUBLIC` is the full workbench, and its API can train,
+build data and drive a rented machine over ssh. It listens on 127.0.0.1 only, and it answers
+only to the names it is meant to be reached by (`localhost`, `127.0.0.1`, the address it was
+bound to, plus anything in `FRAUDVAE_ALLOWED_HOSTS`): a page on a hostile site whose domain
+name is pointed at 127.0.0.1 - DNS rebinding - gets a 400, not the API. Requests with a JSON
+body cannot be forged from another origin either, since a cross-site request cannot carry
+the JSON content type without a preflight the server never grants.
 
 ## The server
 
@@ -75,9 +90,20 @@ other open port.
 
 ssh is rate-limited by the firewall and watched by fail2ban (five failures in ten minutes
 bans an address for an hour), as is nginx's rate limiter. `deploy/install.sh --harden-ssh`
-turns password logins off and limits root to key authentication, and does so only when root
-already has an authorized key, so the step cannot lock anyone out. Security updates install
+turns password logins off and limits root to key authentication. It writes the settings into
+`sshd_config` itself (a provider's image may ship one without the `Include` line that makes
+drop-ins count), checks them on sshd's own reading of the effective configuration before
+reloading, restores the previous file if they did not take, and runs only when root already
+has an authorized key, so the step cannot lock anyone out. Security updates install
 themselves; the certificate renews itself and nginx is reloaded when it does.
+
+The Python packages the site runs are pinned to the exact versions it was tested with
+(`deploy/requirements.lock`, audited with pip-audit), so an install does not pick up whatever
+was published that morning; the pretrained bundles are pinned by checksum. TLS is 1.2 and
+1.3 only, AEAD ciphers with forward secrecy, an ECDSA certificate from Let's Encrypt; the
+usual named attacks (Heartbleed, ROBOT, POODLE, SWEET32, DROWN, LOGJAM, BEAST, CRIME) do not
+apply. BREACH needs a secret in a compressed response; there are no secrets, cookies or
+tokens anywhere in one.
 
 The access log keeps the network a request came from, not the address: the last octet of an
 IPv4 address and the second half of an IPv6 one are dropped before the line is written, and
@@ -93,6 +119,13 @@ in `fraudvae/pretrained.json` before they are unpacked, and unpacked with the `d
 that refuses paths outside the target directory. A run you did not train yourself is still a
 run you are choosing to execute code around; pull bundles with `fraudvae models pull`, which
 checks them, rather than copying a directory from somewhere.
+
+## What is left to the DNS
+
+Two records the domain's zone does not need for the site but would close doors elsewhere:
+a CAA record (`0 issue "letsencrypt.org"`) so no other authority can be talked into issuing
+a certificate for the name, and, since the domain sends no mail, a null SPF (`v=spf1 -all`)
+with a DMARC reject policy so nobody can send mail that claims to come from it.
 
 ## Reporting something
 

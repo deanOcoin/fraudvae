@@ -329,6 +329,17 @@ tests/         pytest, no real data needed
 docs/
 ```
 
+## Credits
+
+The ideas are not new - heterogeneous-likelihood VAEs, gradient boosting on
+causal velocity features, per-segment calibration, delayed-label features -
+and `docs/TRAINING_NOTES.md` says where each came from; what is this project's
+is the combination, the eleven-way schema, the latency treatment and the
+receipts. A good part of the code was written with the help of an Anthropic
+Claude model, the front end more than the training side; the design of the
+models and the data, and every decision about what to build, were not the
+model's.
+
 ## License
 
 MIT for the code. The datasets keep their own licenses (listed per source in
