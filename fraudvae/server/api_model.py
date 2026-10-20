@@ -239,9 +239,11 @@ def _score(req: ScoreRequest, m: inference.ActiveModel):
         out = m.score(req.features, req.source, req.fpr_target, **kw)
         if req.compare:
             rows = [_summary(out)]
+            seen = set()
             for name in req.compare[: public.COMPARE_MAX]:
-                if name == m.name:
+                if name == m.name or name in seen:
                     continue
+                seen.add(name)
                 other = _model_named(name)
                 # the same transaction, read-only: no history remembered under another generation's name
                 r = other.score(req.features, req.source, req.fpr_target, **{**kw, "remember": False, "customer_id": None})
@@ -288,19 +290,21 @@ def delete_history(source: str, customer_id: str):
 
 @router.post("/score/batch", summary="Score a csv file", tags=["scoring"],
              responses={200: {"content": {"text/csv": {}}, "description": "the input rows with the scores appended"}})
-async def post_score_batch(request: Request, file: UploadFile = File(..., description="a csv with one transaction per row; a `source` column overrides the query parameter"),
+def post_score_batch(request: Request, file: UploadFile = File(..., description="a csv with one transaction per row; a `source` column overrides the query parameter"),
                            source: str | None = Query(None, description="dataset family of the rows (`sparkov`, `ieee`, ...); generic when absent"),
                            fpr_target: str = Query("fpr_0.01", description="false-positive budget the flag is set at: `fpr_0.001`, `fpr_0.01` or `fpr_0.05`"),
                            label_delay_days: float | None = Query(None, description="how long fraud labels take to arrive in this deployment"),
                            run: str | None = Query(None, description="which generation scores the file (default: the active one)")):
     """Upload a csv and get it back with `p_fraud`, `booster_prob`, `novelty_score`,
     `novelty_raw` and `flag` columns appended; the `X-Summary` response header carries the counts (rows, flagged, fraud rate)
-    as json. Columns are matched by name the way `/api/score` matches `features`. On the
+    as json. A text cell that a spreadsheet would read as a formula comes back with a leading apostrophe. Columns are matched by name the way `/api/score` matches `features`. On the
     public site a file may have at most 5,000 rows and 3,000 columns, 4 uploads a minute,
     two running at once server-wide."""
+    # a plain (not async) handler on purpose: it runs in the worker pool, so the seconds a batch
+    # takes to score never stall the event loop that every other request goes through
     public.limit("batch", request)
     m = _model_named(run)
-    raw = await file.read()
+    raw = file.file.read()
     cap = public.BATCH_ROWS if public.PUBLIC else 500_000
     if len(raw) > (cap * 4000):
         raise HTTPException(413, f"file too large for {cap:,} rows")
@@ -331,6 +335,16 @@ async def post_score_batch(request: Request, file: UploadFile = File(..., descri
         if public.PUBLIC:
             public.batch_slots.release()
     out = pd.concat([df.reset_index(drop=True), scored], axis=1)
+    # the file goes back with its own text cells: a cell that a spreadsheet would read as a
+    # formula (=, +, -, @ at the start) is prefixed with an apostrophe, the usual guard against
+    # a scored file being opened by someone other than whoever made it
+    for col in out.columns:
+        if not (pd.api.types.is_string_dtype(out[col]) or pd.api.types.is_object_dtype(out[col])):
+            continue
+        v = out[col]
+        mask = v.map(lambda x: isinstance(x, str) and len(x) > 0 and x[0] in "=+-@\t\r")
+        if mask.any():
+            out[col] = v.where(~mask, "'" + v.astype(str))
     summary = {"rows": int(len(out)), "flagged": int(out["flag"].sum()), "score_type": m.score_type,
                "verdict_from": "blend" if m.has_blend else "novelty"}
     if "is_fraud" in out:

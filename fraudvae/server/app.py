@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 
 import torch
 from fastapi import FastAPI
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -117,6 +118,14 @@ app = FastAPI(title="FinFraud", version=__version__, description=_DESCRIPTION, d
 app.include_router(api_data.router)
 app.include_router(api_model.router)
 if not public.PUBLIC:
+    # a workbench listens on localhost, but a page in the same browser can still reach it if a
+    # hostile site's name is pointed at 127.0.0.1 (dns rebinding) - and the workbench api can
+    # train, build data and run commands on a rented box over ssh. So the server answers only
+    # to the names it is meant to be reached by. FRAUDVAE_ALLOWED_HOSTS adds more (a machine
+    # on a lan, say), comma separated; the public site has nginx in front for this
+    _hosts = {"localhost", "127.0.0.1", "[::1]", "0.0.0.0", os.environ.get("FRAUDVAE_HOST", "127.0.0.1")}
+    _hosts.update(h.strip() for h in os.environ.get("FRAUDVAE_ALLOWED_HOSTS", "").split(",") if h.strip())
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=sorted(_hosts))
     # the remote-training api provisions and drives machines over ssh with the app's own key:
     # a workbench feature, never a public one
     app.include_router(api_remote.router)
