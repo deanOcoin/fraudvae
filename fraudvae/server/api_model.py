@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import io
 import json
+import re
+import threading
 
 import numpy as np
 import pandas as pd
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from fastapi.responses import Response, StreamingResponse
+from pydantic import BaseModel, field_validator
 
 from ..data.schema import SCHEMA_VERSION
 from ..paths import CONFIG_DIR, PREPARED_DIR, RUNS_DIR
@@ -15,6 +17,54 @@ from . import inference, public, tasks
 from .api_data import _clean
 
 router = APIRouter(prefix="/api")
+
+# a run is a directory name and nothing else: no separators, no dot-dot, nothing a path could
+# be built from. Everything that takes a run name goes through here
+_RUN_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
+
+
+def _run_dir(name: str):
+    if not _RUN_NAME.match(name or "") or ".." in name:
+        raise HTTPException(404, "no such run")
+    d = RUNS_DIR / name
+    if not d.is_dir():
+        raise HTTPException(404, "no such run")
+    return d
+
+
+def _error_detail(prefix: str, e: Exception) -> str:
+    """what a caller is told when scoring fails: the exception on a workbench, where the
+    message is for the person running it; a plain sentence on the public site, where the
+    message is for whoever is probing it (the detail goes to the server log)"""
+    if public.PUBLIC:
+        print(f"{prefix}: {type(e).__name__}: {e}")
+        return f"{prefix}: the request could not be scored (malformed fields?)"
+    return f"{prefix}: {type(e).__name__}: {e}"
+
+
+# how much one request may carry. nginx caps the body at 6 MB before any of this runs; these
+# keep one request's cpu time proportionate to a transaction, whatever is inside the json
+MAX_FEATURES = 600
+MAX_WIDE = 3000
+MAX_HISTORY = 256
+MAX_EVENTS = 20_000        # per behaviour modality
+MAX_TEXT = 20_000          # characters per text field
+MAX_STRING = 2_000         # any other string value
+
+
+def _bounded_dict(v, limit: int, what: str, max_str: int = MAX_STRING):
+    if v is None:
+        return v
+    if not isinstance(v, dict):
+        raise ValueError(f"{what} must be an object")
+    if len(v) > limit:
+        raise ValueError(f"{what}: at most {limit} keys")
+    for k, x in v.items():
+        if len(str(k)) > 200:
+            raise ValueError(f"{what}: key too long")
+        if isinstance(x, str) and len(x) > max_str:
+            raise ValueError(f"{what}.{k}: value too long")
+    return v
 
 
 def _need_model() -> inference.ActiveModel:
@@ -42,10 +92,73 @@ class ScoreRequest(BaseModel):
     run: str | None = None                  # which generation scores it (default: the active model)
     compare: list[str] | None = None        # other runs to score the same transaction on, for the comparison strip
 
+    @field_validator("features")
+    @classmethod
+    def _v_features(cls, v):
+        return _bounded_dict(v, MAX_FEATURES, "features")
+
+    @field_validator("wide")
+    @classmethod
+    def _v_wide(cls, v):
+        return _bounded_dict(v, MAX_WIDE, "wide")
+
+    @field_validator("device", "entities")
+    @classmethod
+    def _v_small(cls, v):
+        return _bounded_dict(v, 100, "payload")
+
+    @field_validator("text")
+    @classmethod
+    def _v_text(cls, v):
+        return _bounded_dict(v, 20, "text", max_str=MAX_TEXT)
+
+    @field_validator("history")
+    @classmethod
+    def _v_history(cls, v):
+        if v is None:
+            return v
+        if len(v) > MAX_HISTORY:
+            raise ValueError(f"history: at most {MAX_HISTORY} previous transactions")
+        for row in v:
+            if not isinstance(row, dict):
+                raise ValueError("history rows must be objects")
+            _bounded_dict(row.get("features", row), MAX_FEATURES, "history.features")
+        return v
+
+    @field_validator("session")
+    @classmethod
+    def _v_session(cls, v):
+        if v is None:
+            return v
+        if not isinstance(v, dict) or len(v) > 8:
+            raise ValueError("session must be an object of at most 8 modalities")
+        for k, events in v.items():
+            # a modality that is not a list is junk the scorer ignores; a list has a ceiling
+            if isinstance(events, list) and len(events) > MAX_EVENTS:
+                raise ValueError(f"session.{k}: at most {MAX_EVENTS} events")
+            if isinstance(events, str) and len(events) > MAX_STRING:
+                raise ValueError(f"session.{k}: too long")
+        return v
+
+    @field_validator("run", "source", "fpr_target", "customer_id")
+    @classmethod
+    def _v_short(cls, v):
+        if v is not None and len(v) > 100:
+            raise ValueError("too long")
+        return v
+
+    @field_validator("compare")
+    @classmethod
+    def _v_compare(cls, v):
+        if v is not None and (len(v) > 32 or any(len(x) > 100 for x in v)):
+            raise ValueError("compare: too many or too long")
+        return v
+
 
 def _model_named(name: str | None) -> inference.ActiveModel:
     if not name:
         return _need_model()
+    _run_dir(name)
     try:
         return inference.get_model(name)
     except FileNotFoundError as e:
@@ -70,6 +183,16 @@ def _summary(r: dict) -> dict:
 def post_score(req: ScoreRequest, request: Request):
     public.limit("score", request)
     m = _model_named(req.run)
+    if public.PUBLIC and not _score_slots.acquire(timeout=3.0):
+        raise HTTPException(503, "the scorer is busy, try again in a moment", headers={"Retry-After": "2"})
+    try:
+        return _score(req, m)
+    finally:
+        if public.PUBLIC:
+            _score_slots.release()
+
+
+def _score(req: ScoreRequest, m: inference.ActiveModel):
     # a public site keeps no visitor state: histories must come with the request
     remember, customer_id = (False, None) if public.PUBLIC else (req.remember, req.customer_id)
     kw = dict(wide=req.wide, history=req.history, customer_id=customer_id, ts=req.ts, remember=remember,
@@ -90,7 +213,12 @@ def post_score(req: ScoreRequest, request: Request):
     except HTTPException:
         raise
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(400, f"could not score: {type(e).__name__}: {e}")
+        raise HTTPException(400, _error_detail("could not score", e))
+
+
+# only so many transactions score at once across every visitor: past that the answer is a
+# polite 503 rather than a queue that grows until the box swaps
+_score_slots = threading.BoundedSemaphore(public.SCORE_CONCURRENCY)
 
 
 @router.get("/models")
@@ -127,18 +255,29 @@ async def post_score_batch(request: Request, file: UploadFile = File(...), sourc
     cap = public.BATCH_ROWS if public.PUBLIC else 500_000
     if len(raw) > (cap * 4000):
         raise HTTPException(413, f"file too large for {cap:,} rows")
+    # the header decides how wide the frame gets; a file that is all commas must not become a
+    # million-column frame before the row cap is even checked
+    header = raw.split(b"\n", 1)[0]
+    if header.count(b",") + header.count(b";") + header.count(b"\t") > 3000:
+        raise HTTPException(413, "too many columns")
     try:
-        df = pd.read_csv(io.BytesIO(raw))
+        df = pd.read_csv(io.BytesIO(raw), nrows=cap + 1)
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(400, f"not a csv i can read: {e}")
+        raise HTTPException(400, _error_detail("not a csv that could be read", e))
     if len(df) > cap:
         raise HTTPException(413, f"batch too large, {cap:,} rows max" + (" on the public site" if public.PUBLIC else " through the ui"))
+    if len(df.columns) > 3000:
+        raise HTTPException(413, "too many columns")
     if source and "source" not in df:
         df["source"] = source
     if public.PUBLIC and not public.batch_slots.acquire(blocking=False):
         raise HTTPException(429, "the batch scorer is busy, try again in a minute", headers={"Retry-After": "60"})
     try:
         scored = m.score_frame(df, fpr_target=fpr_target, label_delay_days=label_delay_days)
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, _error_detail("could not score the file", e))
     finally:
         if public.PUBLIC:
             public.batch_slots.release()
@@ -173,6 +312,7 @@ def get_runs():
 @router.post("/runs/{name}/load")
 def post_load(name: str):
     public.forbid("changing the default model (pick a model per request instead)")
+    _run_dir(name)
     try:
         m = inference.load_run(name)
     except FileNotFoundError as e:
@@ -185,9 +325,7 @@ def post_load(name: str):
 
 @router.get("/runs/{name}/metrics")
 def get_metrics(name: str):
-    d = RUNS_DIR / name
-    if not d.exists():
-        raise HTTPException(404, "no such run")
+    d = _run_dir(name)
     out = {"metrics": [], "status": None, "run": None, "eval": None, "eval_delay": None, "calibration": None, "booster": None,
            "seqhead": None, "specialists": None, "graph": None, "text": None, "behaviour": None, "graph_bench": None,
            "heads": {},
@@ -232,7 +370,8 @@ def get_metrics(name: str):
 
 @router.get("/runs/{name}/log")
 def get_log(name: str, tail: int = 300):
-    d = RUNS_DIR / name
+    d = _run_dir(name)
+    tail = max(1, min(int(tail), 5000))
     for fname in ("train.log", "launcher.log"):
         p = d / fname
         if p.exists():
@@ -243,14 +382,31 @@ def get_log(name: str, tail: int = 300):
 
 @router.get("/runs/{name}/latent")
 def get_latent(name: str):
-    p = RUNS_DIR / name / "latent_map.npz"
+    p = _run_dir(name) / "latent_map.npz"
     if not p.exists():
         raise HTTPException(404, "no latent map for this run")
-    z = np.load(p)
-    out = {"xy": z["xy"].round(3).tolist(), "y": z["y"].tolist(), "src": z["src"].tolist(), "score": z["score"].round(3).tolist()}
-    if "blend" in z:
-        out["blend"] = z["blend"].round(4).tolist()
-    return out
+    # three megabytes of json that never change for a run: serialised once per file version,
+    # not once per visitor (a scanner asking for it 300 times a minute would otherwise own a core)
+    key = (name, p.stat().st_mtime_ns)
+    with _latent_lock:
+        hit = _latent_cache.get(key)
+    if hit is None:
+        z = np.load(p)
+        out = {"xy": z["xy"].round(3).tolist(), "y": z["y"].tolist(), "src": z["src"].tolist(), "score": z["score"].round(3).tolist()}
+        if "blend" in z:
+            out["blend"] = z["blend"].round(4).tolist()
+        hit = json.dumps(out, separators=(",", ":")).encode()
+        with _latent_lock:
+            for k in [k for k in _latent_cache if k[0] == name]:
+                _latent_cache.pop(k, None)
+            if len(_latent_cache) >= 12:
+                _latent_cache.pop(next(iter(_latent_cache)))
+            _latent_cache[key] = hit
+    return Response(content=hit, media_type="application/json")
+
+
+_latent_cache: dict[tuple[str, int], bytes] = {}
+_latent_lock = threading.Lock()
 
 
 @router.get("/configs")
@@ -274,6 +430,8 @@ class TrainRequest(BaseModel):
 def post_train_local(req: TrainRequest):
     public.forbid("training")
     name = req.name or tasks.run_name_from(req.config)
+    if not _RUN_NAME.match(name) or ".." in name or not re.match(r"^[A-Za-z0-9_-]{1,40}$", req.config) or not re.match(r"^[A-Za-z0-9_-]{1,40}$", req.prepared):
+        raise HTTPException(400, "run, config and prepared-set names are plain names")
     args = ["fraudvae.train", "--config", req.config, "--prepared", req.prepared, "--name", name]
     if req.epochs:
         args += ["--epochs", str(req.epochs)]
@@ -287,11 +445,15 @@ def post_train_local(req: TrainRequest):
 
 @router.get("/tasks")
 def get_tasks():
+    if public.PUBLIC:
+        return []
     return tasks.list_tasks()
 
 
 @router.get("/tasks/{task_id}")
 def get_task(task_id: str, tail: int = 400):
+    public.forbid("background tasks")
+    tail = max(1, min(int(tail), 5000))
     t = tasks.get(task_id)
     if not t:
         raise HTTPException(404, "no such task")

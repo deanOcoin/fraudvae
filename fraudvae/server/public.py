@@ -30,6 +30,7 @@ BATCH_PER_MINUTE = int(os.environ.get("FRAUDVAE_BATCH_PER_MINUTE", "4"))
 BATCH_ROWS = int(os.environ.get("FRAUDVAE_BATCH_ROWS", "5000"))
 BATCH_CONCURRENCY = int(os.environ.get("FRAUDVAE_BATCH_CONCURRENCY", "2"))
 COMPARE_MAX = int(os.environ.get("FRAUDVAE_COMPARE_MAX", "6"))
+SCORE_CONCURRENCY = int(os.environ.get("FRAUDVAE_SCORE_CONCURRENCY", "4"))   # transactions scoring at once, all visitors together
 
 _buckets: dict[tuple[str, str], list[float]] = {}
 _lock = threading.Lock()
@@ -58,11 +59,16 @@ def take(kind: str, ip: str, per_minute: int, burst: int) -> float | None:
         tokens = min(float(burst), tokens + (now - last) * rate)
         if tokens >= 1.0:
             _buckets[(kind, ip)] = [tokens - 1.0, now]
-            # keep the table from growing with every address that ever visited
+            # keep the table from growing with every address that ever visited: addresses idle
+            # for an hour go first, and if a flood of fresh addresses is what filled it, the
+            # least recently seen go too (they lose nothing but a full bucket)
             if len(_buckets) > 50_000:
                 stale = [k for k, (t, l) in _buckets.items() if now - l > 3600]
                 for k in stale:
                     _buckets.pop(k, None)
+                if len(_buckets) > 50_000:
+                    for k in sorted(_buckets, key=lambda k: _buckets[k][1])[: len(_buckets) - 40_000]:
+                        _buckets.pop(k, None)
             return None
         _buckets[(kind, ip)] = [tokens, now]
         return (1.0 - tokens) / rate
@@ -111,4 +117,4 @@ def scrub_log_lines(lines: list[str]) -> list[str]:
 
 def limits() -> dict:
     return {"public": PUBLIC, "score_per_minute": SCORE_PER_MINUTE, "batch_rows": BATCH_ROWS,
-            "batch_per_minute": BATCH_PER_MINUTE, "compare_max": COMPARE_MAX}
+            "batch_per_minute": BATCH_PER_MINUTE, "compare_max": COMPARE_MAX, "score_concurrency": SCORE_CONCURRENCY}
