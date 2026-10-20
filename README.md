@@ -1,9 +1,11 @@
-# fraudvae
+# FinFraud
 
-Fraud screening for payment transactions, trained on a merged corpus of eleven
-public transaction datasets (~43M rows), with a web UI to score new
-transactions, browse the data, train locally, or push a training run to a
-rented GPU over ssh.
+Fraud screening for payment transactions: a variational autoencoder that learnt what
+normal payments look like, a boosted model that learnt what known fraud looks like,
+and a per-bank blend of the two, trained on a merged corpus of eleven public
+transaction datasets (~43M rows), with a web UI to score new transactions, browse
+the data, train locally, or push a training run to a rented GPU over ssh. The
+Python package and its command are called `fraudvae`.
 
 **Try it without installing anything:** [finfraud.dev](https://www.finfraud.dev)
 runs this repository in its public mode, with every generation of the model
