@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import threading
 import time
 from pathlib import Path
@@ -43,14 +44,18 @@ class IncompatibleRun(RuntimeError):
     pass
 
 
-# schema v5 only added fields (entity graph block, device block) and a run encodes its inputs
-# from its own checkpoint's feature list, so a v4 run still scores v5-era data, ignoring the
-# new fields. v3 and earlier changed existing fields and are out.
-MIN_COMPATIBLE_SCHEMA = 4
+# a run encodes its inputs from its own checkpoint's feature list (names, transforms,
+# category values), and looks its bank up in its own source list, so any earlier run scores
+# today's transactions with the fields it knows and nothing else: a v4 run ignores the
+# entity-graph and device blocks, a v3 run (no schema version recorded) also lacks the
+# customer-context block. They load as "legacy" runs - the receipt says what they could not
+# see - which is what the model timeline needs: the same transaction on every generation.
+MIN_COMPATIBLE_SCHEMA = 3
+LEGACY_SCHEMA = 4   # below this a run is served with a "legacy" note
 
 
 def compatible_schema(v) -> bool:
-    return v is not None and MIN_COMPATIBLE_SCHEMA <= int(v) <= schema.SCHEMA_VERSION
+    return (3 if v is None else int(v)) >= MIN_COMPATIBLE_SCHEMA and (3 if v is None else int(v)) <= schema.SCHEMA_VERSION
 
 
 def run_schema_version(run_dir: Path) -> int | None:
@@ -100,12 +105,20 @@ class ActiveModel:
         self.categorical = self.meta["categorical"]
         self.num_index = {f["name"]: i for i, f in enumerate(self.numeric)}
         self.cat_index = {c["name"]: i for i, c in enumerate(self.categorical)}
+        # the banks this run was trained with, in the order its source embedding knows them
+        # (index 0 is the generic context); a bank it never saw is scored as generic
+        self.sources = list(self.meta.get("sources") or schema.SOURCES)
+        self.source_index = {name: i + 1 for i, name in enumerate(self.sources)}
         self.n_samples = (self.cal or {}).get("n_samples", 8)
         self.score_type = (self.cal or {}).get("score_type", "raw")
         self.schema_version = run_schema_version(self.run_dir)
         if not compatible_schema(self.schema_version):
             raise IncompatibleRun(f"run {self.name} was trained on schema v{self.schema_version}, "
                                   f"this code is v{schema.SCHEMA_VERSION}; retrain (or check out the matching version)")
+        self.legacy = (self.schema_version or 3) < LEGACY_SCHEMA
+        self.schema_note = (f"trained on schema v{self.schema_version or 3}: scores with the {len(self.numeric)} numeric and "
+                            f"{len(self.categorical)} categorical fields it knows, and sees {len(self.sources)} banks") \
+            if (self.schema_version or 3) < schema.SCHEMA_VERSION else None
         n_feat = len(self.numeric) + len(self.categorical)
         self.scorer = Scorer(self.cal["baselines"], n_feat, blend=self.cal.get("blend")) if self.cal and "baselines" in self.cal else None
         try:
@@ -182,7 +195,7 @@ class ActiveModel:
                     cat[0, j] = int(v) if 0 <= int(v) < c["size"] else 0
                 else:
                     cat[0, j] = c["values"].index(str(v)) if str(v) in c["values"] else 0
-        src_idx = schema.SOURCE_INDEX.get(source, 0) if source else 0
+        src_idx = self.source_index.get(source, 0) if source else 0
         dev = self.device
         return (torch.from_numpy(num).to(dev), torch.from_numpy(mask).to(dev),
                 torch.from_numpy(cat).to(dev), torch.tensor([src_idx], dtype=torch.long, device=dev), src_idx)
@@ -338,7 +351,12 @@ class ActiveModel:
         r["norm"] = np.array([norm if norm is not None else raw], dtype=np.float32)
         ctx = source if src_idx else None
 
-        out = {"source": source if src_idx else "generic", "n_samples": self.n_samples, "fpr_target": fpr_target}
+        out = {"source": source if src_idx else "generic", "n_samples": self.n_samples, "fpr_target": fpr_target,
+               # which generation scored this, and what an older one could not see
+               "model": {"run": self.name, "schema_version": self.schema_version or 3, "legacy": self.legacy,
+                         "note": self.schema_note,
+                         "bank_known": bool(src_idx) or not source,
+                         "fields_used": int(mask.sum().item()) + int((cat > 0).sum().item())}}
 
         # -- novelty: the VAE alone ------------------------------------------------------
         nov = {"score": vae_score, "score_type": self.score_type, "score_raw": raw, "score_norm": norm, "kl": kl}
@@ -601,7 +619,7 @@ class ActiveModel:
                 lut = {name: i for i, name in enumerate(c["values"])}
                 cat[:, j] = col.astype(str).map(lut).fillna(0).astype(int).to_numpy()
         if source_col in df:
-            src = df[source_col].astype(str).map(lambda s: schema.SOURCE_INDEX.get(s, 0)).fillna(0).to_numpy().astype(np.int64)
+            src = df[source_col].astype(str).map(lambda s: self.source_index.get(s, 0)).fillna(0).to_numpy().astype(np.int64)
         else:
             src = np.zeros(n, dtype=np.int64)
         # v5 wide block for a batch csv: either a 'wide' column of json dicts (the samples file) or
@@ -679,7 +697,7 @@ class ActiveModel:
             out["local_prob"] = localp
         if self.scorer:
             out["novelty_norm"] = norm
-        inv = {v: k for k, v in schema.SOURCE_INDEX.items()}
+        inv = {v: k for k, v in self.source_index.items()}
 
         def _apply(block, scores, prefix):
             z = np.full(n, np.nan, dtype=np.float32)
@@ -727,6 +745,11 @@ def _percentile(quantiles: dict, value: float) -> float:
 # ---- registry -------------------------------------------------------------------------------
 
 _active: ActiveModel | None = None
+# v5: more than one generation loaded at once, so a transaction can be scored on each. the
+# default (active) model never gets evicted; the others go least-recently-used first
+_loaded: dict[str, ActiveModel] = {}
+_MAX_LOADED = int(os.environ.get("FRAUDVAE_MAX_LOADED", "8"))
+_lock = threading.Lock()
 
 
 def list_runs() -> list[dict]:
@@ -784,12 +807,39 @@ def pick_default_run() -> str | None:
 
 
 def load_run(name: str, device="cpu") -> ActiveModel:
+    """make a run the default model (the one /api/score uses when no run is named)"""
     global _active
+    _active = get_model(name, device=device)
+    return _active
+
+
+def get_model(name: str, device="cpu") -> ActiveModel:
+    """a loaded run by name, loading it on first use and evicting the least recently used
+    extra model past the cap; the default model is never evicted"""
+    with _lock:
+        m = _loaded.get(name)
+        if m is not None:
+            m.last_used = time.time()
+            return m
     d = RUNS_DIR / name
     if not (d / "model.pt").exists():
         raise FileNotFoundError(f"run {name} has no model.pt")
-    _active = ActiveModel(d, device=device)
-    return _active
+    m = ActiveModel(d, device=device)
+    m.last_used = time.time()
+    with _lock:
+        _loaded[name] = m
+        extras = [n for n in _loaded if _active is None or n != _active.name]
+        while len(_loaded) > _MAX_LOADED and extras:
+            victim = min(extras, key=lambda n: getattr(_loaded[n], "last_used", 0.0))
+            if _active is not None and victim == _active.name:
+                break
+            _loaded.pop(victim, None)
+            extras.remove(victim)
+    return m
+
+
+def loaded_models() -> list[str]:
+    return list(_loaded)
 
 
 def active() -> ActiveModel | None:
