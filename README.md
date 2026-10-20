@@ -5,6 +5,15 @@ public transaction datasets (~43M rows), with a web UI to score new
 transactions, browse the data, train locally, or push a training run to a
 rented GPU over ssh.
 
+**Try it without installing anything:** the demonstration site runs this
+repository in its public mode, with every generation of the model loaded -
+score a transaction on any of them, compare them side by side, read the story
+of how they were built. **Every pretrained generation is on the
+[Releases](https://github.com/deanOcoin/fraudvae/releases) page**, and
+`fraudvae models pull v5-h200-h` drops the shipped one into `runs/` so the app
+below scores with it in minutes; training it yourself is optional and
+documented, not required.
+
 Two models look at every transaction and a small per-bank blender combines
 them - and, since v5, the signals of five more modules - into one probability:
 
@@ -40,16 +49,29 @@ The other tabs: [data explorer](docs/img/data.png), [model & runs](docs/img/mode
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
+# score with the pretrained generations (no data needed; the example rows ship with the repo)
+fraudvae models pull v5-h200-h     # the shipped generation, ~360 MB; `--all` for every one on the timeline
+fraudvae serve                     # http://127.0.0.1:8765
+
+# or train your own
 fraudvae fetch                 # clones the github hosted sources (fdh, capone, tabformer)
 #   kaggle ones: see scripts/kaggle_manual_download.md, drop the zips in data/raw/<key>/
 fraudvae build                 # raw -> data/processed/<source>.parquet  (unified schema)
 fraudvae prepare --max-rows-per-source 1500000     # parquet -> model arrays, train capped per source
 fraudvae train --config cpu_small                   # VAE + booster + calibration + eval, ~1h on a laptop cpu
-fraudvae serve                 # http://127.0.0.1:8765
 ```
 
 `make data build prepare train serve` does the same. `make test` runs the suite
 (synthetic data, a 2 epoch model, the API, an in-process ssh server).
+
+A faster machine gives you the same model sooner, not a better one: the
+configuration that ships (`gpu_full`) is fixed, and a CPU gets there in days
+where the rented H200 took three hours. `cpu_small` is a different, smaller
+configuration (0.6M parameters on a capped corpus) that a laptop finishes in
+half an hour - within 0.003 mean AUROC of the full run for v3 and v4, and
+clearly below it for v5, whose history encoder needs the full corpus's long
+customer sequences. `docs/TRAINING_NOTES.md` has every run's hardware and time;
+the site's story page has the same as a table.
 
 Python 3.10+, PyTorch 2.1+, LightGBM 4+. CPU is fine for the capped set, MPS
 works on Apple silicon, CUDA for the full corpus.
@@ -76,6 +98,13 @@ still starts, novelty-only, and the sidebar tells you why.
 | amlworld | IBM AMLworld synthetic inter-bank transfers (HI-Small), label = laundering | 5.08M | 0.10% | kaggle |
 | baf | Bank Account Fraud (Feedzai) account applications with device telemetry (v5) | 1.0M | 1.10% | kaggle |
 | fraudecom | e-commerce first purchases with shared device ids (v5) | 151k | 9.4% | kaggle |
+
+No dataset is redistributed here: each keeps its own licence (`docs/DATA_SOURCES.md`
+has the links, `fraudvae fetch` downloads what it can and says what needs a Kaggle
+login). The six sources whose licences allow it ship a few hundred labelled rows from
+the held-out test split in `data/examples/` (`fraudvae examples` regenerates them from
+a build), which is what the score tab's example picker uses on a machine without the
+data - the demonstration site included.
 
 Every source is mapped onto one schema (`fraudvae/data/schema.py`, v5): 95
 numeric fields (amount, hour, the customer's history in the last hour / day /
@@ -164,8 +193,9 @@ arrive within a week, and the same model scored as one whose labels take a month
 (the one-week fraud-history block blanked - `label_delay_days` on the API, the
 "labels arrive within" control in the UI). The last two columns are
 `gpu_full-4090-v4`, the previous release on the same nine sources. `runs/` is not
-in git - train your own with the commands above or pull a run back from a GPU box
-through the UI.
+in git: `fraudvae models pull --all` fetches every generation on this timeline from
+the Releases page (`fraudvae/pretrained.json` is the manifest it verifies against),
+or train your own with the commands above.
 
 | source | VAE | booster | seq | local | device | graph | **blend** | r@1% FPR | 30-day labels: blend / r@1% | v4 blend | v4 r@1% |
 |---|---|---|---|---|---|---|---|---|---|---|---|
@@ -211,6 +241,31 @@ validation fraud rows, why a 30-day-old label can never catch a terminal that is
 compromised for 28, and the two things that did not help (the transformer's
 summary as booster input, a longer VAE).
 
+## The generations
+
+Six trained generations are kept, so the model's progress is something you can score
+a transaction on rather than read about: the score tab's **Model generation** picker
+takes any of them and **Compare across generations** scores one transaction on all
+six. The UI's story tab (and `docs/TRAINING_NOTES.md`) tells what changed at each step
+and what did not work; the model tab's timeline shows each one's hardware, training
+time and numbers.
+
+| generation | schema | trained on | time | mean AUROC, 9 shared banks |
+|---|---|---|---|---|
+| `cpu_small-8src` | v3 | 2 CPU cores, 8 sources capped at 1.5M rows | 33 min | 0.829 (its 8) |
+| `gpu_full-4090` | v3 | 1× RTX 4090, 8 sources, every row | 19 min | 0.833 (its 8) |
+| `gpu_full-4090-v4` | v4 | 1× RTX 4090, 9 sources, every row | 18 min + 8 min post | 0.916 |
+| `v5-h200-e` | v5 | 1× H200 NVL, 11 sources, every row | 2.9 h + 40 min post | 0.936 |
+| `v5-h200-f` | v5 | e's VAE, booster side refit (one-week labels) | + 30 min post | 0.961 |
+| `v5-h200-h` | v5 | e's VAE, booster side refit (recent-fraud windows, latency dropout) | + 41 min post | **0.963** |
+
+## Hosting it
+
+`docs/DEPLOY.md`: `FRAUDVAE_PUBLIC=1` turns the app into the demonstration site -
+no training, no data build, no remote routes, no visitor state, rate limits per
+address - and `deploy/` has the install script, the systemd unit and the nginx
+configuration the site runs on.
+
 ## Remote training
 
 The full corpus is ~29M legitimate rows per epoch; a laptop does it in days,
@@ -236,7 +291,9 @@ in one command), `scripts/bootstrap_remote.sh`. See `docs/REMOTE_TRAINING.md`.
 ```
 fraudvae/
   data/        registry (sources, licenses), schema, taxonomy, velocity features,
-               entities.py (graph block), adapters/<source>.py, fetch / build / prepare
+               entities.py (graph block), adapters/<source>.py, fetch / build / prepare,
+               examples.py (the redistributable example rows)
+  models.py    pretrained bundles: pack / pull against pretrained.json (github releases)
   model/       vae.py (model + history encoder), scoring.py, booster.py,
                seqhead.py (sequence head), heads.py (device head), dataset.py (+ the sequence index)
   graph/       entity-graph snapshots, GraphSAGE, per-source training, scorer, public benchmarks
@@ -245,9 +302,12 @@ fraudvae/
   train.py  calibrate.py  evaluate.py  config.py
   remote/      keys, ssh (paramiko), provision (incl. raw-data push + box-side pipeline),
                jobs, advisor, relay (a git repo as the laptop-off control channel)
-  server/      fastapi app + api modules, inference (active model + fusion), entity_store, payloads
-  web/         the ui: index.html, css/, js/, explain.html, vendored libs
+  server/      fastapi app + api modules, inference (the loaded generations + fusion), timeline,
+               public (the demonstration-site mode), entity_store, payloads
+  web/         the ui: index.html, css/, js/, explain.html, story.html + story_plain.html, vendored libs
 configs/       base, cpu_small, gpu_full, smoke
+data/examples/ labelled example rows for the six sources whose licences allow it
+deploy/        install.sh, update.sh, the systemd unit, nginx, env.example, relay_bootstrap.sh
 tests/         pytest, no real data needed
 docs/
 ```
