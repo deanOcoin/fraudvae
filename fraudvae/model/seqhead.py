@@ -21,6 +21,7 @@ import torch.nn as nn
 
 from .dataset import PreparedSet
 from .scoring import auroc, batches, history_window
+from .loading import load_checkpoint
 
 
 class SeqHead(nn.Module):
@@ -44,7 +45,7 @@ def load_seqhead(run_dir: Path, device="cpu") -> SeqHead | None:
     p = Path(run_dir) / "seqhead.pt"
     if not p.exists():
         return None
-    ck = torch.load(p, map_location=device, weights_only=False)
+    ck = load_checkpoint(p, device)
     head = SeqHead(ck["hdim"], ck["emb_dim"], ck["hidden"])
     head.load_state_dict(ck["state_dict"])
     head.to(device).eval()

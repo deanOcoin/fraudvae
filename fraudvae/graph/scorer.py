@@ -13,6 +13,7 @@ from ..data import schema
 from .build import KINDS
 from .model import EdgeHead, gather_slots
 from .train import NodeIndex
+from ..model.loading import load_checkpoint
 
 
 class _SourceGraph:
@@ -53,7 +54,7 @@ class GraphScorer:
         self.device = device
         self.sources: dict[int, _SourceGraph] = {}
         for p in sorted((self.run_dir / "graph").glob("*.pt")):
-            state = torch.load(p, map_location="cpu", weights_only=False)
+            state = load_checkpoint(p, "cpu")
             key = state["key"]
             if key in schema.SOURCE_INDEX:
                 self.sources[schema.SOURCE_INDEX[key]] = _SourceGraph(state, device)

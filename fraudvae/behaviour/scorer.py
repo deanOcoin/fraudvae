@@ -15,10 +15,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-import torch
 
 from .features import keystroke_features, motion_features, mouse_features, touch_features
 from .model import Verifier
+from ..model.loading import load_checkpoint
 
 MIN_WINDOWS = 1
 
@@ -78,7 +78,7 @@ class BehaviourScorer:
         self.verifiers: dict[str, Verifier] = {}
         self.info: dict[str, dict] = {}
         for p in sorted((Path(run_dir) / "behaviour").glob("*.pt")):
-            ck = torch.load(p, map_location=device, weights_only=False)
+            ck = load_checkpoint(p, device)
             cfg = ck["config"]
             v = Verifier(cfg["modality"], cfg["d_in"], cfg["emb"], cfg["hidden"], cfg["n_users"], scale=cfg.get("scale", 16.0))
             v.load_state_dict(ck["state_dict"])

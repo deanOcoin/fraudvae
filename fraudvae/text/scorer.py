@@ -5,10 +5,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import torch
-
 from .model import TextHead
 from .train import TEXT_SETS
+from ..model.loading import load_checkpoint
 
 # payload key -> head name. "memo" and "note" are free text: the scam-text head reads them
 PAYLOAD_ROUTES = {"url": "malurl", "description": "fakejob", "memo": "fakejob", "note": "fakejob", "message": "fakejob",
@@ -20,7 +19,7 @@ class TextScorer:
         self.heads: dict[str, TextHead] = {}
         self.info: dict[str, dict] = {}
         for p in sorted((Path(run_dir) / "text").glob("*.pt")):
-            ck = torch.load(p, map_location=device, weights_only=False)
+            ck = load_checkpoint(p, device)
             cfg = ck["config"]
             head = TextHead(cfg["name"], cfg["buckets"], cfg["dim"], cfg["hidden"])
             head.load_state_dict({k: (v.float() if v.is_floating_point() else v) for k, v in ck["state_dict"].items()})
