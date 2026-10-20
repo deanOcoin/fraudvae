@@ -1,0 +1,119 @@
+<h1>The story, in plain language</h1>
+<p class="lede">This is the same account as <a href="#story-full" class="to-full">the full version</a>, written for someone who does not work with machine learning. A handful of terms are unavoidable; each is explained the first time it is used, and there is a short glossary at the end.</p>
+<p class="dim">By Dean Mostafa. Everything on this site - the code and the trained models - is in the public repository at <a href="https://github.com/deanOcoin/fraudvae" target="_blank" rel="noopener">github.com/deanOcoin/fraudvae</a>. This site is that software running in a locked-down mode that only scores transactions.</p>
+
+<ol class="toc">
+  <li><a href="#p-what">What you are looking at</a></li>
+  <li><a href="#p-idea">The idea</a></li>
+  <li><a href="#p-data">The data</a></li>
+  <li><a href="#p-steps">How it got better, step by step</a></li>
+  <li><a href="#p-fail">Things that did not work</a></li>
+  <li><a href="#p-labels">Why "when did you find out" matters</a></li>
+  <li><a href="#p-good">How good is it?</a></li>
+  <li><a href="#p-machines">The computers</a></li>
+  <li><a href="#p-yourself">Doing it yourself</a></li>
+  <li><a href="#p-try">Trying it</a></li>
+  <li><a href="#p-not">What it is not</a></li>
+  <li><a href="#p-glossary">Glossary</a></li>
+</ol>
+
+<h2 id="p-what">1. What you are looking at</h2>
+<p>A program that looks at one payment - an amount, a time of day, how it was paid, where, by whom - and says how likely it is to be fraud, with its reasons. It was built in six stages, and all six are here: on the <b>Score</b> tab you can pick which stage judges a transaction, or tick <b>Compare across generations</b> to see all six judge the same payment side by side. The newest one is marked as such, and it is the best one; the older ones are kept so you can see what changed.</p>
+<p>The site does not learn from anything you send and does not keep it. The number of transactions one visitor can score per minute is limited, so nobody can hog the server. Training new versions, which needs real computing power, happens in the repository on your own machine, not here.</p>
+
+<h2 id="p-idea">2. The idea</h2>
+<p>There are two ways to spot a fraudulent payment, and they catch different things.</p>
+<p>The first is to <b>learn from past fraud</b>. If you have a pile of payments that were later confirmed as fraud, a program can learn what they had in common - odd hours, a card used far from home, a flurry of small purchases - and look for the same pattern again. This is the <em>supervised</em> approach, because somebody supervised it by labelling the examples. It is very good at catching fraud that resembles fraud already seen, and it has no idea what to do with a kind it has never seen.</p>
+<p>The second is to <b>learn what normal looks like</b> and raise a hand at anything that does not fit. The program here does this with a <em>variational autoencoder</em>, a type of neural network that learns to summarise a payment in a few numbers and rebuild it from the summary. When it rebuilds a payment badly, the payment did not fit what it knows - it is <em>novel</em> - and the program can say exactly which parts did not fit (the amount, the hour, the merchant). It never sees a single fraud label while learning, so it is not biased towards the fraud of the past. Since the fifth version it also reads the customer's own previous payments first, so "unusual" means unusual <em>for this person</em>, not unusual in general.</p>
+<p>The program keeps both, plus a small third piece per bank that decides how much to trust each - the <em>blend</em>. That blended number is the probability you see, and every score comes with a receipt listing what pushed it up or down.</p>
+
+<h2 id="p-data">3. The data</h2>
+<p>Banks do not publish their transactions, so the model was trained on eleven public datasets: two of them real, anonymised bank data (a European card issuer's two days from 2013; an e-commerce payment processor's six months), the rest realistic simulations built by researchers and companies for exactly this purpose. Together they are 42.8 million payments, of which about 133 thousand are labelled fraud - a third of one percent, which is roughly the real-world rate. Each dataset was translated into one common form (the same hundred-odd fields for every source, with "unknown" allowed where a dataset does not have a field), and each is treated as a separate "bank" the model knows by name. For each bank, the model learnt from the oldest 70% of its payments, tuned itself on the next 10%, and every number on this page is measured on the newest 20%, which it never saw during training - the fairest test, because fraud changes over time.</p>
+<p>The datasets themselves are not distributed here; each has its own licence. Six of them permit sharing small samples, and a few hundred payments from each of those six are the examples you can pick on the Score tab. For the other five, the <b>Data</b> tab says where to download them, and the repository has a command that fetches them for you.</p>
+
+<h2 id="p-steps">4. How it got better, step by step</h2>
+<p>The table is live - it lists the versions actually loaded on this server, with how long each took to train and on what. The text below says what each step changed. The main yardstick is <b>AUROC</b>, a score between 0.5 (coin flip) and 1.0 (perfect) that measures how well the model ranks fraud above legitimate payments; the "9 shared banks" column uses the same nine datasets for every version so the numbers are comparable.</p>
+<div id="story-timeline"><p class="dim">Loading the timeline…</p></div>
+
+<h3>Version 3, on a laptop</h3>
+<p>The first complete model: the "what does normal look like" network alone, trained in half an hour on two processor cores with no graphics card, on a trimmed-down 3.5 million payments. Average score 0.83. It did well on the simulated datasets, where fraud is structurally odd, and badly on the two where fraud looks like an ordinary purchase (0.52 on one of them - a coin flip). That is the known weakness of looking for "unusual": most fraud is designed to look usual.</p>
+
+<h3>Version 3, on all the data</h3>
+<p>The same model, three times bigger, trained on every row - seven times the data - on a rented gaming-class graphics card in 18 minutes. Average score 0.833 instead of 0.829. Seven times the data bought almost nothing, and that was the lesson: the model was not short of examples, it was short of <em>information</em>. Nothing in a single payment's amount and hour tells you it is fraud; you need to know whether it is strange for this customer, and you need the labels.</p>
+
+<h3>Version 4: labels, context and the blend</h3>
+<p>Three additions. First, <b>context</b>: for every payment, how many the customer made in the last hour and day, how this amount compares to their usual amounts, how long they have been a customer, whether this is their first time at this merchant - all computed only from what was known at that moment. Second, the <b>supervised model</b> trained on the labelled fraud, which uses that context. Third, the <b>blend</b> that weighs the two models per bank. The average went from 0.83 to 0.92, and on the real e-commerce data the share of fraud caught at a fixed alert budget went from almost nothing to over a third. The "normal" model itself did not improve at all - the gain came entirely from the labels and the context.</p>
+
+<h3>Version 5: history, entities, extra modules</h3>
+<p>The largest rebuild, done on a rented data-centre GPU in about three hours of training plus forty minutes of follow-up work. The "normal" model now reads each customer's previous 32 payments before judging the next one. The data gained a block of facts about the <em>things around</em> a payment - the merchant or counterparty, the device, the e-mail domain, the address, the card: how busy each has been lately, how many different customers it has been seen with, and how much confirmed fraud it has had so far. Two more datasets joined, and five smaller specialist models were added (one per bank, one reading the customer's sequence, one for device details, one for the network of connections between customers and merchants, and ones for text and for typing/mouse behaviour where such data exists). On the nine datasets shared with version 4 the average rose from 0.916 to 0.936, and the hardest real-looking datasets improved the most - because "how much fraud has this merchant had" is exactly the information that was missing.</p>
+
+<h3>Version 5, second refit: fraud labels a week old</h3>
+<p>One dataset simulates card terminals that are compromised for four weeks at a time. The model counted a merchant's confirmed fraud only once labels were at least 30 days old - by which time the compromise was over. Counting labels from a week ago instead (the same assumption the dataset's authors use) took that dataset from 0.69 to 0.89 and lifted several others. Nothing about the "normal" model changed; only the supervised side was refitted, half an hour on the same machine. Whether "a week" is realistic depends on how fast a bank confirms fraud, which is why the next step made it a setting.</p>
+
+<h3>Version 5, third refit: what ships</h3>
+<p>Two refinements: look at a merchant's fraud over the <em>last</em> 7 and 30 days rather than its whole lifetime, so a merchant compromised this month is not hidden behind years of clean history; and train the supervised model to cope whether or not the fresh labels are available, so a bank whose confirmations take a month gets honest scores rather than nonsense. The Score tab's "labels arrive within" control is that setting. Final numbers: <b>0.963 average over the nine shared datasets</b> (version 4: 0.916), 0.928 over all eleven, and 0.969 for a payment from a bank the model has never seen. For a bank whose labels take a month, the same model scores 0.935 - still above version 4.</p>
+
+<h2 id="p-fail">5. Things that did not work</h2>
+<p>About as much was learnt from the failures, and they are recorded in the repository's training notes. In brief:</p>
+<ul>
+  <li><b>More data for the "normal" model</b> did nothing, three times over. Its limit was the information in the fields, not the number of rows.</li>
+  <li><b>Letting the blend see too much.</b> An early version of the blend was given eighty detailed "surprise" measurements per payment. It looked wonderful on the tuning data and fell apart on the test data, because one of those measurements behaved completely differently in the newest months and dragged the whole decision with it. The blend now sees only a few well-behaved numbers; the detail stays on the receipt as explanation.</li>
+  <li><b>Letting one big dataset define "normal" for everybody.</b> A weighting rule meant to keep datasets in proportion gave the largest one 85 times the vote of the smallest. Capping it fixed the "unknown bank" scores at once.</li>
+  <li><b>Facts that grow with the calendar.</b> "How many customers has this merchant ever had" sounds useful, but on a dataset spanning thirty years it mostly tells the model what decade it is in, and the newest months were a decade it had never seen. Replacing lifetime counts with last-30-days counts fixed a sharp drop on that dataset.</li>
+  <li><b>A faster but less precise arithmetic mode</b> on the GPU made the new history-reading model blow up mid-training; full precision was 10% slower and worked.</li>
+  <li><b>Two whole training runs</b> stopped at the wrong moment because they watched a noisy quality number; the third watched the right one.</li>
+  <li><b>Memorising a tiny bank.</b> One dataset has only 21 fraud cases in the blend's tuning half, and the blend memorised them. A standard statistical remedy (pulling banks with little evidence towards the shared average) fixed it.</li>
+  <li><b>Two late ideas</b> - feeding the history model's summary to the supervised model, and training a bigger history model for longer - were tried and measured. Neither changed the result, so neither ships; the code and the numbers are kept so nobody has to try them again.</li>
+</ul>
+
+<h2 id="p-labels">6. Why "when did you find out" matters</h2>
+<p>When a fraudulent payment happens, nobody knows yet. The cardholder notices weeks later; the bank confirms it later still. So a feature like "how much fraud has this merchant had" has to be computed from what was <em>known at the time</em>, or the model is cheating - it would be using knowledge from the future and its accuracy would be a fiction. The model here assumes labels take 30 days in one block of features and 7 days in another, and was trained to work either way. On the Score tab, "labels arrive within" tells it which world it is in. The honest numbers to quote are therefore two: 0.963 if a bank confirms fraud within a week, 0.935 if it takes a month.</p>
+
+<h2 id="p-good">7. How good is it?</h2>
+<p>Two numbers describe a fraud model. <b>AUROC</b>, explained above, is the ranking quality; the shipped version averages 0.963 on the nine shared datasets. The other is more practical: if a fraud team can afford to review 1% of legitimate payments as false alarms, <b>what share of the fraud gets caught</b>? For the shipped version: 86% on the large simulated card dataset, 89% on the real European card data, 63% on the real e-commerce data, 78% on the terminal-compromise simulator, 21% on the synthetic dataset whose fraud looks like ordinary shopping, and 70% for a payment from an unknown bank. The three simulators whose fraud follows fixed rules are caught almost completely, which says nothing about the real world.</p>
+<p>Compared with published results on the same datasets, the model is at or above them wherever a fair comparison exists. Compared with what a bank actually runs, it is a demonstration: a real system has signals these public datasets do not carry (device fingerprints, data shared between banks, account history), is retrained continuously, answers in a few milliseconds at thousands of payments a second, and sits inside a whole apparatus of review and regulation. The <em>method</em> here is the method the industry uses; the realism of the data is where the gap is.</p>
+
+<h2 id="p-machines">8. The computers</h2>
+<table class="metric-table">
+  <thead><tr><th>computer</th><th>what it did</th><th>what it was</th></tr></thead>
+  <tbody>
+    <tr><td>a small cloud sandbox</td><td>All the programming and testing; the two laptop-sized training runs (about 33 minutes each)</td><td>2 processor cores, under 8 GB of memory, no graphics card</td></tr>
+    <tr><td>a laptop</td><td>Running the app, renting and steering the big machines, preparing the data; measuring how fast a finished model scores (about a fifth of a second per payment)</td><td>An Apple-silicon MacBook (<span class="laptop-spec">details to be confirmed</span>)</td></tr>
+    <tr><td>a rented gaming-class GPU</td><td>Version 3 on all the data (18 minutes) and version 4 (18 minutes plus 8 of follow-up)</td><td>One NVIDIA GeForce RTX 4090 (24 GB), 16 processor cores, rented by the hour</td></tr>
+    <tr><td>"the box": a rented data-centre GPU</td><td>Everything in version 5: preparing all eleven datasets (7 minutes), the three-hour training run, the two half-hour refits, the specialist models, the experiments and the dead ends - all steered remotely with the laptop switched off</td><td>One NVIDIA H200 (141 GB), 64 processor cores, 188 GB of memory, rented by the hour</td></tr>
+    <tr><td>this server</td><td>Hosting the demonstration: scoring only</td><td>A virtual server in Iceland: 6 cores, 16 GB of memory, no graphics card</td></tr>
+  </tbody>
+</table>
+
+<h2 id="p-yourself">9. Doing it yourself</h2>
+<p>Everything on this site can be reproduced from the public downloads with the repository's instructions. Two things worth knowing before you spend money on a machine:</p>
+<div class="callout"><p><b>A faster computer gets you the same model sooner - not a better model.</b> The recipe that produced the shipped version is fixed (same data, same model size, same number of passes over the data). Run it on a slower machine and it takes longer and ends in the same place. What <em>does</em> change the result is choosing the smaller recipe made for laptops: a model a quarter of the size trained on a trimmed-down corpus so that it finishes in half an hour. For versions 3 and 4 that smaller recipe was almost as good (0.003 lower on average). For version 5 it would be noticeably worse, because the history-reading part needs the long customer histories that only the full data has; it was never trained to completion that way.</p></div>
+<p>Rough times: the laptop-sized recipe trains in about 35 minutes on an ordinary computer. The full version-4 recipe takes about two days on a laptop and 18 minutes on a rented RTX 4090. The full version-5 recipe took three hours on the H200 and would take days on a laptop and the better part of a day on a 4090. The GPU rental for the version that ships cost about $16; the whole version-5 effort including every dead end, about $105.</p>
+<p>You do not have to train anything. Each version is published ready-made on the repository's Releases page; one command downloads it and the same app you are looking at runs on your own machine, with training unlocked. The repository's README has the exact commands.</p>
+
+<h2 id="p-try">10. Trying it</h2>
+<ul>
+  <li><b>Pick an example.</b> On the Score tab, the example picker offers real held-out payments from the six datasets that allow it, fraud or legitimate. The receipt shows the model's verdict and the true answer next to it - caught, missed, false alarm or correctly passed - and the same row can be scored by every version.</li>
+  <li><b>Type one in.</b> Fill in whatever you know and leave the rest blank; blanks are "unknown", not zero, and the model was trained to cope. Choose which bank's idea of normal to use, or <em>generic</em> for none of them.</li>
+  <li><b>Upload a spreadsheet.</b> A CSV with any of the known columns is scored a few thousand rows at a time here; on your own machine there is no limit, and if your file has a fraud column you get the accuracy numbers for your data.</li>
+</ul>
+<p>Nothing you send is stored.</p>
+
+<h2 id="p-not">11. What it is not</h2>
+<p>Not a product and not advice. It was trained on public, mostly simulated data, and it judges a real payment by its resemblance to the datasets it knows. It shows how such a system is built and how much each idea is worth; it should not decide anything about a real transaction.</p>
+
+<h2 id="p-glossary">12. Glossary</h2>
+<table class="metric-table">
+  <tbody>
+    <tr><td><b>AUROC</b></td><td>A number from 0.5 to 1.0: the chance that a randomly chosen fraud is scored higher than a randomly chosen legitimate payment. 0.5 is guessing, 1.0 is perfect.</td></tr>
+    <tr><td><b>Recall at 1% false positives</b></td><td>If the model is allowed to wrongly flag 1% of legitimate payments, this is the share of the fraud it catches at that setting.</td></tr>
+    <tr><td><b>Supervised model / booster</b></td><td>A model that learnt from labelled examples. Here it is a "gradient-boosted" collection of decision trees, a standard and very strong method for tabular data.</td></tr>
+    <tr><td><b>Variational autoencoder (VAE)</b></td><td>A neural network that learns to compress and rebuild data. Things it rebuilds badly are things unlike what it learnt from - a way to measure "unusual" without any labels.</td></tr>
+    <tr><td><b>Blend</b></td><td>The small final model that weighs the others' opinions, with a separate weighting for each bank.</td></tr>
+    <tr><td><b>Generic</b></td><td>The model's mode for a payment from a bank it was never trained on: it uses only what the eleven datasets have in common.</td></tr>
+    <tr><td><b>Label</b></td><td>The recorded truth: was this payment fraud or not. Labels arrive late in real life, which is the subject of section 6.</td></tr>
+    <tr><td><b>Epoch</b></td><td>One full pass over the training data. The shipped version made 30.</td></tr>
+    <tr><td><b>GPU</b></td><td>A graphics card; the kind of processor that makes training neural networks fast. The H200 is a data-centre one, the RTX 4090 a high-end consumer one.</td></tr>
+    <tr><td><b>Generation / version</b></td><td>One trained model you can pick on the Score tab. "v3", "v4", "v5" refer to the three designs of the data and model; the three v5 entries share one trained network and differ in the supervised side.</td></tr>
+  </tbody>
+</table>
