@@ -31,8 +31,11 @@ chmod 600 /root/.ssh/config
 if [ ! -d "$DIR/.git" ]; then
   git clone -q "git@github-fraudvae-relay:$REPO.git" "$DIR"
 fi
-AGENT="$(dirname "$(readlink -f "$0")")/../scripts/relay_agent.sh"
-[ -f "$AGENT" ] || AGENT="$DIR/relay_agent.sh"
+HERE="$(dirname "$(readlink -f "$0")")"
+AGENT="$HERE/../scripts/relay_agent.sh"            # run from a checkout
+[ -f "$AGENT" ] || AGENT="$HERE/relay_agent.sh"     # or from a folder holding just these files
+[ -f "$AGENT" ] || AGENT="$DIR/relay_agent.sh"      # or from the relay repository itself
+[ -f "$AGENT" ] || { echo "relay_agent.sh not found next to this script"; exit 1; }
 install -m 755 "$AGENT" /usr/local/bin/fraudvae-relay-agent
 cat > /etc/systemd/system/fraudvae-relay.service <<EOF
 [Unit]
