@@ -1,0 +1,35 @@
+[Unit]
+Description=fraudvae public demonstration (scoring only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=fraudvae
+Group=fraudvae
+WorkingDirectory=/srv/fraudvae/app
+EnvironmentFile=/etc/fraudvae/env
+ExecStart=/srv/fraudvae/app/.venv/bin/python -m uvicorn fraudvae.server.app:app --host ${FRAUDVAE_HOST} --port ${FRAUDVAE_PORT} --workers 1 --timeout-keep-alive 15 --proxy-headers --forwarded-allow-ips 127.0.0.1
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+# six generations resident: ~7 GB; the box has 16
+MemoryMax=12G
+MemoryHigh=11G
+Nice=5
+
+# the app writes only its own home (server log) under /srv/fraudvae; everything else read-only
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/fraudvae/home
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+# no outbound connections are needed once the bundles are pulled
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target
