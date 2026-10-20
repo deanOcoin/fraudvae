@@ -118,6 +118,54 @@ def fetch_source(key: str, raw_dir: Path = RAW_DIR, quiet=False) -> bool:
     return ok
 
 
+def check_links(keys=None, timeout=20) -> list[tuple[str, str, str]]:
+    """does every recorded location still answer? (page url, git repository, direct download
+    urls, kaggle listing). Returns (source, url, status) rows and prints them; the point is
+    to notice a moved dataset before a user does"""
+    import subprocess as sp
+    import urllib.error
+
+    rows = []
+
+    def head(url):
+        req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "fraudvae-fetch-check"})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return f"ok {r.status}"
+        except urllib.error.HTTPError as e:
+            if e.code in (403, 405):     # kaggle answers HEAD with 403/405 for everything; try a GET
+                try:
+                    with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "fraudvae-fetch-check"}), timeout=timeout) as r:
+                        return f"ok {r.status}"
+                except urllib.error.HTTPError as e2:
+                    return f"HTTP {e2.code}"
+                except Exception as e2:  # noqa: BLE001
+                    return f"error {type(e2).__name__}"
+            return f"HTTP {e.code}"
+        except Exception as e:  # noqa: BLE001
+            return f"error {type(e).__name__}: {e}"
+
+    for key in keys or ORDER:
+        src = SOURCES[key]
+        rows.append((key, src.url, head(src.url)))
+        if src.git_url:
+            r = sp.run(["git", "ls-remote", "--exit-code", "-h", src.git_url], capture_output=True, text=True, timeout=timeout * 3)
+            rows.append((key, src.git_url + " (git)", "ok" if r.returncode == 0 else f"git exit {r.returncode}"))
+        for _, url in src.lfs_urls:
+            rows.append((key, url, head(url)))
+        if src.kaggle_ref:
+            kind, slug = src.kaggle_ref.split("/", 1)
+            kurl = f"https://www.kaggle.com/{kind}/{slug}"
+            if kurl != src.url:
+                rows.append((key, kurl, head(kurl)))
+    width = max(len(u) for _, u, _ in rows)
+    for key, url, status in rows:
+        print(f"{key:10} {url:<{width}}  {status}")
+    bad = [r for r in rows if not r[2].startswith("ok")]
+    print(f"\n{len(rows) - len(bad)}/{len(rows)} locations answer" + (f"; check: {', '.join(sorted({r[0] for r in bad}))}" if bad else ""))
+    return rows
+
+
 def write_lock(raw_dir: Path = RAW_DIR, keys=None):
     keys = keys or ORDER
     lock = {"raw_dir": str(raw_dir), "generated": time.strftime("%Y-%m-%dT%H:%M:%S"), "sources": {}}
@@ -147,7 +195,11 @@ def main(argv=None):
     ap.add_argument("--source", action="append", help="limit to these sources (repeatable)")
     ap.add_argument("--raw-dir", default=str(RAW_DIR))
     ap.add_argument("--no-lock", action="store_true", help="skip hashing files into manifest.lock.json")
+    ap.add_argument("--check", action="store_true", help="only check that every recorded download location still answers")
     args = ap.parse_args(argv)
+    if args.check:
+        bad = [r for r in check_links(args.source) if not r[2].startswith("ok")]
+        return 0 if not bad else 2
     ensure_dirs()
     raw_dir = Path(args.raw_dir)
     keys = args.source or ORDER
