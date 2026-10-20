@@ -1,6 +1,6 @@
 // tiny fetch wrapper. every api error becomes an Error with the server's detail.
 
-export async function api(path, opts = {}) {
+export async function api(path, opts = {}, retried = false) {
   const init = { headers: {}, ...opts };
   if (init.body && !(init.body instanceof FormData)) {
     init.headers["Content-Type"] = "application/json";
@@ -8,6 +8,12 @@ export async function api(path, opts = {}) {
   }
   const res = await fetch(path, init);
   if (!res.ok) {
+    // the public site answers "busy" (503) or "too fast" (429) with a Retry-After: wait that long, once
+    const wait = Number(res.headers.get("Retry-After"));
+    if ((res.status === 503 || res.status === 429) && wait > 0 && wait <= 10 && !retried) {
+      await new Promise((r) => setTimeout(r, wait * 1000));
+      return api(path, opts, true);
+    }
     let detail = res.statusText;
     try { detail = (await res.json()).detail || detail; } catch (_) { /* not json */ }
     throw new Error(`${res.status}: ${detail}`);
