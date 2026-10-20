@@ -31,9 +31,10 @@ of that before the server starts:
 
 Three layers, from the outside in:
 
-1. **nginx** rate-limits per address (90 scores a minute, 6 batch uploads, 300 other API
-   calls, 20 concurrent connections), caps a request body at 6 MB, and times out slow
-   clients.
+1. **nginx** rate-limits per address (90 scores a minute, 6 batch uploads, 30 of the large
+   answers such as a run's latent map, 300 other API calls, 20 concurrent connections), caps
+   a request body at 6 MB, times out slow clients, and keeps the read-only answers in a cache
+   for ten minutes so repeated requests for them never reach python.
 2. **The app's own buckets** are finer: 60 scores a minute with a burst of 20, 4 batch
    uploads of at most 5,000 rows, a comparison across at most 6 generations. A forged
    `X-Forwarded-For` does not buy a fresh bucket; the address nginx appended is the one that
