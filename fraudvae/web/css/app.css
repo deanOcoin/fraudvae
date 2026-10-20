@@ -96,20 +96,23 @@ input[type=number] { font-variant-numeric: tabular-nums; }
 /* ---------- score tab ---------- */
 .score-grid { display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 2rem; align-items: start; }
 .score-form { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 1.4rem 1.6rem; }
-.form-top { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem; margin-bottom: 1rem; }
+.form-top { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.2rem; margin-bottom: 1rem; }
+.field { min-width: 0; }
 .example-row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; color: var(--ink-2); padding: 0.6rem 0 1rem; border-bottom: 1px solid var(--line-2); }
 .fgroup { margin-top: 1.3rem; }
 .fgroup-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.5rem; }
 .fgroup-head h3 { font-size: 0.98rem; }
 .fgroup-head .dim { font-size: 0.82rem; }
-.fgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 0.65rem 1rem; }
-.fgrid label { display: flex; flex-direction: column; gap: 0.15rem; font-size: 0.9rem; }
+.fgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(190px, 100%), 1fr)); gap: 0.65rem 1rem; }
+.fgrid label { display: flex; flex-direction: column; gap: 0.15rem; font-size: 0.9rem; min-width: 0; }
 .fgrid label span { color: var(--ink-2); }
 .fgrid label.unused span { color: var(--ink-3); }
 .fgrid label.unused input, .fgrid label.unused select { background: var(--paper); }
 .fgrid small { color: var(--ink-3); font-size: 0.75rem; }
 /* the action bar stays at the bottom edge of the window while the form is in view, so the
-   button is one click away from any field; it is not pressed for the visitor */
+   button is one click away from any field; it is not pressed for the visitor. scroll-padding
+   keeps a field the browser scrolls to (tabbing, validation) from landing under the bar */
+html { scroll-padding-bottom: 6rem; scroll-padding-top: 1rem; }
 .form-actions { position: sticky; bottom: 0; z-index: 4; margin: 1.2rem -1.6rem -1.4rem; padding: 0.8rem 1.6rem; display: flex; gap: 0.9rem; align-items: center; flex-wrap: wrap; background: color-mix(in srgb, var(--panel) 92%, transparent); backdrop-filter: blur(6px); border-top: 1px solid var(--line-2); border-radius: 0 0 var(--radius) var(--radius); }
 .form-actions .actions-note { margin-left: auto; font-size: 0.8rem; }
 .btn.primary.attention { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); animation: fv-pulse 1.6s ease-in-out 3; }
@@ -182,7 +185,8 @@ details.batch summary { cursor: pointer; font-weight: 500; }
 .corpus-summary { display: flex; gap: 2.5rem; flex-wrap: wrap; padding: 1rem 0 1.4rem; border-bottom: 1px solid var(--line); margin-bottom: 1.4rem; }
 .corpus-summary .stat b { display: block; font-size: 1.7rem; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
 .corpus-summary .stat span { color: var(--ink-2); }
-.data-layout { display: grid; grid-template-columns: 420px minmax(0, 1fr); gap: 1.6rem; align-items: start; }
+.data-layout { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 1.6rem; align-items: start; }
+.source-list, .source-detail { min-width: 0; }
 .source-list { display: flex; flex-direction: column; gap: 0.4rem; }
 .source-row { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 0.7rem 0.9rem; cursor: pointer; display: grid; grid-template-columns: 1fr auto; gap: 0.2rem 1rem; }
 .source-row:hover { border-color: var(--ink-3); }
@@ -199,8 +203,8 @@ details.batch summary { cursor: pointer; font-weight: 500; }
 .kv { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; margin: 0.8rem 0; font-size: 0.92rem; }
 .kv dt { color: var(--ink-2); }
 .kv dd { margin: 0; }
-.chart-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem; margin-top: 1rem; }
-.chart-box { border: 1px solid var(--line-2); border-radius: var(--radius); padding: 0.6rem 0.8rem; }
+.chart-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); gap: 1.2rem; margin-top: 1rem; }
+.chart-box { border: 1px solid var(--line-2); border-radius: var(--radius); padding: 0.6rem 0.8rem; min-width: 0; }
 .chart-box h4 { margin: 0 0 0.3rem; font-size: 0.86rem; color: var(--ink-2); font-weight: 500; }
 /* chart.js needs a fixed-height box or it grows forever with maintainAspectRatio off */
 .chart-wrap { position: relative; width: 100%; }
@@ -285,6 +289,13 @@ details.batch summary { cursor: pointer; font-weight: 500; }
 
 /* ---------- explain ---------- */
 .explain { max-width: 74ch; font-size: 1.02rem; line-height: 1.65; }
+/* long lines in a code block or a formula scroll inside their box rather than widen the page */
+pre, .explain pre { overflow-x: auto; max-width: 100%; }
+/* a wide results table scrolls inside its own box at any width (the small-screen rule below
+   does the same for every table in the prose) */
+.explain .metric-table, .run-detail .metric-table { display: block; overflow-x: auto; max-width: 100%; }
+.explain .toc a { display: inline-block; padding: 0.1rem 0; }
+.katex-display { overflow-x: auto; overflow-y: hidden; padding: 0.2rem 0; }
 .explain h1 { margin-bottom: 0.4rem; }
 .explain h2 { margin: 2.4rem 0 0.7rem; font-size: 1.35rem; }
 .explain h3 { margin: 1.6rem 0 0.4rem; }
@@ -307,10 +318,14 @@ details.batch summary { cursor: pointer; font-weight: 500; }
 .notice.ok { background: var(--calm-soft); color: #0f4d2e; }
 .spin::after { content: ""; display: inline-block; width: 0.8em; height: 0.8em; margin-left: 0.5em; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: -0.1em; }
 @keyframes spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .spin::after { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .spin::after { animation: none; } .btn.primary.attention { animation: none; } }
+.source-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 @media (max-width: 1100px) {
-  .score-grid, .data-layout, .compute-grid { grid-template-columns: 1fr; }
+  .score-grid, .data-layout, .compute-grid { grid-template-columns: minmax(0, 1fr); }
+  /* a version card stacks once the rail takes a third of a tablet's width */
+  .gen-card, .gen-list.compact .gen-card { grid-template-columns: minmax(0, 1fr); }
+  .gen-actions { align-items: flex-start; text-align: left; flex-direction: row; flex-wrap: wrap; }
   .receipt-col { position: static; max-height: none; overflow: visible; }
   .remote-steps { grid-template-columns: 1fr; }
 }
@@ -320,7 +335,7 @@ details.batch summary { cursor: pointer; font-weight: 500; }
   .brand { margin: 0 1rem 0 0; }
   .rail-foot { display: none; }
   .content { padding: 1.2rem 1rem 3rem; }
-  .form-top, .chart-pair { grid-template-columns: 1fr; }
+  .form-top { grid-template-columns: minmax(0, 1fr); }
 }
 
 
@@ -411,3 +426,13 @@ details.batch summary { cursor: pointer; font-weight: 500; }
 .explain summary { cursor: pointer; color: var(--ink-2); font-size: 0.9rem; }
 .explain summary:hover { color: var(--ink); }
 .explain details[open] summary { margin-bottom: 0.3rem; }
+
+/* a finger needs more than a pointer: the small controls grow on touch screens */
+@media (pointer: coarse) {
+  .btn, .btn.small, .story-switch .btn.small, .gen-actions .btn.small, .rc-more button { min-height: 38px; padding-top: 0.45rem; padding-bottom: 0.45rem; }
+  .rc-more button { padding: 0.45rem 0.8rem; }
+  .field.check input[type=checkbox] { width: 20px; height: 20px; }
+  .explain .toc li, .toc li { padding: 0.2rem 0; }
+  .rail-link { padding: 0.55rem 0.7rem; }
+  .fgroup.fold > summary { padding: 0.75rem 0; }
+}

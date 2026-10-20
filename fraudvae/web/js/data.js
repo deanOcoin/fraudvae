@@ -51,7 +51,8 @@ function renderList() {
   host.innerHTML = "";
   for (const s of data.sources) {
     const st = s.stats;
-    const row = el("div", { class: "source-row" + (s.built ? "" : " missing"), "data-key": s.key, onclick: () => showSource(s.key) },
+    const row = el("div", { class: "source-row" + (s.built ? "" : " missing"), "data-key": s.key, role: "button", tabindex: 0, onclick: () => showSource(s.key),
+                            onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); showSource(s.key); } } },
       el("span", { class: "name" }, s.name),
       el("span", { class: "rows" }, st ? fmt.int(st.rows) : fmt.int(s.approx_rows) + " expected"),
       el("span", { class: "meta" },
