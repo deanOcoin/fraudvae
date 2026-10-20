@@ -348,7 +348,7 @@ async def post_score_batch(request: Request, file: UploadFile = File(..., descri
         summary["precision"] = float((flagged & (y == 1)).sum() / max(flagged.sum(), 1))
     buf = io.StringIO()
     out.to_csv(buf, index=False)
-    headers = {"X-Summary": json.dumps(_clean(summary)), "Content-Disposition": "attachment; filename=scored.csv"}
+    headers = {"X-Summary": json.dumps(_clean(summary)), "Content-Disposition": "attachment; filename=finfraud-scored.csv"}
     return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv", headers=headers)
 
 

@@ -399,7 +399,7 @@ function renderReceipt(r, label) {
   const pct = r.legit_percentile;
 
   const lines = [];
-  lines.push(`<div class="rc-head"><div class="rc-title">FRAUDVAE SCORE</div><div class="dim">${esc(new Date().toISOString().replace("T", " ").slice(0, 19))}  ${esc(ctxName)}</div></div>`);
+  lines.push(`<div class="rc-head"><div class="rc-title">FINFRAUD SCORE</div><div class="dim">${esc(new Date().toISOString().replace("T", " ").slice(0, 19))}  ${esc(ctxName)}</div></div>`);
   // ---- headline: the blend ----
   if (bl) {
     lines.push(`<div class="rc-verdict ${verdictClass}"><span class="big">${(100 * bl.prob).toFixed(bl.prob < 0.1 ? 2 : 1)}%</span>chance of fraud  ·  above ${pctText(pct, "")} of normal payments<br>${verdictText}</div>`);

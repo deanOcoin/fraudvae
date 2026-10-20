@@ -109,7 +109,7 @@ API on your own machine are in the
 [repository](https://github.com/deanOcoin/fraudvae).
 """
 
-app = FastAPI(title="fraudvae", version=__version__, description=_DESCRIPTION, docs_url=None, redoc_url=None,
+app = FastAPI(title="FinFraud", version=__version__, description=_DESCRIPTION, docs_url=None, redoc_url=None,
               openapi_url="/api/openapi.json", lifespan=_lifespan,
               openapi_tags=[{"name": "scoring", "description": "score transactions"},
                             {"name": "data", "description": "what the models were trained on and what they take"},
