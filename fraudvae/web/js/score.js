@@ -37,11 +37,11 @@ function updateLede() {
   if (!m) {
     lede.textContent = "No trained model is loaded. Train one in Model & training (a few minutes on the smoke config) and come back.";
   } else {
-    const dim = m.params ? `${(m.params / 1e6).toFixed(1)}M-parameter` : "";
+    const dim = m.params ? `${(m.params / 1e6).toFixed(1)}-million-parameter ` : "";
     const hybrid = m.has_booster
-      ? ` A ${m.booster_trees ? m.booster_trees + "-tree" : ""} gradient-boosted model trained on the labelled fraud adds what known fraud looks like; the two are blended per bank into the p(fraud) the verdict uses.`
-      : " (No booster in this run: the verdict is the novelty score alone.)";
-    lede.textContent = `The ${dim} VAE reconstructs the transaction from a low-dimensional summary of normal traffic across ${m.sources.length} datasets; what it cannot reconstruct is novelty.${hybrid}`;
+      ? ` A second model, ${m.booster_trees ? m.booster_trees + " decision trees" : "boosted decision trees"} trained on the labelled fraud, adds what known fraud looks like; a small per-bank blend turns the two into the probability the verdict is read from.`
+      : " (No booster in this version: the verdict is the novelty score alone.)";
+    lede.textContent = `Describe one payment and the model says how likely it is to be fraud, with its reasons. A ${dim}VAE trained on legitimate payments from ${m.sources.length} datasets flags what it cannot explain from what it knows of normal traffic.${hybrid}`;
   }
 }
 
@@ -67,7 +67,7 @@ async function buildRunSelect() {
 function buildSourceSelect() {
   const sel = document.getElementById("source-select");
   sel.innerHTML = "";
-  sel.append(el("option", { value: "" }, "Generic (no specific bank)"));
+  sel.append(el("option", { value: "" }, "Generic: a bank the model has never seen"));
   for (const s of schema.sources) {
     if (!s.built) continue;
     sel.append(el("option", { value: s.key }, `${s.key}: ${s.name}`));
@@ -79,7 +79,7 @@ function buildSourceSelect() {
 function showSourceHint() {
   const key = document.getElementById("source-select").value;
   const s = schema.sources.find((x) => x.key === key);
-  document.getElementById("source-hint").textContent = s ? s.context : "Which dataset's \"normal\" to compare against. Generic uses the shared representation only.";
+  document.getElementById("source-hint").textContent = s ? s.context : "Each training dataset counts as a bank with its own habits. Generic judges the payment as one from a bank the model has never seen, using only what all the datasets share.";
 }
 
 function buildFields() {
@@ -317,24 +317,24 @@ function renderReceipt(r, label) {
   const bl = r.blend, sup = r.supervised, nov = r.novelty || {};
   const flagged = r.flag;
   const verdictClass = r.flag == null ? "na" : flagged ? "flag" : "ok";
-  const verdictText = r.flag == null ? "NO CALIBRATION" : flagged ? "FLAG FOR REVIEW" : "LOOKS NORMAL";
+  const verdictText = r.flag == null ? "NO THRESHOLD SET" : flagged ? "FLAG FOR REVIEW" : "LOOKS NORMAL";
   const opPct = opLabel(r.operating_point);
   const items = r.contributions || [];
   const shown = showAll ? items : items.slice(0, 9);
   const maxZ = Math.max(3, ...items.map((c) => c.z));
-  const ctxName = r.calibration === "generic" ? "generic context" : `${r.calibration} context`;
+  const ctxName = r.calibration === "generic" ? "judged as an unknown bank" : `judged as ${r.calibration}`;
   const pct = r.legit_percentile;
 
   const lines = [];
   lines.push(`<div class="rc-head"><div class="rc-title">FRAUDVAE SCORE</div><div class="dim">${esc(new Date().toISOString().replace("T", " ").slice(0, 19))}  ${esc(ctxName)}</div></div>`);
   // ---- headline: the blend ----
   if (bl) {
-    lines.push(`<div class="rc-verdict ${verdictClass}"><span class="big">${(100 * bl.prob).toFixed(bl.prob < 0.1 ? 2 : 1)}%</span>p(fraud)  ·  ${pctText(pct, "")} percentile of legit<br>${verdictText}</div>`);
+    lines.push(`<div class="rc-verdict ${verdictClass}"><span class="big">${(100 * bl.prob).toFixed(bl.prob < 0.1 ? 2 : 1)}%</span>chance of fraud  ·  above ${pctText(pct, "")} of normal payments<br>${verdictText}</div>`);
     if (bl.threshold != null) {
-      lines.push(`<div class="rc-line"><span class="k">alert budget</span><span>${esc(opPct)} FPR</span></div>`);
-      lines.push(`<div class="rc-line"><span class="k">flag above p(fraud)</span><span>${(100 * bl.threshold).toFixed(bl.threshold < 0.1 ? 2 : 1)}%</span></div>`);
-      if (bl.expected_recall != null) lines.push(`<div class="rc-line"><span class="k">recall at budget</span><span>${fmt.pct(bl.expected_recall, 1)}</span></div>`);
-      if (bl.expected_precision != null) lines.push(`<div class="rc-line"><span class="k">precision at budget</span><span>${fmt.pct(bl.expected_precision, 1)}</span></div>`);
+      lines.push(`<div class="rc-line"><span class="k">alert budget</span><span>${esc(opPct)} of legit flagged</span></div>`);
+      lines.push(`<div class="rc-line"><span class="k">flagged above</span><span>${(100 * bl.threshold).toFixed(bl.threshold < 0.1 ? 2 : 1)}%</span></div>`);
+      if (bl.expected_recall != null) lines.push(`<div class="rc-line"><span class="k">fraud caught at this budget</span><span>${fmt.pct(bl.expected_recall, 1)}</span></div>`);
+      if (bl.expected_precision != null) lines.push(`<div class="rc-line"><span class="k">flags that are fraud</span><span>${fmt.pct(bl.expected_precision, 1)}</span></div>`);
     }
   } else {
     lines.push(`<div class="rc-verdict ${verdictClass}"><span class="big">${pct == null ? fmt.num(nov.score, 2) : pctText(pct, "")}</span>${pct == null ? "raw score" : "percentile of legit traffic"}<br>${verdictText}</div>`);
@@ -342,18 +342,18 @@ function renderReceipt(r, label) {
   if (label != null) {
     // an example row carries its label: say in words whether this verdict was right
     const call = verdictCall(label, flagged);
-    lines.push(`<div class="rc-line"><span class="k">ground truth</span><span>${label ? "FRAUD" : "legitimate"}${call ? ` <span class="${call.cls}">· ${esc(call.text)}</span>` : ""}</span></div>`);
+    lines.push(`<div class="rc-line"><span class="k">actually was</span><span>${label ? "FRAUD" : "legitimate"}${call ? ` <span class="${call.cls}">· ${esc(call.text)}</span>` : ""}</span></div>`);
   }
   if (r.model) {
     const tl = models.find((m) => m.name === r.model.run);
-    lines.push(`<div class="rc-line"><span class="k">scored by</span><span>${esc(tl ? `${tl.version} · ${tl.label}` : r.model.run)}</span></div>`);
-    if (r.model.note) lines.push(`<div class="rc-line"><span class="k"></span><span class="dim">${esc(r.model.note)}${r.model.bank_known ? "" : "; this bank is unknown to it, scored as generic"}</span></div>`);
+    lines.push(`<div class="rc-line"><span class="k">version</span><span>${esc(tl ? `${tl.version} · ${tl.label}` : r.model.run)}</span></div>`);
+    if (r.model.note) lines.push(`<div class="rc-line"><span class="k"></span><span class="dim">${esc(r.model.note)}${r.model.bank_known ? "" : "; this bank is unknown to it, judged as an unknown bank"}</span></div>`);
   }
   // ---- every generation on the same transaction ----
   if (r.compare && r.compare.length > 1) {
     lines.push(`<div class="rc-compare">`);
-    lines.push(`<div class="rc-sub">GENERATIONS  <span class="dim">the same transaction on each</span></div>`);
-    lines.push(`<div class="rc-line head"><span class="k">model</span><span>p(fraud) or novelty pct · verdict</span></div>`);
+    lines.push(`<div class="rc-sub">EVERY VERSION  <span class="dim">the same payment judged by each</span></div>`);
+    lines.push(`<div class="rc-line head"><span class="k">version</span><span>chance of fraud (v3: how unusual) · verdict</span></div>`);
     const byOrder = [...r.compare].sort((a, b) => (models.find((m) => m.name === a.run)?.order ?? 99) - (models.find((m) => m.name === b.run)?.order ?? 99));
     for (const c of byOrder) {
       const tl = models.find((m) => m.name === c.run);
@@ -372,18 +372,18 @@ function renderReceipt(r, label) {
   // ---- supervised evidence ----
   if (sup) {
     lines.push(`<div class="rc-sep"></div>`);
-    lines.push(`<div class="rc-sub">SUPERVISED  <span class="dim">booster, trained on labelled fraud</span></div>`);
+    lines.push(`<div class="rc-sub">KNOWN FRAUD  <span class="dim">the booster: decision trees trained on labelled fraud</span></div>`);
     const sf = sup.flag == null ? "" : (sup.flag ? "  FLAG" : "  ok");
-    lines.push(`<div class="rc-line"><span class="k">p(fraud) on its own</span><span class="${sup.flag ? "z hot" : ""}">${(100 * sup.prob).toFixed(sup.prob < 0.1 ? 2 : 1)}%${sf}</span></div>`);
-    if (sup.legit_percentile != null) lines.push(`<div class="rc-line"><span class="k">percentile of legit</span><span>${pctText(sup.legit_percentile, "")}</span></div>`);
+    lines.push(`<div class="rc-line"><span class="k">chance of fraud, this model alone</span><span class="${sup.flag ? "z hot" : ""}">${(100 * sup.prob).toFixed(sup.prob < 0.1 ? 2 : 1)}%${sf}</span></div>`);
+    if (sup.legit_percentile != null) lines.push(`<div class="rc-line"><span class="k">above this share of normal</span><span>${pctText(sup.legit_percentile, "")}</span></div>`);
     if (r.labels) {
       const lb = r.labels;
       const txt = lb.fast_block === "blanked" ? `blanked (labels take ${lb.latency_days}d)` : lb.fast_block === "used" ? "one-week history used" : "not in this request";
-      lines.push(`<div class="rc-line"><span class="k">fast fraud history</span><span>${esc(txt)}</span></div>`);
+      lines.push(`<div class="rc-line"><span class="k">last week's fraud history</span><span>${esc(txt)}</span></div>`);
     }
     const pushes = (sup.pushes || []).slice(0, showAll ? 12 : 6);
     const maxC = Math.max(0.5, ...pushes.map((c) => Math.abs(c.contribution)));
-    lines.push(`<div class="rc-line"><span class="k">feature</span><span class="k">push (log-odds)</span></div>`);
+    lines.push(`<div class="rc-line"><span class="k">what it looked at</span><span class="k">push toward / away from fraud</span></div>`);
     lines.push(`<div class="rc-items">`);
     for (const c of pushes) {
       const up = c.contribution > 0;
@@ -399,11 +399,11 @@ function renderReceipt(r, label) {
   const sq = r.sequence;
   if (sq) {
     lines.push(`<div class="rc-sep"></div>`);
-    lines.push(`<div class="rc-sub">SEQUENCE  <span class="dim">history transformer, ${sq.n_history} of ${sq.window} past txns${sq.history_from ? ` (${sq.history_from})` : ""}</span></div>`);
+    lines.push(`<div class="rc-sub">CUSTOMER HISTORY  <span class="dim">${sq.n_history} of up to ${sq.window} previous payments read${sq.history_from ? ` (${sq.history_from})` : ""}</span></div>`);
     if (sq.prob != null) {
       const qf = sq.flag == null ? "" : (sq.flag ? "  FLAG" : "  ok");
-      lines.push(`<div class="rc-line"><span class="k">p(fraud) from history</span><span class="${sq.flag ? "z hot" : ""}">${(100 * sq.prob).toFixed(sq.prob < 0.1 ? 2 : 1)}%${qf}</span></div>`);
-      if (sq.legit_percentile != null) lines.push(`<div class="rc-line"><span class="k">percentile of legit</span><span>${pctText(sq.legit_percentile, "")}</span></div>`);
+      lines.push(`<div class="rc-line"><span class="k">chance of fraud, from the history alone</span><span class="${sq.flag ? "z hot" : ""}">${(100 * sq.prob).toFixed(sq.prob < 0.1 ? 2 : 1)}%${qf}</span></div>`);
+      if (sq.legit_percentile != null) lines.push(`<div class="rc-line"><span class="k">above this share of normal</span><span>${pctText(sq.legit_percentile, "")}</span></div>`);
     }
     if (!sq.n_history) lines.push(`<div class="rc-line dim"><span>no history given: scored as a first transaction. add past transactions below, or a customer id so the server remembers them</span></div>`);
   }
@@ -413,7 +413,7 @@ function renderReceipt(r, label) {
     lines.push(`<div class="rc-sep"></div>`);
     const tf = r.text.fields || {};
     const keys = Object.keys(tf);
-    lines.push(`<div class="rc-sub">TEXT  <span class="dim">${keys.length ? `${keys.length} field${keys.length === 1 ? "" : "s"} read` : "no text sent"}${r.fusion ? ", fused into the verdict" : ""}</span></div>`);
+    lines.push(`<div class="rc-sub">TEXT  <span class="dim">${keys.length ? `${keys.length} field${keys.length === 1 ? "" : "s"} read` : "no text sent"}${r.fusion ? ", added to the verdict" : ""}</span></div>`);
     for (const k of keys) {
       const t = tf[k];
       lines.push(`<div class="rc-line"><span class="k">${esc(k)} → ${esc(t.label)}</span><span class="${t.llr > 1 ? "z hot" : ""}">p ${(100 * t.prob).toFixed(1)}%, LR ${t.llr >= 0 ? "+" : ""}${t.llr.toFixed(2)}</span></div>`);
@@ -430,7 +430,7 @@ function renderReceipt(r, label) {
     lines.push(`<div class="rc-sep"></div>`);
     const bf = r.behaviour.fields || {};
     const mods = Object.keys(bf);
-    lines.push(`<div class="rc-sub">BEHAVIOUR  <span class="dim">${mods.length ? `${mods.join(", ")} session` : "no session sent"}${r.behaviour.enrolled_sessions ? `, profile from ${r.behaviour.enrolled_sessions} earlier session${r.behaviour.enrolled_sessions === 1 ? "" : "s"}` : ""}</span></div>`);
+    lines.push(`<div class="rc-sub">HOW THE DEVICE WAS USED  <span class="dim">${mods.length ? `${mods.join(", ")} session` : "no session sent"}${r.behaviour.enrolled_sessions ? `, profile from ${r.behaviour.enrolled_sessions} earlier session${r.behaviour.enrolled_sessions === 1 ? "" : "s"}` : ""}</span></div>`);
     for (const m of mods) {
       const v = bf[m];
       if (v.llr == null) lines.push(`<div class="rc-line dim"><span>${esc(v.label)}: ${v.windows} window${v.windows === 1 ? "" : "s"} read, no enrolment for this customer yet${r.behaviour.enrolled_now ? " — enrolled now" : ""}</span></div>`);
@@ -448,8 +448,8 @@ function renderReceipt(r, label) {
     lines.push(`<div class="rc-sub">${name.toUpperCase()}  <span class="dim">${hb.label || name}${name === "local" ? "" : " head"}${hb.present && hb.fields.length ? `, ${hb.fields.length} field${hb.fields.length === 1 ? "" : "s"}` : ""}</span></div>`);
     if (hb.present && hb.prob != null) {
       const hf = hb.flag == null ? "" : (hb.flag ? "  FLAG" : "  ok");
-      lines.push(`<div class="rc-line"><span class="k">p(fraud) from ${name}</span><span class="${hb.flag ? "z hot" : ""}">${(100 * hb.prob).toFixed(hb.prob < 0.1 ? 2 : 1)}%${hf}</span></div>`);
-      if (hb.legit_percentile != null) lines.push(`<div class="rc-line"><span class="k">percentile of legit</span><span>${pctText(hb.legit_percentile, "")}</span></div>`);
+      lines.push(`<div class="rc-line"><span class="k">chance of fraud, ${name === "local" ? "this bank's own model" : name + " model"} alone</span><span class="${hb.flag ? "z hot" : ""}">${(100 * hb.prob).toFixed(hb.prob < 0.1 ? 2 : 1)}%${hf}</span></div>`);
+      if (hb.legit_percentile != null) lines.push(`<div class="rc-line"><span class="k">above this share of normal</span><span>${pctText(hb.legit_percentile, "")}</span></div>`);
       if (hb.fields.length) lines.push(`<div class="rc-line dim"><span>${hb.fields.join(", ")}</span></div>`);
     } else if (name === "local") {
       lines.push(`<div class="rc-line dim"><span>this bank has no specialist booster (too little labelled fraud, or the generic context): the shared booster carries it</span></div>`);
@@ -462,15 +462,15 @@ function renderReceipt(r, label) {
 
   // ---- novelty evidence ----
   lines.push(`<div class="rc-sep"></div>`);
-  lines.push(`<div class="rc-sub">NOVELTY  <span class="dim">VAE, never saw a fraud label${sq ? ", conditioned on the history" : ""}</span></div>`);
+  lines.push(`<div class="rc-sub">HOW UNUSUAL  <span class="dim">the VAE, trained on legitimate payments only${sq ? ", with this customer's history in view" : ""}</span></div>`);
   const nf = nov.flag == null ? "" : (nov.flag ? "  FLAG" : "  ok");
-  if (nov.legit_percentile != null) lines.push(`<div class="rc-line"><span class="k">percentile of legit</span><span class="${nov.flag ? "z hot" : ""}">${pctText(nov.legit_percentile, "")}${nf}</span></div>`);
-  lines.push(`<div class="rc-line"><span class="k">score (${esc(nov.score_type)})</span><span>${fmt.num(nov.score, 3)}</span></div>`);
-  if (nov.score_type === "norm") lines.push(`<div class="rc-line"><span class="k">raw -ELBO</span><span>${fmt.num(nov.score_raw, 2)}</span></div>`);
-  if (nov.z_score != null) lines.push(`<div class="rc-line"><span class="k">z vs legit</span><span>${nov.z_score >= 0 ? "+" : ""}${fmt.num(nov.z_score, 2)}</span></div>`);
-  lines.push(`<div class="rc-line"><span class="k">KL(q‖p)</span><span>${fmt.num(nov.kl, 2)}</span></div>`);
-  if (nov.threshold != null) lines.push(`<div class="rc-line"><span class="k">threshold at budget</span><span>${fmt.num(nov.threshold, 3)}</span></div>`);
-  lines.push(`<div class="rc-line"><span class="k">field</span><span class="k">surprise (z)</span></div>`);
+  if (nov.legit_percentile != null) lines.push(`<div class="rc-line"><span class="k">above this share of normal</span><span class="${nov.flag ? "z hot" : ""}">${pctText(nov.legit_percentile, "")}${nf}</span></div>`);
+  lines.push(`<div class="rc-line"><span class="k">novelty score${nov.score_type === "norm" ? " (per-field, normalised)" : ""}</span><span>${fmt.num(nov.score, 3)}</span></div>`);
+  if (nov.score_type === "norm") lines.push(`<div class="rc-line"><span class="k">raw score (negative ELBO)</span><span>${fmt.num(nov.score_raw, 2)}</span></div>`);
+  if (nov.z_score != null) lines.push(`<div class="rc-line"><span class="k">z-score against normal</span><span>${nov.z_score >= 0 ? "+" : ""}${fmt.num(nov.z_score, 2)}</span></div>`);
+  lines.push(`<div class="rc-line"><span class="k">KL term</span><span>${fmt.num(nov.kl, 2)}</span></div>`);
+  if (nov.threshold != null) lines.push(`<div class="rc-line"><span class="k">flagged above</span><span>${fmt.num(nov.threshold, 3)}</span></div>`);
+  lines.push(`<div class="rc-line"><span class="k">field</span><span class="k">surprise, in standard deviations</span></div>`);
   lines.push(`<div class="rc-items">`);
   for (const c of shown) {
     const zc = zClass(c.z);
@@ -484,7 +484,7 @@ function renderReceipt(r, label) {
     lines.push(`<div class="rc-more"><button type="button" id="rc-toggle">${showAll ? "show fewer" : "show everything"}</button></div>`);
   }
   lines.push(`<div class="rc-sep"></div>`);
-  lines.push(`<div class="rc-foot">${bl ? "the verdict is the blend: booster + novelty, weighted per bank on labelled validation rows.<br>" : "the verdict is the novelty score alone (no blender in this run).<br>"}surprise = how much worse the VAE predicted a field than it does for normal ${esc(r.source === "generic" ? "traffic" : r.source + " traffic")}, in standard deviations; "exp" is its expectation.${sup ? "<br>pushes are the booster's SHAP contributions in log-odds; unobserved fields can still push (missingness is information to a tree)." : ""}</div>`);
+  lines.push(`<div class="rc-foot">${bl ? "the verdict comes from the blend: every model's score, weighted per bank.<br>" : "the verdict is the novelty score alone (no blend in this version).<br>"}surprise = how much worse than usual the VAE predicted a field, compared with normal ${esc(r.source === "generic" ? "traffic" : r.source + " traffic")}, in standard deviations; "exp" is what it expected.${sup ? "<br>pushes are the booster's SHAP contributions, in log-odds; a field that is unknown can still push, because a missing value tells a decision tree something too." : ""}</div>`);
   box.innerHTML = lines.join("");
   const tog = document.getElementById("rc-toggle");
   if (tog) tog.addEventListener("click", () => { showAll = !showAll; renderReceipt(r, label); });

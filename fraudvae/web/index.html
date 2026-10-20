@@ -17,7 +17,7 @@
     <a href="#model" data-tab="model" class="rail-link">Model &amp; training</a>
     <a href="#compute" data-tab="compute" class="rail-link" id="rail-compute">Compute &amp; remote GPU</a>
     <a href="#explain" data-tab="explain" class="rail-link">How it works</a>
-    <a href="#story" data-tab="story" class="rail-link">The story</a>
+    <a href="#story" data-tab="story" class="rail-link">Development process</a>
     <div class="rail-foot">
       <div id="rail-model" class="rail-model">loading…</div>
       <a href="/api/docs" class="rail-dim" target="_blank" rel="noopener">API docs</a>
@@ -29,48 +29,48 @@
     <section id="tab-score" class="tab">
       <header class="page-head">
         <h1>Score a transaction</h1>
-        <p class="lede" id="score-lede">The model reconstructs the transaction from a 20-dimensional summary of what normal traffic looks like. What it fails to reconstruct is what it finds suspicious.</p>
+        <p class="lede" id="score-lede">Describe one payment and the model says how likely it is to be fraud, with its reasons. Two models look at it: one that learnt what normal payments look like and flags what it cannot explain, and one that learnt what known fraud looks like from labelled examples.</p>
       </header>
       <div class="score-grid">
         <form id="score-form" class="score-form" autocomplete="off">
           <div class="form-top">
             <label class="field">
-              <span>Bank / data context</span>
+              <span>Which bank's idea of normal</span>
               <select name="source" id="source-select"></select>
-              <small id="source-hint">Which dataset's "normal" to compare against. Generic uses the shared representation only.</small>
+              <small id="source-hint">Each training dataset counts as a bank with its own habits. Pick the one this payment resembles, or <i>generic</i> for a bank the model has never seen.</small>
             </label>
             <label class="field">
-              <span>Alert budget (false positive rate)</span>
+              <span>Alert budget</span>
               <select name="fpr_target" id="fpr-select">
-                <option value="fpr_0.001">0.1% of legit traffic</option>
+                <option value="fpr_0.001">0.1% of legitimate payments may be flagged</option>
                 <option value="fpr_0.005">0.5%</option>
                 <option value="fpr_0.01" selected>1%</option>
                 <option value="fpr_0.02">2%</option>
                 <option value="fpr_0.05">5%</option>
               </select>
-              <small>Threshold set on validation data so this share of legitimate transactions gets flagged.</small>
+              <small>How many honest payments you accept flagging by mistake. The flagging threshold is set so that exactly this share of legitimate traffic lands above it; a bigger budget catches more fraud at the price of more false alarms.</small>
             </label>
             <label class="field">
               <span>Model generation</span>
               <select name="run" id="run-select"></select>
-              <small id="run-hint">Which generation scores this transaction. The newest is the default; every earlier one is still here so the same transaction can be scored on each.</small>
+              <small id="run-hint">Which version of the model judges this payment. The newest is the default and the best; the earlier ones are kept so you can see how much each step of the development changed the answer.</small>
             </label>
             <label class="field check">
               <span>Compare across generations</span>
-              <span class="checkline"><input type="checkbox" name="compare_all" id="compare-all"> score it on every generation, side by side</span>
-              <small>Each extra generation adds a fraction of a second.</small>
+              <span class="checkline"><input type="checkbox" name="compare_all" id="compare-all"><span>score it on every version, side by side</span></span>
+              <small>Shows every version's verdict side by side under the main one. Each adds a fraction of a second.</small>
             </label>
             <label class="field">
               <span>Fraud labels arrive within</span>
               <select name="label_delay_days" id="delay-select">
-                <option value="7" selected>a week (one-week fraud history used)</option>
-                <option value="30">a month (one-week block blanked)</option>
+                <option value="7" selected>a week (fresh fraud history is used)</option>
+                <option value="30">a month (only month-old fraud history is used)</option>
               </select>
-              <small>How fast this deployment learns a transaction was fraud. Past a week the booster must not see the one-week entity fraud history; the 30-day block stays.</small>
+              <small>How quickly a bank finds out a payment was fraud (chargebacks take weeks). The model only uses fraud history it would have known at the time: set this to a month and it stops reading last week's confirmed fraud at this merchant, card or device.</small>
             </label>
           </div>
           <div class="example-row">
-            <span>Load an example from the held-out data:</span>
+            <span>Load a real example the model never trained on:</span>
             <button type="button" class="btn ghost" data-example="0">legitimate</button>
             <button type="button" class="btn ghost" data-example="1">fraud</button>
             <button type="button" class="btn ghost" id="clear-form">clear</button>
@@ -78,32 +78,30 @@
           </div>
           <div id="field-groups"></div>
           <details class="history-box">
-            <summary>Customer history <span class="dim">(v5: what the sequence model sees)</span></summary>
-            <p class="dim">Either paste the customer's previous transactions as JSON, oldest first — a list of
-              <code>{"features": {...same field names...}, "secs_before": 3600}</code> (or <code>"ts"</code> in epoch seconds) —
-              or give a customer id and the server will remember every transaction it scores for that id and use them as history next time.</p>
+            <summary>Customer history <span class="dim">(the customer's previous payments)</span></summary>
+            <p class="dim">The newest model judges a payment against this customer's own habits. Paste their previous payments as JSON, oldest first — a list of
+              <code>{"features": {...same field names...}, "secs_before": 3600}</code> (or <code>"ts"</code> in epoch seconds). On your own installation you can instead give a customer id and the server remembers what it scores for that id; the public site keeps nothing.</p>
             <label class="wide"><span>previous transactions (json)</span><textarea id="history-json" rows="4" placeholder='[{"features": {"amount": 12.5, "hour": 14}, "secs_before": 86400}]'></textarea></label>
             <label><span>customer id</span><input type="text" id="customer-id" placeholder="any string, e.g. cust-42" autocomplete="off"></label>
           </details>
           <details class="history-box">
-            <summary>Device payload <span class="dim">(v5: what the device head sees)</span></summary>
-            <p class="dim">Telemetry as the browser or app reports it; the server maps it onto the device block.
+            <summary>Device details <span class="dim">(what the device model sees)</span></summary>
+            <p class="dim">What the browser or app reports about the device; a small model judges how risky the device looks on its own.
               Keys: <code>os</code>, <code>browser</code>, <code>device_type</code>, <code>screen</code>, <code>session_length_min</code>,
               <code>keep_alive</code>, <code>phone_valid</code>, <code>email_domain</code>, <code>recipient_email_domain</code>,
               <code>name_email_similarity</code>, <code>account_age_days</code>, <code>foreign</code>. Fields set in the form win.</p>
             <label class="wide"><span>device (json)</span><textarea id="device-json" rows="3" placeholder='{"os": "Windows 10", "browser": "chrome 63.0", "screen": "1920x1080", "session_length_min": 4.2, "keep_alive": true}'></textarea></label>
           </details>
           <details class="history-box">
-            <summary>Text payload <span class="dim">(v5: what the text heads read)</span></summary>
-            <p class="dim">Free text on the transaction: <code>url</code> (the url head), <code>description</code> / <code>memo</code> / <code>message</code> (the free-text head, trained on scam postings),
-              <code>profile</code> / <code>bio</code> (the profile head). Each answers with a likelihood ratio that is added to the blend's log-odds; nothing in the training data had text, so this never changes a held-out number.</p>
+            <summary>Text on the payment <span class="dim">(what the text models read)</span></summary>
+            <p class="dim">Free text that came with the payment: <code>url</code> (judged by a model trained on malicious links), <code>description</code> / <code>memo</code> / <code>message</code> (one trained on scam postings),
+              <code>profile</code> / <code>bio</code> (one trained on fake profiles). Each adds its own evidence to the verdict. None of the payment datasets carried text, so this never changed a reported number.</p>
             <label class="wide"><span>text (json)</span><textarea id="text-json" rows="3" placeholder='{"url": "http://paypal.com.secure-login.verify-account.ru/login", "memo": "urgent: send the registration fee today"}'></textarea></label>
           </details>
           <details class="history-box">
-            <summary>Session events <span class="dim">(v5: what the behaviour verifiers see)</span></summary>
-            <p class="dim">Raw interaction events per modality: <code>mouse</code> rows <code>[t, x, y, kind]</code>, <code>keystroke</code> rows <code>[t, key, down|up]</code>,
-              <code>touch</code> rows <code>[t, x, y, pressure, size, action]</code>, <code>motion</code> rows <code>[t, x, y, z]</code>. With a customer id the server compares the session with that
-              customer's enrolled profile (built from their earlier sessions) and enrols this one; the first session only enrols.</p>
+            <summary>How the customer used the device <span class="dim">(mouse, keystrokes, touch, motion)</span></summary>
+            <p class="dim">Raw events from the session, which a set of models trained on public behaviour data compares with how this customer usually moves and types: <code>mouse</code> rows <code>[t, x, y, kind]</code>, <code>keystroke</code> rows <code>[t, key, down|up]</code>,
+              <code>touch</code> rows <code>[t, x, y, pressure, size, action]</code>, <code>motion</code> rows <code>[t, x, y, z]</code>. On your own installation a customer id lets the server build that customer's profile from their earlier sessions; the first session only enrols.</p>
             <label class="wide"><span>session (json)</span><textarea id="session-json" rows="3" placeholder='{"mouse": [[0.0, 100, 200, "move"], [0.02, 104, 203, "move"], ...]}'></textarea></label>
           </details>
           <div class="form-actions">
@@ -116,19 +114,19 @@
           <div id="receipt" class="receipt empty">
             <div class="receipt-empty">
               <p>No transaction scored yet.</p>
-              <p class="dim">Fill in what you know and press <b>Score transaction</b>. Fields you leave blank are treated as unobserved, not as zero.</p>
+              <p class="dim">Fill in what you know and press <b>Score transaction</b>, or load an example. Fields you leave blank count as unknown, not as zero; the model was trained to cope with missing fields.</p>
             </div>
           </div>
           <div class="latent-card">
-            <div class="card-head"><h3>Where it lands in latent space</h3><span class="dim" id="latent-note">validation sample, PCA of the posterior means</span></div>
+            <div class="card-head"><h3>Where it lands among normal payments</h3><span class="dim" id="latent-note">the model's compressed view of validation traffic, in two dimensions</span></div>
             <div class="chart-wrap" style="height:300px"><canvas id="latent-chart"></canvas></div>
           </div>
         </aside>
       </div>
 
       <details class="batch">
-        <summary>Score a whole file instead</summary>
-        <p class="dim">A CSV using the unified column names (see <a href="#explain">How it works</a>). Rows get a score, a percentile and a flag at the alert budget above. If an <code>is_fraud</code> column is present you also get AUROC / recall for the file.</p>
+        <summary>Score a whole spreadsheet instead</summary>
+        <p class="dim">A CSV file using the field names from the <a href="#explain">How it works</a> page (any subset). Every row gets a probability, a percentile and a flag at the alert budget above. If the file has an <code>is_fraud</code> column you also get the accuracy (AUROC and recall) on your own data.</p>
         <form id="batch-form" class="batch-form">
           <input type="file" name="file" accept=".csv" required>
           <button type="submit" class="btn">Score file</button>
@@ -141,7 +139,7 @@
     <section id="tab-data" class="tab hidden">
       <header class="page-head">
         <h1>Training data</h1>
-        <p class="lede" id="data-lede">Eleven public transaction datasets mapped onto one schema. Where a source has no notion of a field, the field is marked unobserved and the model's likelihood skips it.</p>
+        <p class="lede" id="data-lede">Eleven public datasets of payments, translated into one common set of fields. Where a dataset has no such field it is marked unknown and the model skips it rather than guessing.</p>
       </header>
       <div id="corpus-summary" class="corpus-summary"></div>
       <div class="data-layout">
@@ -151,7 +149,7 @@
         </div>
       </div>
       <section class="coverage-section">
-        <div class="card-head"><h2>Which fields each source fills</h2><span class="dim">share of rows with the field observed</span></div>
+        <div class="card-head"><h2>Which fields each dataset has</h2><span class="dim">share of rows where the field is known</span></div>
         <div id="coverage-grid" class="coverage-grid"></div>
       </section>
       <section class="pipeline-section">
@@ -171,10 +169,10 @@
     <section id="tab-model" class="tab hidden">
       <header class="page-head">
         <h1>Model &amp; training</h1>
-        <p class="lede">Every run lives in <code>runs/&lt;name&gt;</code>: checkpoint, per-epoch metrics, calibration and held-out evaluation. Load any of them into the scorer.</p>
+        <p class="lede">Every version of the model that was trained, oldest first, with what it was trained on, how long it took, and how it scores on data it never saw. Any of them can judge a payment on the Score tab.</p>
       </header>
       <section class="timeline-section">
-        <div class="card-head"><h2>Generations</h2><span class="dim">oldest first; the same transaction can be scored on any of them from the Score tab</span></div>
+        <div class="card-head"><h2>The six versions</h2><span class="dim">oldest first; the same payment can be scored on any of them from the Score tab</span></div>
         <div class="timeline" id="timeline"></div>
       </section>
       <div class="runs-layout">
@@ -190,7 +188,7 @@
           <label class="inline-field">run name <input name="name" placeholder="auto" size="18"></label>
           <button type="submit" class="btn primary">Start training</button>
         </form>
-        <p class="dim">For the full 36M-row corpus use the <a href="#compute">Compute</a> tab instead; a laptop CPU takes days for what an A100 does in an hour.</p>
+        <p class="dim">For the full 30-million-row training set use the <a href="#compute">Compute</a> tab instead; a laptop takes days for what a rented GPU does in an hour.</p>
         <pre id="train-log" class="log"></pre>
       </section>
     </section>

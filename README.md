@@ -255,7 +255,7 @@ summary as booster input, a longer VAE).
 Six trained generations are kept, so the model's progress is something you can score
 a transaction on rather than read about: the score tab's **Model generation** picker
 takes any of them and **Compare across generations** scores one transaction on all
-six. The UI's story tab (and `docs/TRAINING_NOTES.md`) tells what changed at each step
+six. The UI's development-process tab (and `docs/TRAINING_NOTES.md`) tells what changed at each step
 and what did not work; the model tab's timeline shows each one's hardware, training
 time and numbers.
 
