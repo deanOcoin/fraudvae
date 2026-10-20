@@ -43,7 +43,9 @@ def get_schema():
     """What a transaction can carry: every numeric and categorical feature the models know,
     with its label, unit, group and how it is transformed, plus the categories seen in
     training. The names here are the ones `features` in `/api/score` is matched against."""
-    stats = json.loads(STATS.read_text()) if STATS.exists() else {"sources": {}}
+    # the same statistics the data tab uses: a local build on a workbench, the packaged ones
+    # of the trained-on build otherwise - so the public site offers every bank the models know
+    stats, _ = _corpus_stats()
     nums = []
     for f in model_numeric_features():
         nums.append({"name": f.name, "label": f.label, "unit": f.unit, "group": f.group, "transform": f.transform,

@@ -57,8 +57,11 @@ async function buildRunSelect() {
     const tag = m.name === best?.name ? "  — newest, best" : (m.schema_version < 5 ? `  — schema v${m.schema_version}` : "");
     sel.append(el("option", { value: m.name }, `${m.version} · ${m.label}${tag}`));
   }
-  let want = null;
-  try { want = localStorage.getItem("fraudvae.run"); localStorage.removeItem("fraudvae.run"); } catch (_) {}
+  // a version chosen on the model tab arrives in the url (?run=, across hosts) or, on a
+  // one-host workbench, in browser storage
+  let want = new URLSearchParams(location.search).get("run");
+  if (want) history.replaceState(null, "", location.pathname + location.hash);
+  else { try { want = localStorage.getItem("fraudvae.run"); localStorage.removeItem("fraudvae.run"); } catch (_) {} }
   sel.value = (want && shown.some((m) => m.name === want)) ? want : (active && shown.some((m) => m.name === active) ? active : (best?.name || sel.value));
   sel.addEventListener("change", () => { if (lastResult) score(lastResult._label); });
   document.getElementById("compare-all")?.addEventListener("change", () => { if (lastResult) score(lastResult._label); });

@@ -1,8 +1,9 @@
-// model & training tab: run list, run detail (metrics, calibration, eval), local training
+// model & training tab: the versions (newest first, one selected), the selected run's record, local training
 import { get, post, pollTask, fmt, el, esc, palette } from "./api.js";
-import { refreshMeta } from "./app.js";
+import { refreshMeta, scoreHref, rememberRun } from "./app.js";
 
 let runs = [];
+let timelineItems = [];
 let active = null;
 let schemaVersion = null;
 function state_schema_version() { return schemaVersion ?? "?"; }
@@ -16,8 +17,8 @@ export async function initModel(state) {
   schemaVersion = state.meta?.schema_version ?? null;
   isPublic = !!state.meta?.public?.public;
   if (isPublic) document.getElementById("train-section")?.classList.add("hidden");
+  await loadTimeline();
   await loadRuns();
-  await renderTimeline();
   const cfgs = await get("/api/configs");
   const sel = document.getElementById("train-config");
   for (const c of cfgs.configs) sel.append(el("option", { value: c.name, title: c.text }, c.name));
@@ -30,88 +31,113 @@ export async function initModel(state) {
   window.addEventListener("tabshown", (e) => { if (e.detail === "model") loadRuns(); });
 }
 
-async function renderTimeline() {
-  const box = document.getElementById("timeline");
-  if (!box) return;
-  let d;
-  try { d = await get("/api/models"); } catch (e) { box.innerHTML = `<p class="dim">${esc(e.message)}</p>`; return; }
-  const items = d.models.filter((m) => m.milestone);
-  const best = items.reduce((a, b) => (b.mean_test_auroc ?? -1) > (a?.mean_test_auroc ?? -1) ? b : a, null);
-  box.innerHTML = "";
-  for (const m of items) {
-    const n9 = m.mean_shared9 != null ? `AUROC ${fmt.auc(m.mean_shared9)} on the 9 shared datasets` : (m.mean_test_auroc != null ? `AUROC ${fmt.auc(m.mean_test_auroc)} on its datasets` : "");
-    const mins = m.train_minutes != null ? `${m.train_minutes < 90 ? Math.round(m.train_minutes) + " min" : (m.train_minutes / 60).toFixed(1) + " h"} of training` : "";
-    const post = m.post_minutes != null ? ` + ${Math.round(m.post_minutes)} min for the booster side` : "";
-    const card = el("div", { class: "tl-card" + (best && m.name === best.name ? " best" : "") },
-      el("div", { class: "tl-v" }, m.version),
-      m.name === best?.name ? el("span", { class: "tl-tag" }, "newest · best") : (m.legacy || m.schema_version < 5 ? el("span", { class: "tl-tag legacy" }, `older field set (v${m.schema_version})`) : ""),
-      el("div", { class: "tl-name" }, m.label),
+async function loadTimeline() {
+  try { timelineItems = (await get("/api/models")).models.filter((m) => m.milestone); } catch (e) { timelineItems = []; }
+}
+
+const best = () => timelineItems.reduce((a, b) => (b.mean_test_auroc ?? -1) > (a?.mean_test_auroc ?? -1) ? b : a, null);
+
+// the link that opens the score tab with this version chosen (the url carries it across hosts)
+function scoreLink(name) {
+  return el("a", { href: scoreHref(name), class: "btn ghost small", onclick: (e) => { e.stopPropagation(); rememberRun(name); } }, "score a payment with it →");
+}
+
+function card(m, r, { compact = false } = {}) {
+  const sel = m.name === selected;
+  const b = best();
+  const legacy = m.schema_version != null && schemaVersion != null && m.schema_version < schemaVersion;
+  const st = r?.status?.state;
+  const running = st && st !== "finished";
+  const tags = [];
+  if (b && m.name === b.name) tags.push(el("span", { class: "tl-tag" }, "newest · best"));
+  if (legacy) tags.push(el("span", { class: "tl-tag legacy", title: "scores today's payments with the fields it knows; the receipt says what it could not see" }, `older field set (v${m.schema_version})`));
+  if (m.name === active && !isPublic) tags.push(el("span", { class: "tl-tag outline" }, "default scorer"));
+  if (running) tags.push(el("span", { class: "tl-tag running" }, st));
+  const n9 = m.mean_shared9 != null ? `AUROC ${fmt.auc(m.mean_shared9)} on the 9 shared datasets` : (m.mean_test_auroc != null ? `AUROC ${fmt.auc(m.mean_test_auroc)} on its datasets` : "");
+  const mins = m.train_minutes != null ? `${m.train_minutes < 90 ? Math.round(m.train_minutes) + " min" : (m.train_minutes / 60).toFixed(1) + " h"} of training` : "";
+  const post = m.post_minutes != null ? ` + ${Math.round(m.post_minutes)} min for the booster side` : "";
+  const pick = () => selectRun(m.name, { scroll: true });
+  return el("div", { class: "gen-card" + (sel ? " selected" : ""), role: "button", tabindex: 0, "aria-pressed": sel ? "true" : "false",
+                     onclick: pick, onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } } },
+    el("div", { class: "gen-head" },
+      m.version ? el("div", { class: "tl-v" }, m.version) : null,
+      el("div", { class: "tl-name" }, m.label || m.name),
+      el("div", { class: "tl-run" }, m.name),
+      tags.length ? el("div", { class: "gen-tags" }, ...tags) : null),
+    el("div", { class: "gen-body" },
       el("div", { class: "tl-num" }, n9 + (m.generic_test_auroc != null ? ` · generic ${fmt.auc(m.generic_test_auroc)}` : "")),
       el("div", { class: "tl-meta" }, [m.hardware, m.corpus, (mins + post).trim()].filter(Boolean).join(" · ")),
-      el("div", { class: "tl-changed" }, m.changed || ""),
-      el("div", { class: "tl-meta" }, el("a", { href: "#model", onclick: (e) => { e.preventDefault(); showRun(m.name); } }, `details of ${m.name} ↓`),
-        "  ·  ", el("a", { href: "#score", onclick: () => { try { localStorage.setItem("fraudvae.run", m.name); } catch (_) {} } }, "score a payment with it →")));
-    box.append(card);
-  }
+      compact ? null : el("div", { class: "tl-changed" }, m.changed || "")),
+    el("div", { class: "gen-actions" },
+      el("span", { class: "gen-state" }, sel ? "✓ selected · its record is below" : "select to see its record ↓"),
+      r?.has_model && r?.compatible !== false ? scoreLink(m.name) : null));
+}
+
+function renderTimeline() {
+  const box = document.getElementById("timeline");
+  if (!box) return;
+  box.innerHTML = "";
+  if (!timelineItems.length) { box.innerHTML = "<p class='dim'>No trained versions on this server yet.</p>"; return; }
+  // newest first
+  for (const m of [...timelineItems].reverse()) box.append(card(m, runs.find((r) => r.name === m.name)));
 }
 
 async function loadRuns() {
   const r = await get("/api/runs");
   runs = r.runs; active = r.active;
+  if (!selected) selected = active || best()?.name || runs[0]?.name || null;
+  renderTimeline();
   renderRuns();
-  if (!selected && runs.length) showRun(active || runs[0].name);
-  else if (selected) showRun(selected, false);
+  if (selected) showRun(selected);
 }
 
-function stateOf(r) {
-  const st = r.status?.state;
-  if (st === "running" || st === "boosting" || st === "calibrating" || st === "evaluating") return st;
-  if (r.name === active) return "loaded";
-  if (r.compatible === false) return `schema v${r.schema_version ?? "?"}`;
-  if (r.has_eval) return "evaluated";
-  if (r.has_model) return "checkpoint";
-  return "empty";
-}
-const RUNNING = new Set(["running", "boosting", "calibrating", "evaluating"]);
-
+// runs that are not one of the six: a workbench's experiments, partial runs, something still training
 function renderRuns() {
+  const section = document.getElementById("other-runs");
   const host = document.getElementById("runs-list");
+  if (!section || !host) return;
+  const known = new Set(timelineItems.map((m) => m.name));
+  const others = runs.filter((r) => !known.has(r.name));
+  section.classList.toggle("hidden", !others.length);
   host.innerHTML = "";
-  if (!runs.length) { host.innerHTML = "<p class='dim'>No runs yet. Train one below.</p>"; return; }
-  for (const r of runs) {
-    const s = stateOf(r);
+  for (const r of others) {
     const dev = r.run?.device_name || r.run?.device || "";
-    const meta = [r.config_name, r.run?.prepared ? `set ${r.run.prepared}` : null, dev, r.remote ? "fetched from remote" : null].filter(Boolean).join(", ");
-    const mean = r.mean || {};
-    const sub = [];
-    if (mean.vae != null && mean.blend != null) sub.push(`vae ${fmt.auc(mean.vae)}${mean.booster != null ? ` · booster ${fmt.auc(mean.booster)}` : ""}`);
-    if (r.generic_test_auroc != null || r.generic_val_auroc != null) sub.push(`generic ${fmt.auc(r.generic_test_auroc ?? r.generic_val_auroc)}`);
-    host.append(el("div", { class: "run-row" + (r.name === selected ? " active" : "") + (r.compatible === false ? " stale" : ""), onclick: () => showRun(r.name) },
-      el("div", { class: "top" }, el("span", { class: "name" }, r.name),
-        el("span", { class: "auc" }, r.mean_test_auroc != null ? "AUROC " + fmt.auc(r.mean_test_auroc) : "",
-          sub.length ? el("span", { class: "generic", title: "headline = blend (or the VAE alone for runs without a booster). generic = a bank the model never trained on, source token blanked" }, sub.join("  ·  ")) : "")),
-      el("div", { class: "meta" }, el("span", { class: "state " + (RUNNING.has(s) ? "running" : s === "loaded" ? "loaded" : "") }, s), " ", meta)));
+    const m = { name: r.name, label: r.config_name ? `${r.config_name} run` : r.name, version: r.schema_version ? `v${r.schema_version}` : "",
+                mean_test_auroc: r.mean_test_auroc, generic_test_auroc: r.generic_test_auroc ?? r.generic_val_auroc, schema_version: r.schema_version,
+                hardware: dev, corpus: r.run?.prepared ? `set ${r.run.prepared}` : "", changed: "" };
+    host.append(card(m, r, { compact: true }));
   }
+}
+
+function selectRun(name, { scroll = false } = {}) {
+  selected = name;
+  renderTimeline();
+  renderRuns();
+  showRun(name, scroll);
 }
 
 function destroyCharts() { charts.forEach((c) => c.destroy()); charts = []; }
 
-async function showRun(name, rerender = true) {
-  selected = name;
-  if (rerender) renderRuns();
+async function showRun(name, scroll = false) {
   const box = document.getElementById("run-detail");
+  if (scroll) box.scrollIntoView({ behavior: "smooth", block: "start" });
   let d;
   try { d = await get(`/api/runs/${encodeURIComponent(name)}/metrics`); } catch (e) { box.innerHTML = `<p class="dim">${esc(e.message)}</p>`; return; }
+  if (name !== selected) return;   // a later selection overtook this one
   destroyCharts();
   const r = runs.find((x) => x.name === name) || {};
+  const tl = timelineItems.find((m) => m.name === name);
   const run = d.run || {};
   const cfg = run.config || {};
   const parts = [];
   const stale = d.compatible === false;
-  parts.push(`<div class="card-head"><h2>${esc(name)}</h2><div class="row">
-    ${r.has_model && !stale && !isPublic ? `<button class="btn ${name === active ? "ghost" : "primary"}" id="btn-load-run" ${name === active ? "disabled" : ""}>${name === active ? "Loaded in scorer" : "Use for scoring"}</button>` : ""}
+  const legacy = !stale && d.schema_version != null && schemaVersion != null && d.schema_version < schemaVersion;
+  parts.push(`<div class="card-head"><h2>The record of ${esc(name)}${tl ? ` <span class="dim">· ${esc(tl.version)}, ${esc(tl.label)}</span>` : ""}</h2><div class="row">
+    ${r.has_model && !stale ? `<a class="btn ghost small" id="btn-score-with" href="${esc(scoreHref(name))}">score a payment with it →</a>` : ""}
+    ${r.has_model && !stale && !isPublic ? `<button class="btn ${name === active ? "ghost" : "primary"} small" id="btn-load-run" ${name === active ? "disabled" : ""}>${name === active ? "the default scorer" : "make it the default scorer"}</button>` : ""}
   </div></div>`);
-  if (stale) parts.push(`<div class="notice warn">This version was trained on an older set of fields (v${d.schema_version ?? "?"}; the code is now v${state_schema_version()}) that the current code cannot load. It stays here for the record.</div>`);
+  if (stale) parts.push(`<div class="notice warn">This version was trained on a set of fields (v${d.schema_version ?? "?"}) the current code (v${state_schema_version()}) cannot read. It stays here for the record.</div>`);
+  else if (legacy) parts.push(`<div class="notice info">Trained on an older set of fields (v${d.schema_version}; the current set is v${state_schema_version()}). It scores today's payments with the fields it knows and ignores the rest; the receipt on the Score tab says what it could not see.</div>`);
   const st = d.status || {};
   if (st.state && st.state !== "finished") {
     const prog = st.progress != null ? ` ${(100 * st.progress).toFixed(0)}% of epoch` : "";
@@ -191,6 +217,7 @@ async function showRun(name, rerender = true) {
   }
   parts.push(`<details><summary class="dim">the training log, as written while it ran</summary><pre class="log" id="run-log">loading…</pre></details>`);
   box.innerHTML = parts.join("");
+  document.getElementById("btn-score-with")?.addEventListener("click", () => rememberRun(name));
   document.getElementById("btn-load-run")?.addEventListener("click", async () => {
     await post(`/api/runs/${encodeURIComponent(name)}/load`, {});
     active = name;
@@ -204,7 +231,7 @@ async function showRun(name, rerender = true) {
 
   if (window.Chart && d.metrics.length) drawMetricCharts(d.metrics);
   clearTimeout(refreshTimer);
-  if (st.state && st.state !== "finished") refreshTimer = setTimeout(() => showRun(name, false), 8000);
+  if (st.state && st.state !== "finished") refreshTimer = setTimeout(() => showRun(name), 8000);
 }
 
 function drawMetricCharts(metrics) {
