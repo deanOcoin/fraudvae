@@ -9,6 +9,7 @@ import pandas as pd
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from . import public
 from ..data import schema
 from ..data.adapters.base import available
 from ..data.build import SAMPLES, STATS
@@ -98,13 +99,39 @@ def _row_to_features(row: pd.Series) -> dict:
     return feats
 
 
+_examples_cache: dict = {}
+
+
+def _examples_frame() -> pd.DataFrame:
+    """the rows the example picker draws from. A public site only ever reads data/examples/
+    (the redistributable sources); a workbench prefers the build's own samples file and
+    falls back to the examples directory when there is no build"""
+    from ..data.examples import EXAMPLES_DIR, load_examples
+
+    if public.PUBLIC:
+        key, loader = ("examples", lambda: load_examples(EXAMPLES_DIR))
+    elif SAMPLES.exists():
+        key, loader = (("samples", SAMPLES.stat().st_mtime), lambda: pd.read_parquet(SAMPLES))
+    else:
+        key, loader = ("examples", lambda: load_examples(EXAMPLES_DIR))
+    if _examples_cache.get("key") != key:
+        df = loader()
+        _examples_cache.update(key=key, df=df)
+    df = _examples_cache.get("df")
+    if df is None or df.empty:
+        raise HTTPException(404, "no example rows on this server: run `fraudvae build` (or `fraudvae examples` from a build)")
+    return df
+
+
 @router.get("/examples")
 def get_examples(source: str | None = None, fraud: int | None = None, n: int = 1, seed: int | None = None):
-    if not SAMPLES.exists():
-        raise HTTPException(404, "no samples yet, run build")
-    df = pd.read_parquet(SAMPLES)
+    df = _examples_frame()
     if source:
         df = df[df["source"] == source]
+        if df.empty and source in SOURCES and not SOURCES[source].redistributable:
+            raise HTTPException(404, f"no example rows for {source} on this server: its licence does not allow the rows to be "
+                                     f"redistributed. Download it from {SOURCES[source].url}, run `fraudvae build` and the "
+                                     f"app on your own machine, and the picker works for it there")
     if fraud is not None:
         df = df[df["is_fraud"] == fraud]
     if df.empty:
@@ -130,6 +157,7 @@ class BuildRequest(BaseModel):
 
 @router.post("/data/fetch")
 def post_fetch(req: BuildRequest):
+    public.forbid("downloading data")
     args = ["fraudvae.data.fetch"]
     for s in req.sources or []:
         args += ["--source", s]
@@ -139,6 +167,7 @@ def post_fetch(req: BuildRequest):
 
 @router.post("/data/build")
 def post_build(req: BuildRequest):
+    public.forbid("building data")
     args = ["fraudvae.data.build"]
     for s in req.sources or []:
         args += ["--source", s]
@@ -156,6 +185,7 @@ class PrepareRequest(BaseModel):
 
 @router.post("/data/prepare")
 def post_prepare(req: PrepareRequest):
+    public.forbid("preparing data")
     args = ["fraudvae.data.prepare", "--name", req.name]
     for s in req.sources or []:
         args += ["--source", s]

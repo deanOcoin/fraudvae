@@ -538,3 +538,148 @@ def test_history_readout_as_booster_features(trained_run, prepared_set, tmp_path
     assert plain.shape == (300,) and np.isfinite(plain).all()
     x = bst._x(sub.num[b], sub.mask[b], sub.cat[b], sub.src[b], sub.wide(b), r["h"][:300] if "h" in r else None)
     assert x.shape[1] == len(info["features"])
+
+
+def test_model_timeline_and_comparison(client, trained_run):
+    """the public demo: every loadable generation on a timeline, a transaction scored on a chosen
+    run and compared across runs in one request"""
+    import shutil
+
+    from fraudvae.paths import RUNS_DIR
+
+    twin = RUNS_DIR / "test-run-twin"
+    if not twin.exists():
+        shutil.copytree(trained_run, twin)
+    models = client.get("/api/models").json()
+    names = [m["name"] for m in models["models"]]
+    assert "test-run" in names and "test-run-twin" in names and models["active"] == "test-run"
+    me = next(m for m in models["models"] if m["name"] == "test-run")
+    assert me["version"] == "v5" and me["train_minutes"] is not None and me["mean_test_auroc"] is not None and me["loaded"]
+    assert "hardware" in me and "what" in me   # commentary fields exist even for an unknown run (empty)
+    ex = client.get("/api/examples?source=fdh&fraud=1").json()[0]
+    body = {"source": "fdh", "features": ex["features"], "wide": ex["wide"], "run": "test-run-twin", "compare": ["test-run", "test-run-twin"]}
+    r = client.post("/api/score", json=body).json()
+    assert r["model"]["run"] == "test-run-twin" and r["model"]["legacy"] is False and r["model"]["bank_known"]
+    rows = r["compare"]
+    assert [x["run"] for x in rows] == ["test-run-twin", "test-run"]      # the scoring run first, duplicates dropped
+    assert rows[0]["verdict_from"] == "blend" and all(0 <= x["p_fraud"] <= 1 for x in rows)
+    assert abs(rows[0]["p_fraud"] - r["p_fraud"]) < 1e-6              # the strip's first row is the receipt itself
+    assert set(rows[0]) >= {"p_fraud", "flag", "legit_percentile", "signals", "fields_used"}
+    # (the twin is a copy of the files on disk; the resident test-run may be older than those
+    # files by now, after the post-stage tests, so the two are not compared to each other)
+    # an unknown run is a clean 404, the default model answers when no run is named
+    assert client.post("/api/score", json={**body, "run": "nope"}).status_code == 404
+    r0 = client.post("/api/score", json={"source": "fdh", "features": ex["features"], "wide": ex["wide"]}).json()
+    assert r0["model"]["run"] == "test-run"
+    meta = client.get("/api/meta").json()
+    assert set(meta["loaded_runs"]) >= {"test-run", "test-run-twin"} and meta["public"]["public"] is False
+
+
+def test_public_mode_gates(client, monkeypatch):
+    """FRAUDVAE_PUBLIC: no training / data / default-model changes, no visitor state, paths hidden,
+    per-address rate limit, batch rows capped"""
+    from fraudvae.server import api_data, public
+
+    # an example row from the build, fetched before public mode hides the build's samples
+    ex = client.get("/api/examples?source=fdh&fraud=0").json()[0]
+    monkeypatch.setattr(public, "PUBLIC", True)
+    monkeypatch.setattr(public, "SCORE_PER_MINUTE", 60)
+    monkeypatch.setattr(public, "SCORE_BURST", 3)
+    monkeypatch.setattr(public, "BATCH_ROWS", 5)
+    public._buckets.clear()
+    assert client.post("/api/train/local", json={"config": "smoke"}).status_code == 403
+    assert client.post("/api/data/build", json={}).status_code == 403
+    assert client.post("/api/runs/test-run/load").status_code == 403
+    assert client.delete("/api/history/fdh/c1").status_code == 403
+    meta = client.get("/api/meta").json()
+    assert meta["host"] is None and meta["data_dir"] is None and meta["public"]["public"] is True
+    mx = client.get("/api/runs/test-run/metrics").json()
+    assert mx["remote"] is None and "host" not in (mx["run"] or {})
+    api_data._examples_cache.clear()
+    assert client.get("/api/examples?source=fdh&fraud=0").status_code == 404   # the build's samples are not served publicly
+    body = {"source": "fdh", "features": ex["features"], "wide": ex["wide"], "customer_id": "visitor-1", "remember": True, "ts": 1.7e9}
+    codes = [client.post("/api/score", json=body).status_code for _ in range(5)]
+    assert codes[:3] == [200, 200, 200] and 429 in codes[3:]
+    public._buckets.clear()
+    r = client.post("/api/score", json=body).json()
+    assert r["sequence"]["history_from"] is None     # nothing remembered, nothing read back
+    # a batch past the cap is refused before any scoring
+    import io
+
+    import pandas as pd
+
+    rows = pd.DataFrame([ex["features"] | {"source": "fdh"}] * 6)
+    buf = io.BytesIO(); rows.to_csv(buf, index=False)
+    resp = client.post("/api/score/batch?source=fdh", files={"file": ("x.csv", buf.getvalue(), "text/csv")})
+    assert resp.status_code == 413
+    public._buckets.clear()
+
+
+def test_examples_export_and_public_examples(client, monkeypatch, tmp_path):
+    """data/examples/: only the sources whose licence allows it are written, from the test split;
+    the public site reads that directory and nothing else"""
+    import dataclasses
+
+    from fraudvae.data import examples as ex
+    from fraudvae.data.build import SAMPLES
+    from fraudvae.data.registry import SOURCES
+    from fraudvae.server import api_data, public
+
+    # nothing in the synthetic corpus (fdh, capone) is redistributable -> nothing written
+    assert ex.write_examples(tmp_path / "ex0", samples=SAMPLES) == []
+    monkeypatch.setitem(SOURCES, "fdh", dataclasses.replace(SOURCES["fdh"], redistributable=True, license_url="https://x/l"))
+    written = ex.write_examples(tmp_path / "ex", n=20, samples=SAMPLES)
+    assert written == ["fdh"] and (tmp_path / "ex" / "fdh.parquet").exists() and not (tmp_path / "ex" / "capone.parquet").exists()
+    readme = (tmp_path / "ex" / "README.md").read_text()
+    assert "fdh" in readme and "https://x/l" in readme and "capone" not in readme.split("| source |")[1].split("\n## ")[0]
+    df = ex.load_examples(tmp_path / "ex")
+    assert set(df["source"].astype(str)) == {"fdh"} and (df["split"].astype(str) == "test").all() and len(df) <= 20
+    assert 0 < int(df["is_fraud"].sum()) < len(df)
+    # the workbench keeps reading the build's samples; the public site only the examples directory
+    assert client.get("/api/examples?source=capone").status_code == 200
+    monkeypatch.setattr(public, "PUBLIC", True)
+    monkeypatch.setattr(ex, "EXAMPLES_DIR", tmp_path / "ex")
+    api_data._examples_cache.clear()
+    row = client.get("/api/examples?source=fdh&fraud=1").json()[0]
+    assert row["source"] == "fdh" and row["is_fraud"] == 1 and row["split"] == "test" and row["features"]
+    r = client.get("/api/examples?source=capone")
+    assert r.status_code == 404 and "licence" in r.json()["detail"] and SOURCES["capone"].url in r.json()["detail"]
+    api_data._examples_cache.clear()
+
+
+def test_models_pack_and_pull(trained_run, tmp_path, monkeypatch):
+    """a run packed into a bundle (deterministically, without the training host's details) and
+    pulled back, verified against the manifest"""
+    import json
+    import tarfile
+
+    from fraudvae import models
+    from fraudvae.paths import RUNS_DIR
+
+    monkeypatch.setattr(models, "MANIFEST", tmp_path / "pretrained.json")
+    (trained_run / "remote.json").write_text(json.dumps({"host": "10.0.0.1", "port": 22}))
+    try:
+        entry = models.pack("test-run", tmp_path / "dist", RUNS_DIR, tag="t")
+        asset = tmp_path / "dist" / "test-run.tar.gz"
+        info = entry["assets"]["test-run.tar.gz"]
+        assert asset.exists() and info["sha256"] == models.sha256(asset) and info["bytes"] == asset.stat().st_size
+        with tarfile.open(asset) as tf:
+            names = tf.getnames()
+            run = json.loads(tf.extractfile("test-run/run.json").read())
+        assert "test-run/model.pt" in names and "test-run/remote.json" not in names and "host" not in run and "pid" not in run
+        assert models.pack("test-run", tmp_path / "dist", RUNS_DIR)["assets"]["test-run.tar.gz"]["sha256"] == info["sha256"]
+        manifest = json.loads((tmp_path / "pretrained.json").read_text())
+        assert manifest["tag"] == "t" and "test-run" in manifest["models"]
+        monkeypatch.setattr(models, "MIRROR_URL", f"file://{tmp_path / 'dist'}/{{asset}}")
+        dest = models.pull("test-run", tmp_path / "runs2")
+        assert (dest / "model.pt").read_bytes() == (trained_run / "model.pt").read_bytes()
+        assert not (dest / "remote.json").exists() and (dest / "calibration.json").exists()
+        assert models.list_models(tmp_path / "runs2")[0]["on_disk"]
+        # a tampered archive is refused
+        (tmp_path / "dist" / "test-run.tar.gz").write_bytes(asset.read_bytes()[:-1] + b"\x00")
+        import pytest
+
+        with pytest.raises(RuntimeError):
+            models.pull("test-run", tmp_path / "runs3")
+    finally:
+        (trained_run / "remote.json").unlink(missing_ok=True)

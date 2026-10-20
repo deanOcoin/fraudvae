@@ -5,6 +5,7 @@ import faulthandler
 import os
 import platform
 import socket
+import threading
 import time
 from contextlib import asynccontextmanager
 
@@ -16,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from .. import __version__
 from ..paths import DATA_DIR, RUNS_DIR, SERVER_LOG, WEB_DIR, ensure_dirs
 from ..data import schema
-from . import api_data, api_model, api_remote, inference
+from . import api_data, api_model, api_remote, inference, public
 
 _started = time.time()
 
@@ -44,6 +45,29 @@ except OSError:
     pass
 
 
+def _preload():
+    """warm the other generations in the background so the first visitor's comparison does
+    not pay six model loads: FRAUDVAE_PRELOAD=milestones (the default on a public site),
+    all, or none"""
+    want = os.environ.get("FRAUDVAE_PRELOAD", "milestones" if public.PUBLIC else "none").lower()
+    if want in ("", "none", "0", "no"):
+        return
+    from ..milestones import MILESTONES
+
+    names = [r["name"] for r in inference.list_runs() if r["has_model"] and r["has_calibration"] and r["compatible"]
+             and (want == "all" or r["name"] in MILESTONES)]
+
+    def go():
+        for n in names:
+            try:
+                inference.get_model(n)
+                _log(f"preloaded run '{n}'")
+            except Exception as e:  # noqa: BLE001
+                _log(f"could not preload run {n}: {e}")
+
+    threading.Thread(target=go, name="fraudvae-preload", daemon=True).start()
+
+
 @asynccontextmanager
 async def _lifespan(app):
     ensure_dirs()
@@ -65,6 +89,7 @@ async def _lifespan(app):
             _log(f"could not load run {name}: {e}")
     else:
         _log("no trained run found yet, inference disabled until one exists")
+    _preload()
     _log("ready")
     yield
     _log("shutting down")
@@ -73,7 +98,10 @@ async def _lifespan(app):
 app = FastAPI(title="fraudvae", version=__version__, docs_url="/api/docs", redoc_url=None, lifespan=_lifespan)
 app.include_router(api_data.router)
 app.include_router(api_model.router)
-app.include_router(api_remote.router)
+if not public.PUBLIC:
+    # the remote-training api provisions and drives machines over ssh with the app's own key:
+    # a workbench feature, never a public one
+    app.include_router(api_remote.router)
 
 
 @app.get("/api/meta")
@@ -81,10 +109,13 @@ def meta():
     m = inference.active()
     dev = "cuda" if torch.cuda.is_available() else ("mps" if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available() else "cpu")
     return {
-        "version": __version__, "host": socket.gethostname(), "platform": platform.platform(),
+        "version": __version__, "host": None if public.PUBLIC else socket.gethostname(), "platform": platform.platform(),
         "python": platform.python_version(), "torch": torch.__version__, "device": dev, "uptime": time.time() - _started,
-        "data_dir": str(DATA_DIR), "runs_dir": str(RUNS_DIR), "server_log": str(SERVER_LOG),
+        "data_dir": None if public.PUBLIC else str(DATA_DIR), "runs_dir": None if public.PUBLIC else str(RUNS_DIR),
+        "server_log": None if public.PUBLIC else str(SERVER_LOG),
         "schema_version": schema.SCHEMA_VERSION,
+        "public": public.limits(),
+        "loaded_runs": inference.loaded_models(),
         "active_run": None if m is None else {
             "name": m.name, "score_type": m.score_type, "n_samples": m.n_samples,
             "sources": list(m.meta.get("source_index", {})), "params": m.run.get("params"),
