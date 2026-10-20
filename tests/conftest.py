@@ -1,10 +1,13 @@
 """Every test runs against a throwaway data/runs/app-home tree. The env vars have
 to be set before fraudvae.paths is imported anywhere, hence the top of conftest."""
+import atexit
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
 _tmp = Path(tempfile.mkdtemp(prefix="fraudvae-test-"))
+atexit.register(shutil.rmtree, _tmp, True)   # half a gigabyte per run otherwise, left in /tmp
 os.environ["FRAUDVAE_DATA_DIR"] = str(_tmp / "data")
 os.environ["FRAUDVAE_RUNS_DIR"] = str(_tmp / "runs")
 os.environ["FRAUDVAE_HOME"] = str(_tmp / "home")
