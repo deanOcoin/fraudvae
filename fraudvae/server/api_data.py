@@ -147,6 +147,11 @@ def _examples_frame() -> pd.DataFrame:
 
 @router.get("/examples")
 def get_examples(source: str | None = None, fraud: int | None = None, n: int = 1, seed: int | None = None):
+    n = max(1, min(int(n), 50))
+    if seed is not None:
+        seed = int(seed) % (2**32)
+    if source is not None and (len(source) > 40 or not source.replace("_", "").isalnum()):
+        raise HTTPException(404, "no such source")
     df = _examples_frame()
     if source:
         df = df[df["source"] == source]

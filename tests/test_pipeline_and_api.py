@@ -627,6 +627,64 @@ def test_public_mode_gates(client, monkeypatch):
     public._buckets.clear()
 
 
+def test_request_hardening(client, monkeypatch):
+    """what a hostile caller gets: run names that are paths are 404 before any file is touched,
+    oversized payloads are 422 before any model runs, errors say nothing about the code in public
+    mode, the public api reference lists only what a visitor can call"""
+    import io
+
+    import pandas as pd
+
+    from fraudvae.server import public
+
+    ex = client.get("/api/examples?source=fdh&fraud=0").json()[0]
+    for bad in ("../test-run", "..%2Ftest-run", "a/b", ".", "..", "x" * 101, "-run"):
+        assert client.get(f"/api/runs/{bad}/metrics").status_code == 404, bad
+        assert client.get(f"/api/runs/{bad}/log").status_code == 404, bad
+        assert client.get(f"/api/runs/{bad}/latent").status_code == 404, bad
+    assert client.post("/api/score", json={"features": ex["features"], "run": "../test-run"}).status_code == 404
+    assert client.post("/api/score", json={"features": ex["features"], "compare": ["../x"]}).status_code in (404, 422)
+    assert client.get("/api/runs/test-run/log?tail=99999999").status_code == 200
+    assert len(client.get("/api/runs/test-run/log?tail=2").json()["lines"]) <= 2
+    too_many = {f"f{i}": 1.0 for i in range(601)}
+    assert client.post("/api/score", json={"features": too_many}).status_code == 422
+    assert client.post("/api/score", json={"features": ex["features"], "wide": {f"w{i}": 1 for i in range(3001)}}).status_code == 422
+    assert client.post("/api/score", json={"features": ex["features"], "text": {"memo": "x" * 20_001}}).status_code == 422
+    assert client.post("/api/score", json={"features": ex["features"], "history": [{"features": {}}] * 257}).status_code == 422
+    assert client.post("/api/score", json={"features": ex["features"], "session": {"mouse": [1] * 20_001}}).status_code == 422
+    assert client.post("/api/score", json={"features": ex["features"], "compare": ["r"] * 33}).status_code == 422
+    assert client.post("/api/score", json={"features": ex["features"], "source": "x" * 101}).status_code == 422
+    assert len(client.get("/api/examples?n=500").json()) <= 50
+    assert client.get("/api/examples?source=../../etc").status_code == 404
+    # a csv that is one long header row is refused by its width, not read into a frame
+    wide = io.BytesIO(("," * 3001 + "\n1" + ",1" * 3001 + "\n").encode())
+    assert client.post("/api/score/batch?source=fdh", files={"file": ("w.csv", wide.getvalue(), "text/csv")}).status_code == 413
+    # the error for a malformed transaction names the exception on a workbench and does not in public
+    junk = {"features": {"amount": "not a number", "x": [1, 2, 3]}, "source": "fdh"}
+    r = client.post("/api/score", json=junk)
+    monkeypatch.setattr(public, "PUBLIC", True)
+    public._buckets.clear()
+    rp = client.post("/api/score", json=junk)
+    if r.status_code == 400:
+        assert rp.status_code == 400 and "Error" not in rp.json()["detail"] and "could not be scored" in rp.json()["detail"]
+    assert client.get("/api/tasks").json() == []
+    assert client.get("/api/tasks/anything").status_code == 403
+    assert client.get("/api/meta").json()["platform"] in ("Linux", "Darwin", "Windows")
+    assert client.get("/api/meta").json()["public"]["score_concurrency"] >= 1
+    docs = client.get("/api/docs")
+    assert docs.status_code == 200 and "cdn" not in docs.text and "<script src=\"/static/vendor/swagger-ui/" in docs.text
+    assert client.get("/static/vendor/swagger-ui/swagger-ui-bundle.js").status_code == 200
+    paths = set(client.get("/api/openapi.json").json()["paths"])
+    assert "/api/score" in paths and "/api/train/local" not in paths and "/api/tasks" not in paths
+    public._buckets.clear()
+    # scoring works under the public-mode concurrency gate too
+    rows = pd.DataFrame([ex["features"] | {"source": "fdh"}] * 3)
+    buf = io.BytesIO(); rows.to_csv(buf, index=False)
+    assert client.post("/api/score", json={"features": ex["features"], "source": "fdh"}).status_code == 200
+    assert client.post("/api/score/batch?source=fdh", files={"file": ("x.csv", buf.getvalue(), "text/csv")}).status_code == 200
+    public._buckets.clear()
+
+
 def test_examples_export_and_public_examples(client, monkeypatch, tmp_path):
     """data/examples/: only the sources whose licence allows it are written, from the test split;
     the public site reads that directory and nothing else"""
