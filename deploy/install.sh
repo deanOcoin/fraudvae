@@ -11,13 +11,18 @@
 #   5. the pretrained generations: whatever is already in /srv/fraudvae/runs is kept; anything
 #      missing is pulled from the github release (`fraudvae models pull --all`)
 #   6. /etc/fraudvae/env from deploy/env.example (kept if it exists), the systemd unit, nginx,
-#      the firewall (22, 80, 443), and a certificate when --domain and --email are given
+#      the firewall (22 rate-limited, 80, 443), and a certificate when --domain and --email are
+#      given, with a hook that reloads nginx when certbot renews it
+#   7. the box itself: fail2ban watching sshd and nginx's rate limiter, unattended security
+#      upgrades, log rotation that keeps a week; with --harden-ssh also an sshd drop-in (keys
+#      only, root by key only, no forwarding) - applied only when root already has a key, so the
+#      step cannot lock anyone out
 #
 # The app never listens on a public port itself; nginx does, with rate limits in front of the
 # app's own. Re-run after `git pull` is what deploy/update.sh does.
 set -euo pipefail
 
-DOMAIN=""; SRC=""; GIT_URL="https://github.com/deanOcoin/fraudvae"; EMAIL=""; NO_CERT=0
+DOMAIN=""; SRC=""; GIT_URL="https://github.com/deanOcoin/fraudvae"; EMAIL=""; NO_CERT=0; HARDEN_SSH=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --domain) DOMAIN="$2"; shift 2 ;;
@@ -26,6 +31,7 @@ while [ $# -gt 0 ]; do
     --email) EMAIL="$2"; shift 2 ;;
     --no-email) EMAIL="-"; shift ;;        # a certificate without an account e-mail (no expiry notices)
     --no-cert) NO_CERT=1; shift ;;
+    --harden-ssh) HARDEN_SSH=1; shift ;;   # keys only; refuses unless root already has an authorized key
     *) echo "unknown option $1"; exit 2 ;;
   esac
 done
@@ -39,7 +45,8 @@ log() { printf '\n== %s\n' "$*"; }
 log "packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq python3 python3-venv python3-pip nginx certbot python3-certbot-nginx git rsync ufw curl libgomp1 dnsutils >/dev/null
+apt-get install -y -qq python3 python3-venv python3-pip nginx certbot git rsync ufw curl libgomp1 dnsutils \
+                       fail2ban unattended-upgrades logrotate >/dev/null
 
 log "user and directories"
 id fraudvae >/dev/null 2>&1 || useradd --system --home-dir /srv/fraudvae --shell /usr/sbin/nologin fraudvae
@@ -89,8 +96,12 @@ find "$RUNS" -maxdepth 2 \( -name remote.json -o -name '*.pid' -o -name launcher
 
 log "settings, unit, nginx"
 [ -f /etc/fraudvae/env ] || cp "$APP/deploy/env.example" /etc/fraudvae/env
-chown -R fraudvae:fraudvae /srv/fraudvae
-chmod 750 /srv/fraudvae/home
+# the service reads the code and the generations and owns neither; it writes only its home
+chown -R root:fraudvae "$APP" "$RUNS" /etc/fraudvae
+chmod -R g-w,o-rwx "$APP" "$RUNS"
+chown -R fraudvae:fraudvae "$HOME_DIR"
+chmod 750 /srv/fraudvae "$HOME_DIR"
+chmod 640 /etc/fraudvae/env
 install -m 644 "$APP/deploy/fraudvae.service" /etc/systemd/system/fraudvae.service
 systemctl daemon-reload
 systemctl enable fraudvae >/dev/null
@@ -105,6 +116,8 @@ else
   for s in $SUBS; do NAMES="$NAMES $s.$DOMAIN"; APPNAMES="$APPNAMES $s.$DOMAIN"; CERT_ARGS="$CERT_ARGS -d $s.$DOMAIN"; done
   APPNAMES="${APPNAMES# }"
 fi
+# what update.sh needs to render the same configuration later
+printf 'DOMAIN=%s\nNAMES="%s"\nAPPNAMES="%s"\n' "$DOMAIN" "$NAMES" "$APPNAMES" > /etc/fraudvae/site.conf
 render_nginx() {
   sed -e "s/APPNAMES/$APPNAMES/g" -e "s/NAMES/$NAMES/g" -e "s/DOMAIN/$DOMAIN/g" "$APP/deploy/nginx.conf" \
     | sed "s|    # ssl_certificate / ssl_certificate_key: written by certbot|    ssl_certificate /etc/letsencrypt/live/$DOMAIN/fullchain.pem;\n    ssl_certificate_key /etc/letsencrypt/live/$DOMAIN/privkey.pem;|"
@@ -129,6 +142,7 @@ EOF
   fi
   ln -sf /etc/nginx/sites-available/fraudvae /etc/nginx/sites-enabled/fraudvae
   rm -f /etc/nginx/sites-enabled/default
+  mkdir -p /var/cache/nginx/fraudvae && chown www-data:www-data /var/cache/nginx/fraudvae
   nginx -t && systemctl reload nginx
   if [ "$NO_CERT" = 0 ] && [ -n "$EMAIL" ] && [ ! -e "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
     log "certificate for $DOMAIN"
@@ -149,16 +163,94 @@ EOF
       nginx -t && systemctl reload nginx
     fi
   fi
+  # certbot renews on its own timer; nginx has to be told to pick the new certificate up, or it
+  # keeps serving the old one until it expires
+  mkdir -p /etc/letsencrypt/renewal-hooks/deploy
+  printf '#!/bin/sh\nsystemctl reload nginx\n' > /etc/letsencrypt/renewal-hooks/deploy/fraudvae-nginx-reload
+  chmod 755 /etc/letsencrypt/renewal-hooks/deploy/fraudvae-nginx-reload
 else
   echo "no --domain given: nginx not configured; the app listens on 127.0.0.1:8765 only"
 fi
 
 log "firewall"
-ufw allow OpenSSH >/dev/null
+ufw delete allow OpenSSH >/dev/null 2>&1 || true
+ufw limit OpenSSH >/dev/null          # six new connections per half minute per address, then dropped
 ufw allow 80/tcp >/dev/null
 ufw allow 443/tcp >/dev/null
 ufw --force enable >/dev/null
 ufw status | head -8
+
+log "fail2ban, automatic upgrades, log rotation"
+# sshd: five failures in ten minutes bans the address for an hour (ufw's limit already slows it
+# down). nginx: an address that keeps hitting the rate limiter after being told 429 is banned too
+cat > /etc/fail2ban/jail.d/fraudvae.conf <<'EOF'
+[DEFAULT]
+bantime  = 1h
+findtime = 10m
+backend  = systemd
+
+[sshd]
+enabled  = true
+maxretry = 5
+
+[nginx-limit-req]
+enabled  = true
+port     = http,https
+logpath  = /var/log/nginx/fraudvae.error.log
+backend  = auto
+maxretry = 200
+findtime = 10m
+bantime  = 1h
+EOF
+systemctl enable fail2ban >/dev/null 2>&1 || true
+systemctl restart fail2ban
+# security updates install themselves; a kernel that needs a reboot says so in /var/run/reboot-required
+cat > /etc/apt/apt.conf.d/20auto-upgrades <<'EOF'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";
+EOF
+systemctl enable unattended-upgrades >/dev/null 2>&1 || true
+# the site's logs keep a week, compressed; the access log holds no full addresses (see nginx.conf)
+cat > /etc/logrotate.d/fraudvae <<'EOF'
+/var/log/nginx/fraudvae.access.log /var/log/nginx/fraudvae.error.log /srv/fraudvae/home/server.log {
+    daily
+    rotate 7
+    missingok
+    notifempty
+    compress
+    delaycompress
+    sharedscripts
+    postrotate
+        [ -f /run/nginx.pid ] && kill -USR1 "$(cat /run/nginx.pid)" || true
+    endscript
+}
+EOF
+
+if [ "$HARDEN_SSH" = 1 ]; then
+  log "sshd: keys only"
+  if [ -s /root/.ssh/authorized_keys ] && grep -Eq '^(ssh-(ed25519|rsa)|ecdsa-sha2|sk-)' /root/.ssh/authorized_keys; then
+    cat > /etc/ssh/sshd_config.d/10-fraudvae.conf <<'EOF'
+# written by deploy/install.sh --harden-ssh: this box is reached by key, as root or not at all
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitEmptyPasswords no
+PermitRootLogin prohibit-password
+PubkeyAuthentication yes
+MaxAuthTries 3
+LoginGraceTime 20
+X11Forwarding no
+AllowTcpForwarding no
+AllowAgentForwarding no
+ClientAliveInterval 300
+ClientAliveCountMax 2
+EOF
+    if sshd -t; then systemctl reload ssh 2>/dev/null || systemctl reload sshd; echo "password logins are off; root logs in with a key only"
+    else rm -f /etc/ssh/sshd_config.d/10-fraudvae.conf; echo "sshd rejected the drop-in; nothing changed"; fi
+  else
+    echo "root has no authorized key: left sshd alone (add your key first, then re-run with --harden-ssh)"
+  fi
+fi
 
 log "done"
 sleep 3
