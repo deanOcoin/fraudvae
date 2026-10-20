@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from . import public
@@ -38,8 +38,11 @@ def _clean(o):
     return o
 
 
-@router.get("/schema")
+@router.get("/schema", summary="The feature schema", tags=["data"])
 def get_schema():
+    """What a transaction can carry: every numeric and categorical feature the models know,
+    with its label, unit, group and how it is transformed, plus the categories seen in
+    training. The names here are the ones `features` in `/api/score` is matched against."""
     stats = json.loads(STATS.read_text()) if STATS.exists() else {"sources": {}}
     nums = []
     for f in model_numeric_features():
@@ -74,8 +77,11 @@ def _corpus_stats() -> tuple[dict, str]:
     return {"sources": {}}, "none"
 
 
-@router.get("/datasets")
+@router.get("/datasets", summary="The training corpus", tags=["data"])
 def get_datasets():
+    """The datasets the models were trained on: rows, fraud rate, time span, licence, the
+    sha256 of the files as downloaded, and the summary statistics (fraud by hour, by amount
+    band, by type) the Data tab draws. The site holds the statistics, not the rows."""
     stats, stats_from = _corpus_stats()
     lock = json.loads(LOCK.read_text()) if LOCK.exists() and not public.PUBLIC else {"sources": {}}
     if not lock.get("sources") and EXPECTED_FILES.exists():
@@ -145,8 +151,15 @@ def _examples_frame() -> pd.DataFrame:
     return df
 
 
-@router.get("/examples")
-def get_examples(source: str | None = None, fraud: int | None = None, n: int = 1, seed: int | None = None):
+@router.get("/examples", summary="Example transactions", tags=["data"])
+def get_examples(source: str | None = Query(None, description="restrict to one dataset family"),
+                 fraud: int | None = Query(None, description="1 for known fraud, 0 for known legitimate, absent for either"),
+                 n: int = Query(1, description="how many, at most 50"),
+                 seed: int | None = Query(None, description="fix the draw; a different one each call otherwise")):
+    """Real rows from the test split of the datasets whose licence allows them to be shared,
+    with their true label, ready to paste into `/api/score` (`features` and `wide` are in the
+    shape it takes). A source whose licence does not allow redistribution answers 404 with
+    where to download it."""
     n = max(1, min(int(n), 50))
     if seed is not None:
         seed = int(seed) % (2**32)
