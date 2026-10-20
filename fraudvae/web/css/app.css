@@ -298,3 +298,29 @@ details.batch summary { cursor: pointer; font-weight: 500; }
 .history-box textarea { width: 100%; font-family: var(--mono, monospace); font-size: 12px; box-sizing: border-box; }
 .history-box input[type=text] { width: 260px; }
 .rc-line.dim span { color: var(--dim, #777); font-size: 12px; }
+
+/* v5 public demo: the model picker, the comparison strip and the timeline */
+.field.check .checkline { display: flex; align-items: center; gap: 0.5rem; font-weight: 400; color: var(--ink-1); }
+.field.check input[type="checkbox"] { width: 1rem; height: 1rem; }
+.rc-compare { margin: 0.4rem 0 0.2rem; border-top: 1px dashed var(--line); padding-top: 0.4rem; }
+.rc-compare .rc-line.head .k, .rc-compare .rc-line.head span { color: var(--ink-2); }
+.rc-compare .rc-line.me span:first-child { font-weight: 600; }
+.timeline { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 0.7rem; margin: 0 0 1.2rem; }
+.timeline .tl-card { border: 1px solid var(--line); border-radius: 8px; padding: 0.7rem 0.8rem; background: var(--paper); position: relative; }
+.timeline .tl-card.best { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent); }
+.timeline .tl-card .tl-v { font-size: 0.8rem; color: var(--ink-2); letter-spacing: 0.04em; text-transform: uppercase; }
+.timeline .tl-card .tl-name { font-weight: 600; margin: 0.1rem 0 0.3rem; }
+.timeline .tl-card .tl-num { font-family: var(--mono); font-size: 0.95rem; }
+.timeline .tl-card .tl-meta { color: var(--ink-2); font-size: 0.8rem; margin-top: 0.3rem; line-height: 1.35; }
+.timeline .tl-card .tl-changed { font-size: 0.85rem; margin-top: 0.35rem; }
+.timeline .tl-card .tl-tag { position: absolute; top: 0.55rem; right: 0.6rem; font-size: 0.7rem; padding: 0.1rem 0.4rem; border-radius: 999px; background: var(--accent); color: white; }
+.timeline .tl-card .tl-tag.legacy { background: var(--ink-3, #888); }
+.story-switch { display: flex; gap: 0.5rem; align-items: center; margin: 0 0 1rem; color: var(--ink-2); }
+.story-switch .btn.small { padding: 0.25rem 0.7rem; font-size: 0.85rem; }
+.story-switch .btn.active { background: var(--accent-soft); border-color: var(--accent); }
+.explain .callout { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 0.6rem 0.9rem; margin: 1rem 0; border-radius: 4px; }
+.explain table.metric-table td, .explain table.metric-table th { vertical-align: top; }
+
+/* right / wrong against a labelled example */
+.receipt .call.ok { color: var(--calm); font-weight: 600; }
+.receipt .call.bad { color: var(--alarm); font-weight: 600; }

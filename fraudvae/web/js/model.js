@@ -10,9 +10,14 @@ let selected = null;
 let charts = [];
 let refreshTimer = null;
 
+let isPublic = false;
+
 export async function initModel(state) {
   schemaVersion = state.meta?.schema_version ?? null;
+  isPublic = !!state.meta?.public?.public;
+  if (isPublic) document.getElementById("train-section")?.classList.add("hidden");
   await loadRuns();
+  await renderTimeline();
   const cfgs = await get("/api/configs");
   const sel = document.getElementById("train-config");
   for (const c of cfgs.configs) sel.append(el("option", { value: c.name, title: c.text }, c.name));
@@ -23,6 +28,31 @@ export async function initModel(state) {
   document.getElementById("train-device").textContent = `this machine: ${state.meta?.device || "?"}, torch ${state.meta?.torch || ""}`;
   document.getElementById("train-form").addEventListener("submit", startTraining);
   window.addEventListener("tabshown", (e) => { if (e.detail === "model") loadRuns(); });
+}
+
+async function renderTimeline() {
+  const box = document.getElementById("timeline");
+  if (!box) return;
+  let d;
+  try { d = await get("/api/models"); } catch (e) { box.innerHTML = `<p class="dim">${esc(e.message)}</p>`; return; }
+  const items = d.models.filter((m) => m.milestone);
+  const best = items.reduce((a, b) => (b.mean_test_auroc ?? -1) > (a?.mean_test_auroc ?? -1) ? b : a, null);
+  box.innerHTML = "";
+  for (const m of items) {
+    const n9 = m.mean_shared9 != null ? `${fmt.auc(m.mean_shared9)} on the 9 shared banks` : (m.mean_test_auroc != null ? `${fmt.auc(m.mean_test_auroc)} mean AUROC` : "");
+    const mins = m.train_minutes != null ? `${m.train_minutes < 90 ? Math.round(m.train_minutes) + " min" : (m.train_minutes / 60).toFixed(1) + " h"} training` : "";
+    const post = m.post_minutes != null ? ` + ${Math.round(m.post_minutes)} min post stage` : "";
+    const card = el("div", { class: "tl-card" + (best && m.name === best.name ? " best" : "") },
+      el("div", { class: "tl-v" }, m.version),
+      m.name === best?.name ? el("span", { class: "tl-tag" }, "newest · best") : (m.legacy || m.schema_version < 5 ? el("span", { class: "tl-tag legacy" }, `schema v${m.schema_version}`) : ""),
+      el("div", { class: "tl-name" }, m.label),
+      el("div", { class: "tl-num" }, n9 + (m.generic_test_auroc != null ? ` · generic ${fmt.auc(m.generic_test_auroc)}` : "")),
+      el("div", { class: "tl-meta" }, [m.hardware, m.corpus, (mins + post).trim()].filter(Boolean).join(" · ")),
+      el("div", { class: "tl-changed" }, m.changed || ""),
+      el("div", { class: "tl-meta" }, el("a", { href: "#model", onclick: (e) => { e.preventDefault(); showRun(m.name); } }, `run ${m.name} ↓`),
+        "  ·  ", el("a", { href: "#score", onclick: () => { try { localStorage.setItem("fraudvae.run", m.name); } catch (_) {} } }, "score with it →")));
+    box.append(card);
+  }
 }
 
 async function loadRuns() {
@@ -79,7 +109,7 @@ async function showRun(name, rerender = true) {
   const parts = [];
   const stale = d.compatible === false;
   parts.push(`<div class="card-head"><h2>${esc(name)}</h2><div class="row">
-    ${r.has_model && !stale ? `<button class="btn ${name === active ? "ghost" : "primary"}" id="btn-load-run" ${name === active ? "disabled" : ""}>${name === active ? "Loaded in scorer" : "Use for scoring"}</button>` : ""}
+    ${r.has_model && !stale && !isPublic ? `<button class="btn ${name === active ? "ghost" : "primary"}" id="btn-load-run" ${name === active ? "disabled" : ""}>${name === active ? "Loaded in scorer" : "Use for scoring"}</button>` : ""}
   </div></div>`);
   if (stale) parts.push(`<div class="notice warn">This run was trained on schema v${d.schema_version ?? "?"}; the code is now v${state_schema_version()}. It stays here for the record but cannot be loaded. Rebuild, prepare and train again to get a comparable run.</div>`);
   const st = d.status || {};

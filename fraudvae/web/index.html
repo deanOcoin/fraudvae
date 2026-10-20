@@ -15,8 +15,9 @@
     <a href="#score" data-tab="score" class="rail-link">Score a transaction</a>
     <a href="#data" data-tab="data" class="rail-link">Training data</a>
     <a href="#model" data-tab="model" class="rail-link">Model &amp; training</a>
-    <a href="#compute" data-tab="compute" class="rail-link">Compute &amp; remote GPU</a>
+    <a href="#compute" data-tab="compute" class="rail-link" id="rail-compute">Compute &amp; remote GPU</a>
     <a href="#explain" data-tab="explain" class="rail-link">How it works</a>
+    <a href="#story" data-tab="story" class="rail-link">The story</a>
     <div class="rail-foot">
       <div id="rail-model" class="rail-model">loading…</div>
       <a href="/api/docs" class="rail-dim" target="_blank" rel="noopener">API docs</a>
@@ -48,6 +49,16 @@
                 <option value="fpr_0.05">5%</option>
               </select>
               <small>Threshold set on validation data so this share of legitimate transactions gets flagged.</small>
+            </label>
+            <label class="field">
+              <span>Model generation</span>
+              <select name="run" id="run-select"></select>
+              <small id="run-hint">Which generation scores this transaction. The newest is the default; every earlier one is still here so the same transaction can be scored on each.</small>
+            </label>
+            <label class="field check">
+              <span>Compare across generations</span>
+              <span class="checkline"><input type="checkbox" name="compare_all" id="compare-all"> score it on every generation and show them side by side</span>
+              <small>Each extra generation adds a fraction of a second.</small>
             </label>
             <label class="field">
               <span>Fraud labels arrive within</span>
@@ -162,11 +173,15 @@
         <h1>Model &amp; training</h1>
         <p class="lede">Every run lives in <code>runs/&lt;name&gt;</code>: checkpoint, per-epoch metrics, calibration and held-out evaluation. Load any of them into the scorer.</p>
       </header>
+      <section class="timeline-section">
+        <div class="card-head"><h2>Generations</h2><span class="dim">oldest first; the same transaction can be scored on any of them from the Score tab</span></div>
+        <div class="timeline" id="timeline"></div>
+      </section>
       <div class="runs-layout">
         <div class="runs-list" id="runs-list"></div>
         <div class="run-detail" id="run-detail"><p class="dim">Select a run.</p></div>
       </div>
-      <section class="train-section">
+      <section class="train-section" id="train-section">
         <div class="card-head"><h2>Train on this machine</h2><span class="dim" id="train-device"></span></div>
         <form id="train-form" class="train-form">
           <label class="inline-field">config <select name="config" id="train-config"></select></label>
@@ -251,6 +266,10 @@
     <!-- ================= EXPLAIN ================= -->
     <section id="tab-explain" class="tab hidden">
       <article class="explain" id="explain-article">loading…</article>
+    </section>
+
+    <section id="tab-story" class="tab hidden">
+      <article id="story-article" class="explain"></article>
     </section>
   </main>
 </div>
