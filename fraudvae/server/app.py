@@ -95,8 +95,25 @@ async def _lifespan(app):
     _log("shutting down")
 
 
-app = FastAPI(title="fraudvae", version=__version__, docs_url=None, redoc_url=None, openapi_url="/api/openapi.json",
-              lifespan=_lifespan)
+_DESCRIPTION = """
+The scoring API behind [finfraud.dev](https://www.finfraud.dev). One call does the work:
+`POST /api/score` takes a transaction and answers with the chance that it is fraud, whether
+it would be flagged at a given false-positive budget, how unusual it looks, and what each
+part of the model contributed. `POST /api/score/batch` does the same for a csv.
+
+Everything else is reference material: the feature schema, the training corpus, the model
+generations and their records, example transactions to try. There is no key and no account;
+the limits are per address (60 scores a minute, 4 batch uploads) and a request past them
+gets a 429 with a `Retry-After`. The code, the pretrained models and how to run the same
+API on your own machine are in the
+[repository](https://github.com/deanOcoin/fraudvae).
+"""
+
+app = FastAPI(title="fraudvae", version=__version__, description=_DESCRIPTION, docs_url=None, redoc_url=None,
+              openapi_url="/api/openapi.json", lifespan=_lifespan,
+              openapi_tags=[{"name": "scoring", "description": "score transactions"},
+                            {"name": "data", "description": "what the models were trained on and what they take"},
+                            {"name": "models", "description": "the generations and their records"}])
 app.include_router(api_data.router)
 app.include_router(api_model.router)
 if not public.PUBLIC:
@@ -128,8 +145,11 @@ def api_docs():
     return FileResponse(WEB_DIR / "apidocs.html")
 
 
-@app.get("/api/meta")
+@app.get("/api/meta", summary="Server status", tags=["models"])
 def meta():
+    """Version, device, uptime, which generations are resident and what the active one can
+    do, and the public-mode limits. Answers only once a model is loaded, which makes it the
+    address to point an uptime monitor at."""
     m = inference.active()
     dev = "cuda" if torch.cuda.is_available() else ("mps" if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available() else "cpu")
     return {

@@ -7,7 +7,7 @@ import threading
 
 import numpy as np
 import pandas as pd
-from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, field_validator
 
@@ -75,6 +75,14 @@ def _need_model() -> inference.ActiveModel:
 
 
 class ScoreRequest(BaseModel):
+    model_config = {"json_schema_extra": {"examples": [{
+        "source": "sparkov",
+        "features": {"amount": 412.80, "hour": 2, "dow": 6, "secs_since_prev_txn": 674, "cust_txn_count_24h": 6,
+                     "cust_amount_sum_24h": 3189.02, "amount_over_cust_mean": 3.08, "cust_days_since_first": 615.7},
+        "fpr_target": "fpr_0.01",
+        "history": [{"features": {"amount": 23.10, "hour": 18, "dow": 5}, "ts": 1760900000}],
+        "compare": ["gpu_full-4090-v4", "v5-h200-e"],
+    }]}}
     source: str | None = None
     features: dict
     fpr_target: str = "fpr_0.01"
@@ -179,8 +187,38 @@ def _summary(r: dict) -> dict:
                         if isinstance(r.get(k), dict) and r[k].get("present")}}
 
 
-@router.post("/score")
+@router.post("/score", summary="Score one transaction", tags=["scoring"])
 def post_score(req: ScoreRequest, request: Request):
+    """Score a single transaction and get back the full receipt.
+
+    The only required field is `features`: a flat object of the transaction's fields, named
+    as the bank's own export names them (`amount`, `hour`, `secs_since_prev_txn`, ...) or with
+    the names in `/api/schema`. Anything the model does not know is ignored; anything missing
+    is treated as not observed. `source` names the dataset family the bank belongs to
+    (`sparkov`, `ieee`, `paysim`, ...) so the right per-bank model and threshold apply; leave
+    it out and the generic model scores it.
+
+    What comes back: `p_fraud` (the calibrated chance of fraud), `flag` (whether it crosses
+    the threshold for the requested false-positive budget, `fpr_target`: `fpr_0.001`,
+    `fpr_0.01` or `fpr_0.05`), `z_score` and `legit_percentile` (how unusual it is next to the
+    bank's legitimate traffic), `verdict_from` (which parts decided), `contributions` (the
+    features that pushed the verdict and which way), and a block per part of the model -
+    `novelty` (the autoencoder), `supervised` (the booster), `local` (the bank's own model),
+    `sequence`, `device`, `graph`, `text`, `behaviour` (present when the request carries what
+    they need), `blend` (the final combination with every threshold) - plus `compare`, one
+    summary per generation, when other generations were asked for.
+
+    Optional context: `wide` (the source's raw columns as they are), `history` (previous
+    transactions of the same customer, oldest first, each `{features, ts}`), `device`
+    (telemetry: os, browser, screen), `entities` (customer, device, card, email codes for the
+    entity graph), `text` (url, description, memo), `session` (mouse / keystroke / touch /
+    motion events), `label_delay_days` (how long this deployment's fraud labels take to
+    arrive). `run` picks a generation; `compare` lists others to score the same transaction on.
+
+    On the public site a visitor's history is not stored, so `customer_id` and `remember`
+    are ignored, and the limits are 60 requests a minute (burst 20) and 6 generations in a
+    comparison. 429 or 503 with `Retry-After` past that; 422 when a field is over its size.
+    """
     public.limit("score", request)
     m = _model_named(req.run)
     if public.PUBLIC and not _score_slots.acquire(timeout=3.0):
@@ -221,10 +259,12 @@ def _score(req: ScoreRequest, m: inference.ActiveModel):
 _score_slots = threading.BoundedSemaphore(public.SCORE_CONCURRENCY)
 
 
-@router.get("/models")
+@router.get("/models", summary="The model generations", tags=["models"])
 def get_models():
-    """the model timeline: every loadable generation with hardware, training time, numbers and
-    what changed, oldest first; which are loaded now and which is the default"""
+    """Every generation this server can score with, oldest first: the hardware it trained on,
+    how long it took, its test numbers (mean AUROC across the sources, the generic head) and
+    one line on what changed from the one before. `loaded` says which are resident now,
+    `active` which one answers when a request names no `run`."""
     from .timeline import timeline
 
     items = timeline()
@@ -246,9 +286,18 @@ def delete_history(source: str, customer_id: str):
     return {"deleted": m.store.forget("" if source == "generic" else source, customer_id)}
 
 
-@router.post("/score/batch")
-async def post_score_batch(request: Request, file: UploadFile = File(...), source: str | None = None, fpr_target: str = "fpr_0.01",
-                           label_delay_days: float | None = None, run: str | None = None):
+@router.post("/score/batch", summary="Score a csv file", tags=["scoring"],
+             responses={200: {"content": {"text/csv": {}}, "description": "the input rows with the scores appended"}})
+async def post_score_batch(request: Request, file: UploadFile = File(..., description="a csv with one transaction per row; a `source` column overrides the query parameter"),
+                           source: str | None = Query(None, description="dataset family of the rows (`sparkov`, `ieee`, ...); generic when absent"),
+                           fpr_target: str = Query("fpr_0.01", description="false-positive budget the flag is set at: `fpr_0.001`, `fpr_0.01` or `fpr_0.05`"),
+                           label_delay_days: float | None = Query(None, description="how long fraud labels take to arrive in this deployment"),
+                           run: str | None = Query(None, description="which generation scores the file (default: the active one)")):
+    """Upload a csv and get it back with `p_fraud`, `booster_prob`, `novelty_score`,
+    `novelty_raw` and `flag` columns appended; the `X-Summary` response header carries the counts (rows, flagged, fraud rate)
+    as json. Columns are matched by name the way `/api/score` matches `features`. On the
+    public site a file may have at most 5,000 rows and 3,000 columns, 4 uploads a minute,
+    two running at once server-wide."""
     public.limit("batch", request)
     m = _model_named(run)
     raw = await file.read()
@@ -303,8 +352,11 @@ async def post_score_batch(request: Request, file: UploadFile = File(...), sourc
     return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv", headers=headers)
 
 
-@router.get("/runs")
+@router.get("/runs", summary="The run directories", tags=["models"])
 def get_runs():
+    """The raw list behind `/api/models`: every run directory with its status, its evaluation
+    numbers and what it has (a model, a calibration, a booster, the v5 modules). `/api/models`
+    is the readable version; this one is for inspecting a run."""
     m = inference.active()
     return _clean({"runs": [public.scrub_run(r) for r in inference.list_runs()], "active": m.name if m else None})
 
@@ -323,8 +375,12 @@ def post_load(name: str):
             "has_booster": m.booster is not None, "has_blend": m.has_blend}
 
 
-@router.get("/runs/{name}/metrics")
+@router.get("/runs/{name}/metrics", summary="Everything recorded about a run", tags=["models"])
 def get_metrics(name: str):
+    """The training curve (`metrics`: one row per epoch), the run's settings and status, the
+    evaluation on the test split (`eval`, and `eval_delay` under delayed labels), and the
+    report of each side model: calibration, booster, sequence head, specialists, entity graph,
+    text heads, behaviour verifiers. A few hundred kilobytes; cached for ten minutes."""
     d = _run_dir(name)
     out = {"metrics": [], "status": None, "run": None, "eval": None, "eval_delay": None, "calibration": None, "booster": None,
            "seqhead": None, "specialists": None, "graph": None, "text": None, "behaviour": None, "graph_bench": None,
@@ -368,8 +424,10 @@ def get_metrics(name: str):
     return _clean(public.scrub_run(out))
 
 
-@router.get("/runs/{name}/log")
-def get_log(name: str, tail: int = 300):
+@router.get("/runs/{name}/log", summary="A run's training log", tags=["models"])
+def get_log(name: str, tail: int = Query(300, description="how many lines from the end, at most 5,000")):
+    """The last lines of the training log as it was written, so the numbers in the story
+    pages can be checked against where they came from."""
     d = _run_dir(name)
     tail = max(1, min(int(tail), 5000))
     for fname in ("train.log", "launcher.log"):
@@ -380,8 +438,12 @@ def get_log(name: str, tail: int = 300):
     return {"lines": [], "n": 0}
 
 
-@router.get("/runs/{name}/latent")
+@router.get("/runs/{name}/latent", summary="A run's latent map", tags=["models"])
 def get_latent(name: str):
+    """A two-dimensional projection of the test split through the autoencoder: `xy` the
+    coordinates, `y` the fraud label, `src` the source index, `score` the novelty and `blend`
+    the final probability of each point. About three megabytes, what the scatter plot on the
+    Score tab draws; cached for ten minutes."""
     p = _run_dir(name) / "latent_map.npz"
     if not p.exists():
         raise HTTPException(404, "no latent map for this run")
@@ -409,8 +471,10 @@ _latent_cache: dict[tuple[str, int], bytes] = {}
 _latent_lock = threading.Lock()
 
 
-@router.get("/configs")
+@router.get("/configs", summary="The training configurations", tags=["models"])
 def get_configs():
+    """The yaml of every training configuration that ships with the code (`cpu_small`,
+    `gpu_full`, the v5 ones), as text, and the prepared sets a workbench has on disk."""
     out = []
     for p in sorted(CONFIG_DIR.glob("*.yaml")):
         out.append({"name": p.stem, "text": p.read_text()})
