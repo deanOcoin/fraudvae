@@ -16,20 +16,45 @@ TimeoutStopSec=20
 # six generations resident: ~7 GB; the box has 16
 MemoryMax=12G
 MemoryHigh=11G
+TasksMax=512
+LimitNOFILE=4096
+LimitCORE=0
 Nice=5
+UMask=0077
 
 # the app writes only its own home (server log) under /srv/fraudvae; everything else read-only
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/srv/fraudvae/home
 PrivateTmp=true
+PrivateDevices=true
 NoNewPrivileges=true
 ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
 ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
 RestrictSUIDSGID=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RemoveIPC=true
 LockPersonality=true
-# no outbound connections are needed once the bundles are pulled
+KeyringMode=private
+# no capabilities at all: it binds a high port on localhost and reads files it owns a view of
+CapabilityBoundingSet=
+AmbientCapabilities=
+# the system-call set an ordinary service needs, nothing that reboots, loads modules or traces
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallErrorNumber=EPERM
+SystemCallArchitectures=native
+# it talks to nginx on localhost and to nothing else: no outbound connections are needed once the
+# bundles are pulled (install.sh pulls them as root, outside this unit)
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+IPAddressDeny=any
+IPAddressAllow=localhost
 
 [Install]
 WantedBy=multi-user.target
