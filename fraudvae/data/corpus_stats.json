@@ -1,0 +1,4985 @@
+{
+ "sources": {
+  "fdh": {
+   "rows": 1754155,
+   "fraud": 14681,
+   "fraud_rate": 0.008369271814634397,
+   "build_seconds": 10.1,
+   "splits": {
+    "train": {
+     "rows": 1227908,
+     "fraud": 9996
+    },
+    "val": {
+     "rows": 175416,
+     "fraud": 1535
+    },
+    "test": {
+     "rows": 350831,
+     "fraud": 3150
+    }
+   },
+   "ts_min": 1522540831.0,
+   "ts_max": 1538351997.0,
+   "absolute_time": true,
+   "coverage": {
+    "amount": 1.0,
+    "hour": 1.0,
+    "dow": 1.0,
+    "secs_since_prev_txn": 0.9971553254986019,
+    "cust_txn_count_24h": 1.0,
+    "cust_amount_sum_24h": 1.0,
+    "cust_txn_count_7d": 1.0,
+    "cust_amount_mean_30d": 0.9970589828150876,
+    "amount_over_cust_mean": 0.9970589828150876,
+    "cust_txn_count_1h": 1.0,
+    "cust_amount_sum_1h": 1.0,
+    "cust_amount_z_30d": 0.9940170623462579,
+    "cust_txn_count_prior": 1.0,
+    "cust_days_since_first": 1.0,
+    "merch_txn_count_24h": 1.0,
+    "merch_amount_ratio": 0.9942992494961962,
+    "cust_age": 0.0,
+    "credit_limit": 0.0,
+    "amount_over_limit": 0.0,
+    "balance_before": 0.0,
+    "balance_after": 0.0,
+    "account_age_days": 0.0,
+    "dist_km": 0.0,
+    "city_pop": 0.0,
+    "days_since_addr_change": 0.0,
+    "dest_balance_before": 0.0,
+    "dest_balance_after": 0.0,
+    "yearly_income": 0.0,
+    "total_debt": 0.0,
+    "fico_score": 0.0,
+    "num_cards": 0.0,
+    "ieee_dist1": 0.0,
+    "ieee_c1": 0.0,
+    "ieee_c13": 0.0,
+    "ieee_c14": 0.0,
+    "ieee_d15": 0.0,
+    "screen_w": 0.0,
+    "screen_h": 0.0,
+    "session_length_min": 0.0,
+    "email_name_similarity": 0.0,
+    "cpty_txn_count_30d": 1.0,
+    "cpty_new_cust_30d": 1.0,
+    "cpty_age_days": 1.0,
+    "cpty_fraud_count_delayed": 1.0,
+    "cpty_fraud_share_delayed": 0.8300190120029302,
+    "device_txn_count_30d": 0.0,
+    "device_new_cust_30d": 0.0,
+    "device_age_days": 0.0,
+    "device_fraud_count_delayed": 0.0,
+    "device_fraud_share_delayed": 0.0,
+    "email_txn_count_30d": 0.0,
+    "email_new_cust_30d": 0.0,
+    "email_age_days": 0.0,
+    "email_fraud_count_delayed": 0.0,
+    "email_fraud_share_delayed": 0.0,
+    "addr_txn_count_30d": 0.0,
+    "addr_new_cust_30d": 0.0,
+    "addr_age_days": 0.0,
+    "addr_fraud_count_delayed": 0.0,
+    "addr_fraud_share_delayed": 0.0,
+    "card_txn_count_30d": 0.0,
+    "card_new_cust_30d": 0.0,
+    "card_age_days": 0.0,
+    "card_fraud_count_delayed": 0.0,
+    "card_fraud_share_delayed": 0.0,
+    "cust_new_cpty_30d": 1.0,
+    "cust_new_device_30d": 0.0,
+    "cust_fraud_count_delayed": 1.0,
+    "cust_fraud_share_delayed": 0.8329634496381448,
+    "ulb_v1": 0.0,
+    "ulb_v2": 0.0,
+    "ulb_v3": 0.0,
+    "ulb_v4": 0.0,
+    "ulb_v5": 0.0,
+    "ulb_v6": 0.0,
+    "ulb_v7": 0.0,
+    "ulb_v8": 0.0,
+    "ulb_v9": 0.0,
+    "ulb_v10": 0.0,
+    "ulb_v11": 0.0,
+    "ulb_v12": 0.0,
+    "ulb_v13": 0.0,
+    "ulb_v14": 0.0,
+    "ulb_v15": 0.0,
+    "ulb_v16": 0.0,
+    "ulb_v17": 0.0,
+    "ulb_v18": 0.0,
+    "ulb_v19": 0.0,
+    "ulb_v20": 0.0,
+    "ulb_v21": 0.0,
+    "ulb_v22": 0.0,
+    "ulb_v23": 0.0,
+    "ulb_v24": 0.0,
+    "ulb_v25": 0.0,
+    "ulb_v26": 0.0,
+    "ulb_v27": 0.0,
+    "ulb_v28": 0.0,
+    "channel": 1.0,
+    "txn_type": 1.0,
+    "merchant_category": 0.0,
+    "card_brand": 0.0,
+    "card_kind": 0.0,
+    "is_foreign": 0.0,
+    "cust_gender": 0.0,
+    "cust_new_merchant": 1.0,
+    "cust_new_category": 0.0,
+    "cust_first_foreign": 0.0,
+    "auth_error": 0.0,
+    "device_type": 0.0,
+    "is_recurring": 0.0,
+    "dest_is_merchant": 0.0,
+    "product_code": 0.0,
+    "email_bucket": 0.0,
+    "payment_format": 0.0,
+    "device_os": 0.0,
+    "browser": 0.0,
+    "email_bucket_recipient": 0.0,
+    "phone_valid": 0.0,
+    "keep_alive_session": 0.0
+   },
+   "amount": {
+    "legit_quantiles": {
+     "0.01": 1.9600000381469727,
+     "0.1": 9.520000457763672,
+     "0.5": 44.4900016784668,
+     "0.9": 109.44999694824219,
+     "0.99": 167.0399932861328
+    },
+    "fraud_quantiles": {
+     "0.01": 2.5459999561309816,
+     "0.1": 13.680000305175781,
+     "0.5": 72.22000122070312,
+     "0.9": 333.1000061035156,
+     "0.99": 703.3300170898453
+    },
+    "legit_hist_log10": {
+     "edges": [
+      0.0,
+      0.0586,
+      0.1172,
+      0.1758,
+      0.2344,
+      0.293,
+      0.3517,
+      0.4103,
+      0.4689,
+      0.5275,
+      0.5861,
+      0.6447,
+      0.7033,
+      0.7619,
+      0.8205,
+      0.8791,
+      0.9377,
+      0.9963,
+      1.055,
+      1.1136,
+      1.1722,
+      1.2308,
+      1.2894,
+      1.348,
+      1.4066,
+      1.4652,
+      1.5238,
+      1.5824,
+      1.641,
+      1.6997,
+      1.7583,
+      1.8169,
+      1.8755,
+      1.9341,
+      1.9927,
+      2.0513,
+      2.1099,
+      2.1685,
+      2.2271,
+      2.2857,
+      2.3444
+     ],
+     "counts": [
+      1022,
+      1165,
+      1439,
+      1784,
+      2139,
+      2576,
+      3173,
+      3899,
+      4933,
+      6481,
+      8154,
+      10435,
+      13607,
+      17518,
+      22079,
+      26893,
+      31408,
+      36436,
+      40386,
+      44614,
+      48476,
+      53768,
+      59685,
+      65900,
+      72782,
+      79217,
+      86987,
+      94459,
+      101506,
+      107881,
+      112130,
+      113689,
+      110082,
+      102086,
+      87892,
+      69663,
+      47983,
+      28295,
+      12662,
+      4190
+     ]
+    },
+    "fraud_hist_log10": {
+     "edges": [
+      0.0086,
+      0.0939,
+      0.1792,
+      0.2644,
+      0.3497,
+      0.435,
+      0.5203,
+      0.6056,
+      0.6908,
+      0.7761,
+      0.8614,
+      0.9467,
+      1.032,
+      1.1172,
+      1.2025,
+      1.2878,
+      1.3731,
+      1.4584,
+      1.5436,
+      1.6289,
+      1.7142,
+      1.7995,
+      1.8848,
+      1.97,
+      2.0553,
+      2.1406,
+      2.2259,
+      2.3112,
+      2.3964,
+      2.4817,
+      2.567,
+      2.6523,
+      2.7376,
+      2.8228,
+      2.9081,
+      2.9934,
+      3.0787,
+      3.164,
+      3.2492,
+      3.3345,
+      3.4198
+     ],
+     "counts": [
+      8,
+      14,
+      13,
+      27,
+      31,
+      41,
+      49,
+      68,
+      111,
+      174,
+      188,
+      243,
+      300,
+      362,
+      424,
+      496,
+      575,
+      651,
+      800,
+      921,
+      1032,
+      1058,
+      1073,
+      945,
+      703,
+      554,
+      400,
+      1217,
+      541,
+      424,
+      427,
+      365,
+      252,
+      140,
+      41,
+      10,
+      0,
+      0,
+      0,
+      3
+     ]
+    }
+   },
+   "by_hour": {
+    "0": {
+     "fraud_rate": 0.00938098698553214,
+     "count": 15137
+    },
+    "1": {
+     "fraud_rate": 0.009789122181053017,
+     "count": 21861
+    },
+    "2": {
+     "fraud_rate": 0.008161911081619112,
+     "count": 30140
+    },
+    "3": {
+     "fraud_rate": 0.007701832590391283,
+     "count": 40380
+    },
+    "4": {
+     "fraud_rate": 0.008797206266816786,
+     "count": 52403
+    },
+    "5": {
+     "fraud_rate": 0.00817886079057206,
+     "count": 65168
+    },
+    "6": {
+     "fraud_rate": 0.00845017526289434,
+     "count": 79880
+    },
+    "7": {
+     "fraud_rate": 0.008582367329575668,
+     "count": 94030
+    },
+    "8": {
+     "fraud_rate": 0.008488327377435118,
+     "count": 106617
+    },
+    "9": {
+     "fraud_rate": 0.008129107338444687,
+     "count": 116864
+    },
+    "10": {
+     "fraud_rate": 0.008020412705478363,
+     "count": 125804
+    },
+    "11": {
+     "fraud_rate": 0.00850987906197395,
+     "count": 128909
+    },
+    "12": {
+     "fraud_rate": 0.008458035133376708,
+     "count": 129108
+    },
+    "13": {
+     "fraud_rate": 0.008222059339048408,
+     "count": 125516
+    },
+    "14": {
+     "fraud_rate": 0.008498268712862822,
+     "count": 116965
+    },
+    "15": {
+     "fraud_rate": 0.008406515049163102,
+     "count": 106584
+    },
+    "16": {
+     "fraud_rate": 0.008289455340961491,
+     "count": 93251
+    },
+    "17": {
+     "fraud_rate": 0.008258852811404005,
+     "count": 79551
+    },
+    "18": {
+     "fraud_rate": 0.008252199324682404,
+     "count": 66043
+    },
+    "19": {
+     "fraud_rate": 0.008141138610068195,
+     "count": 52204
+    },
+    "20": {
+     "fraud_rate": 0.008432576373992159,
+     "count": 40557
+    },
+    "21": {
+     "fraud_rate": 0.008282331027142096,
+     "count": 30064
+    },
+    "22": {
+     "fraud_rate": 0.009052256206281717,
+     "count": 21873
+    },
+    "23": {
+     "fraud_rate": 0.008395644759281123,
+     "count": 15246
+    }
+   },
+   "by_channel": {
+    "card_present": {
+     "fraud_rate": 0.008369271814634397,
+     "count": 1754155
+    }
+   },
+   "by_txn_type": {
+    "purchase": {
+     "fraud_rate": 0.008369271814634397,
+     "count": 1754155
+    }
+   },
+   "by_scenario": {
+    "0": 1739474,
+    "2": 9077,
+    "3": 4631,
+    "1": 973
+   },
+   "parquet": "fdh.parquet",
+   "schema_version": 5
+  },
+  "capone": {
+   "rows": 786363,
+   "fraud": 12417,
+   "fraud_rate": 0.01579041740264992,
+   "build_seconds": 15.6,
+   "splits": {
+    "train": {
+     "rows": 550454,
+     "fraud": 8913
+    },
+    "val": {
+     "rows": 78636,
+     "fraud": 1191
+    },
+    "test": {
+     "rows": 157273,
+     "fraud": 2313
+    }
+   },
+   "ts_min": 1451606462.0,
+   "ts_max": 1483142385.0,
+   "absolute_time": true,
+   "coverage": {
+    "amount": 1.0,
+    "hour": 1.0,
+    "dow": 1.0,
+    "secs_since_prev_txn": 0.9936416133515946,
+    "cust_txn_count_24h": 1.0,
+    "cust_amount_sum_24h": 1.0,
+    "cust_txn_count_7d": 1.0,
+    "cust_amount_mean_30d": 0.9849001033873669,
+    "amount_over_cust_mean": 0.9842426462079218,
+    "cust_txn_count_1h": 1.0,
+    "cust_amount_sum_1h": 1.0,
+    "cust_amount_z_30d": 0.9662191634143519,
+    "cust_txn_count_prior": 1.0,
+    "cust_days_since_first": 1.0,
+    "merch_txn_count_24h": 1.0,
+    "merch_amount_ratio": 0.9966643903642466,
+    "cust_age": 0.0,
+    "credit_limit": 1.0,
+    "amount_over_limit": 1.0,
+    "balance_before": 1.0,
+    "balance_after": 0.0,
+    "account_age_days": 1.0,
+    "dist_km": 0.0,
+    "city_pop": 0.0,
+    "days_since_addr_change": 1.0,
+    "dest_balance_before": 0.0,
+    "dest_balance_after": 0.0,
+    "yearly_income": 0.0,
+    "total_debt": 0.0,
+    "fico_score": 0.0,
+    "num_cards": 0.0,
+    "ieee_dist1": 0.0,
+    "ieee_c1": 0.0,
+    "ieee_c13": 0.0,
+    "ieee_c14": 0.0,
+    "ieee_d15": 0.0,
+    "screen_w": 0.0,
+    "screen_h": 0.0,
+    "session_length_min": 0.0,
+    "email_name_similarity": 0.0,
+    "cpty_txn_count_30d": 1.0,
+    "cpty_new_cust_30d": 1.0,
+    "cpty_age_days": 1.0,
+    "cpty_fraud_count_delayed": 1.0,
+    "cpty_fraud_share_delayed": 0.9203739240020195,
+    "device_txn_count_30d": 0.0,
+    "device_new_cust_30d": 0.0,
+    "device_age_days": 0.0,
+    "device_fraud_count_delayed": 0.0,
+    "device_fraud_share_delayed": 0.0,
+    "email_txn_count_30d": 0.0,
+    "email_new_cust_30d": 0.0,
+    "email_age_days": 0.0,
+    "email_fraud_count_delayed": 0.0,
+    "email_fraud_share_delayed": 0.0,
+    "addr_txn_count_30d": 0.0,
+    "addr_new_cust_30d": 0.0,
+    "addr_age_days": 0.0,
+    "addr_fraud_count_delayed": 0.0,
+    "addr_fraud_share_delayed": 0.0,
+    "card_txn_count_30d": 1.0,
+    "card_new_cust_30d": 1.0,
+    "card_age_days": 1.0,
+    "card_fraud_count_delayed": 1.0,
+    "card_fraud_share_delayed": 0.9141325316679447,
+    "cust_new_cpty_30d": 1.0,
+    "cust_new_device_30d": 0.0,
+    "cust_fraud_count_delayed": 1.0,
+    "cust_fraud_share_delayed": 0.9175037482689292,
+    "ulb_v1": 0.0,
+    "ulb_v2": 0.0,
+    "ulb_v3": 0.0,
+    "ulb_v4": 0.0,
+    "ulb_v5": 0.0,
+    "ulb_v6": 0.0,
+    "ulb_v7": 0.0,
+    "ulb_v8": 0.0,
+    "ulb_v9": 0.0,
+    "ulb_v10": 0.0,
+    "ulb_v11": 0.0,
+    "ulb_v12": 0.0,
+    "ulb_v13": 0.0,
+    "ulb_v14": 0.0,
+    "ulb_v15": 0.0,
+    "ulb_v16": 0.0,
+    "ulb_v17": 0.0,
+    "ulb_v18": 0.0,
+    "ulb_v19": 0.0,
+    "ulb_v20": 0.0,
+    "ulb_v21": 0.0,
+    "ulb_v22": 0.0,
+    "ulb_v23": 0.0,
+    "ulb_v24": 0.0,
+    "ulb_v25": 0.0,
+    "ulb_v26": 0.0,
+    "ulb_v27": 0.0,
+    "ulb_v28": 0.0,
+    "channel": 1.0,
+    "txn_type": 0.9991123692238826,
+    "merchant_category": 1.0,
+    "card_brand": 0.0,
+    "card_kind": 0.0,
+    "is_foreign": 0.9941947929900059,
+    "cust_gender": 0.0,
+    "cust_new_merchant": 1.0,
+    "cust_new_category": 1.0,
+    "cust_first_foreign": 0.9941947929900059,
+    "auth_error": 1.0,
+    "device_type": 0.0,
+    "is_recurring": 0.0,
+    "dest_is_merchant": 0.0,
+    "product_code": 0.0,
+    "email_bucket": 0.0,
+    "payment_format": 0.0,
+    "device_os": 0.0,
+    "browser": 0.0,
+    "email_bucket_recipient": 0.0,
+    "phone_valid": 0.0,
+    "keep_alive_session": 0.0
+   },
+   "amount": {
+    "legit_quantiles": {
+     "0.01": 0.0,
+     "0.1": 8.779999732971191,
+     "0.5": 86.76000213623047,
+     "0.9": 326.32000732421875,
+     "0.99": 670.0554931640629
+    },
+    "fraud_quantiles": {
+     "0.01": 0.08799999773502333,
+     "0.1": 37.25,
+     "0.5": 176.97999572753906,
+     "0.9": 472.0539916992187,
+     "0.99": 873.452783203125
+    },
+    "legit_hist_log10": {
+     "edges": [
+      0.0,
+      0.0826,
+      0.1652,
+      0.2478,
+      0.3304,
+      0.413,
+      0.4956,
+      0.5782,
+      0.6607,
+      0.7433,
+      0.8259,
+      0.9085,
+      0.9911,
+      1.0737,
+      1.1563,
+      1.2389,
+      1.3215,
+      1.4041,
+      1.4867,
+      1.5693,
+      1.6519,
+      1.7345,
+      1.8171,
+      1.8997,
+      1.9822,
+      2.0648,
+      2.1474,
+      2.23,
+      2.3126,
+      2.3952,
+      2.4778,
+      2.5604,
+      2.643,
+      2.7256,
+      2.8082,
+      2.8908,
+      2.9734,
+      3.056,
+      3.1386,
+      3.2212,
+      3.3037
+     ],
+     "counts": [
+      23034,
+      1225,
+      1396,
+      1694,
+      2116,
+      2532,
+      3134,
+      4899,
+      6696,
+      8306,
+      9740,
+      12730,
+      10975,
+      12554,
+      14702,
+      17636,
+      20617,
+      23833,
+      28635,
+      32990,
+      38331,
+      43045,
+      42809,
+      44197,
+      46718,
+      48588,
+      48681,
+      47228,
+      43636,
+      38802,
+      31781,
+      24282,
+      16553,
+      10526,
+      5579,
+      2406,
+      977,
+      298,
+      54,
+      11
+     ]
+    },
+    "fraud_hist_log10": {
+     "edges": [
+      0.0,
+      0.0802,
+      0.1603,
+      0.2405,
+      0.3207,
+      0.4008,
+      0.481,
+      0.5612,
+      0.6413,
+      0.7215,
+      0.8017,
+      0.8818,
+      0.962,
+      1.0422,
+      1.1223,
+      1.2025,
+      1.2827,
+      1.3628,
+      1.443,
+      1.5232,
+      1.6033,
+      1.6835,
+      1.7637,
+      1.8438,
+      1.924,
+      2.0042,
+      2.0843,
+      2.1645,
+      2.2447,
+      2.3248,
+      2.405,
+      2.4852,
+      2.5653,
+      2.6455,
+      2.7257,
+      2.8058,
+      2.886,
+      2.9662,
+      3.0463,
+      3.1265,
+      3.2067
+     ],
+     "counts": [
+      126,
+      5,
+      5,
+      3,
+      11,
+      9,
+      12,
+      19,
+      26,
+      26,
+      31,
+      42,
+      56,
+      65,
+      77,
+      117,
+      105,
+      150,
+      175,
+      239,
+      316,
+      381,
+      466,
+      538,
+      604,
+      740,
+      849,
+      945,
+      984,
+      1059,
+      1013,
+      915,
+      783,
+      654,
+      370,
+      258,
+      152,
+      65,
+      18,
+      8
+     ]
+    }
+   },
+   "by_hour": {
+    "0": {
+     "fraud_rate": 0.015644974736713946,
+     "count": 32854
+    },
+    "1": {
+     "fraud_rate": 0.01470947265625,
+     "count": 32768
+    },
+    "2": {
+     "fraud_rate": 0.015190342400197598,
+     "count": 32389
+    },
+    "3": {
+     "fraud_rate": 0.016793380354798326,
+     "count": 32751
+    },
+    "4": {
+     "fraud_rate": 0.015907491816819115,
+     "count": 32689
+    },
+    "5": {
+     "fraud_rate": 0.015082864527900258,
+     "count": 32885
+    },
+    "6": {
+     "fraud_rate": 0.015858295465083928,
+     "count": 32349
+    },
+    "7": {
+     "fraud_rate": 0.015091342335186657,
+     "count": 32734
+    },
+    "8": {
+     "fraud_rate": 0.016595240266253305,
+     "count": 32901
+    },
+    "9": {
+     "fraud_rate": 0.016251420847285796,
+     "count": 32551
+    },
+    "10": {
+     "fraud_rate": 0.0157071244113626,
+     "count": 32915
+    },
+    "11": {
+     "fraud_rate": 0.016980210114830196,
+     "count": 32744
+    },
+    "12": {
+     "fraud_rate": 0.017352716143840857,
+     "count": 32675
+    },
+    "13": {
+     "fraud_rate": 0.018056195301704284,
+     "count": 32565
+    },
+    "14": {
+     "fraud_rate": 0.01603188123631054,
+     "count": 32872
+    },
+    "15": {
+     "fraud_rate": 0.016059989677889432,
+     "count": 32939
+    },
+    "16": {
+     "fraud_rate": 0.014777278795970385,
+     "count": 32956
+    },
+    "17": {
+     "fraud_rate": 0.015168982464656271,
+     "count": 32962
+    },
+    "18": {
+     "fraud_rate": 0.016099202619531273,
+     "count": 32983
+    },
+    "19": {
+     "fraud_rate": 0.014457904669142266,
+     "count": 32854
+    },
+    "20": {
+     "fraud_rate": 0.014758238748744788,
+     "count": 32863
+    },
+    "21": {
+     "fraud_rate": 0.016520297242522877,
+     "count": 32566
+    },
+    "22": {
+     "fraud_rate": 0.014496726054515,
+     "count": 32835
+    },
+    "23": {
+     "fraud_rate": 0.015413728901504746,
+     "count": 32763
+    }
+   },
+   "by_category": {
+    "online_retail": {
+     "fraud_rate": 0.02438206517284291,
+     "count": 268394
+    },
+    "restaurants": {
+     "fraud_rate": 0.01078356436052637,
+     "count": 193628
+    },
+    "entertainment": {
+     "fraud_rate": 0.011997802691702664,
+     "count": 80098
+    },
+    "travel": {
+     "fraud_rate": 0.034648325979756034,
+     "count": 15412
+    },
+    "transport": {
+     "fraud_rate": 0.021226317886435763,
+     "count": 72787
+    },
+    "fuel": {
+     "fraud_rate": 0.0,
+     "count": 23910
+    },
+    "health": {
+     "fraud_rate": 0.004225153748650298,
+     "count": 21301
+    },
+    "personal_care": {
+     "fraud_rate": 0.004534908247205231,
+     "count": 18964
+    },
+    "home": {
+     "fraud_rate": 0.013858988159311088,
+     "count": 7432
+    },
+    "utilities": {
+     "fraud_rate": 0.0,
+     "count": 1382
+    },
+    "digital": {
+     "fraud_rate": 0.004411944932391029,
+     "count": 48958
+    },
+    "hotel": {
+     "fraud_rate": 0.007332023345162331,
+     "count": 34097
+    }
+   },
+   "by_channel": {
+    "card_present": {
+     "fraud_rate": 0.008458844700961398,
+     "count": 246724
+    },
+    "card_not_present": {
+     "fraud_rate": 0.015407807150066961,
+     "count": 303158
+    },
+    "online": {
+     "fraud_rate": 0.02393004089123439,
+     "count": 236481
+    }
+   },
+   "by_txn_type": {
+    "unknown": {
+     "fraud_rate": 0.02005730659025788,
+     "count": 698
+    },
+    "purchase": {
+     "fraud_rate": 0.01603611413419074,
+     "count": 745193
+    },
+    "reversal": {
+     "fraud_rate": 0.01659853223661528,
+     "count": 20303
+    },
+    "address_verification": {
+     "fraud_rate": 0.005751400664385939,
+     "count": 20169
+    }
+   },
+   "parquet": "capone.parquet",
+   "schema_version": 5
+  },
+  "tabformer": {
+   "rows": 24386900,
+   "fraud": 29757,
+   "fraud_rate": 0.0012202042900081602,
+   "build_seconds": 158.5,
+   "splits": {
+    "train": {
+     "rows": 17070830,
+     "fraud": 20886
+    },
+    "val": {
+     "rows": 2438690,
+     "fraud": 4038
+    },
+    "test": {
+     "rows": 4877380,
+     "fraud": 4833
+    }
+   },
+   "ts_min": 662800200.0,
+   "ts_max": 1582934280.0,
+   "absolute_time": false,
+   "coverage": {
+    "amount": 1.0,
+    "hour": 1.0,
+    "dow": 1.0,
+    "secs_since_prev_txn": 0.9997482664873354,
+    "cust_txn_count_24h": 1.0,
+    "cust_amount_sum_24h": 1.0,
+    "cust_txn_count_7d": 1.0,
+    "cust_amount_mean_30d": 0.9996792540257269,
+    "amount_over_cust_mean": 0.9994924324124838,
+    "cust_txn_count_1h": 1.0,
+    "cust_amount_sum_1h": 1.0,
+    "cust_amount_z_30d": 0.999326728694504,
+    "cust_txn_count_prior": 1.0,
+    "cust_days_since_first": 1.0,
+    "merch_txn_count_24h": 1.0,
+    "merch_amount_ratio": 0.9958072981805806,
+    "cust_age": 1.0,
+    "credit_limit": 1.0,
+    "amount_over_limit": 0.9958476067068796,
+    "balance_before": 0.0,
+    "balance_after": 0.0,
+    "account_age_days": 0.9999386555896813,
+    "dist_km": 0.0,
+    "city_pop": 0.0,
+    "days_since_addr_change": 0.0,
+    "dest_balance_before": 0.0,
+    "dest_balance_after": 0.0,
+    "yearly_income": 1.0,
+    "total_debt": 1.0,
+    "fico_score": 1.0,
+    "num_cards": 1.0,
+    "ieee_dist1": 0.0,
+    "ieee_c1": 0.0,
+    "ieee_c13": 0.0,
+    "ieee_c14": 0.0,
+    "ieee_d15": 0.0,
+    "screen_w": 0.0,
+    "screen_h": 0.0,
+    "session_length_min": 0.0,
+    "email_name_similarity": 0.0,
+    "cpty_txn_count_30d": 1.0,
+    "cpty_new_cust_30d": 1.0,
+    "cpty_age_days": 1.0,
+    "cpty_fraud_count_delayed": 1.0,
+    "cpty_fraud_share_delayed": 0.9927657881895607,
+    "device_txn_count_30d": 0.0,
+    "device_new_cust_30d": 0.0,
+    "device_age_days": 0.0,
+    "device_fraud_count_delayed": 0.0,
+    "device_fraud_share_delayed": 0.0,
+    "email_txn_count_30d": 0.0,
+    "email_new_cust_30d": 0.0,
+    "email_age_days": 0.0,
+    "email_fraud_count_delayed": 0.0,
+    "email_fraud_share_delayed": 0.0,
+    "addr_txn_count_30d": 0.0,
+    "addr_new_cust_30d": 0.0,
+    "addr_age_days": 0.0,
+    "addr_fraud_count_delayed": 0.0,
+    "addr_fraud_share_delayed": 0.0,
+    "card_txn_count_30d": 1.0,
+    "card_new_cust_30d": 1.0,
+    "card_age_days": 1.0,
+    "card_fraud_count_delayed": 1.0,
+    "card_fraud_share_delayed": 0.9899355391624192,
+    "cust_new_cpty_30d": 1.0,
+    "cust_new_device_30d": 0.0,
+    "cust_fraud_count_delayed": 1.0,
+    "cust_fraud_share_delayed": 0.9951714650078526,
+    "ulb_v1": 0.0,
+    "ulb_v2": 0.0,
+    "ulb_v3": 0.0,
+    "ulb_v4": 0.0,
+    "ulb_v5": 0.0,
+    "ulb_v6": 0.0,
+    "ulb_v7": 0.0,
+    "ulb_v8": 0.0,
+    "ulb_v9": 0.0,
+    "ulb_v10": 0.0,
+    "ulb_v11": 0.0,
+    "ulb_v12": 0.0,
+    "ulb_v13": 0.0,
+    "ulb_v14": 0.0,
+    "ulb_v15": 0.0,
+    "ulb_v16": 0.0,
+    "ulb_v17": 0.0,
+    "ulb_v18": 0.0,
+    "ulb_v19": 0.0,
+    "ulb_v20": 0.0,
+    "ulb_v21": 0.0,
+    "ulb_v22": 0.0,
+    "ulb_v23": 0.0,
+    "ulb_v24": 0.0,
+    "ulb_v25": 0.0,
+    "ulb_v26": 0.0,
+    "ulb_v27": 0.0,
+    "ulb_v28": 0.0,
+    "channel": 1.0,
+    "txn_type": 1.0,
+    "merchant_category": 1.0,
+    "card_brand": 1.0,
+    "card_kind": 1.0,
+    "is_foreign": 0.8884310428959811,
+    "cust_gender": 1.0,
+    "cust_new_merchant": 1.0,
+    "cust_new_category": 1.0,
+    "cust_first_foreign": 0.8884310428959811,
+    "auth_error": 1.0,
+    "device_type": 0.0,
+    "is_recurring": 0.0,
+    "dest_is_merchant": 0.0,
+    "product_code": 0.0,
+    "email_bucket": 0.0,
+    "payment_format": 0.0,
+    "device_os": 0.0,
+    "browser": 0.0,
+    "email_bucket_recipient": 0.0,
+    "phone_valid": 0.0,
+    "keep_alive_session": 0.0
+   },
+   "amount": {
+    "legit_quantiles": {
+     "0.01": -96.0,
+     "0.1": 1.7400000095367432,
+     "0.5": 30.110000610351562,
+     "0.9": 105.87999725341797,
+     "0.99": 315.3500061035156
+    },
+    "fraud_quantiles": {
+     "0.01": -378.0,
+     "0.1": 2.3399999141693115,
+     "0.5": 71.0199966430664,
+     "0.9": 279.95200805664075,
+     "0.99": 776.9635864257787
+    },
+    "legit_hist_log10": {
+     "edges": [
+      0.0,
+      0.1023,
+      0.2047,
+      0.307,
+      0.4093,
+      0.5116,
+      0.614,
+      0.7163,
+      0.8186,
+      0.921,
+      1.0233,
+      1.1256,
+      1.2279,
+      1.3303,
+      1.4326,
+      1.5349,
+      1.6372,
+      1.7396,
+      1.8419,
+      1.9442,
+      2.0466,
+      2.1489,
+      2.2512,
+      2.3535,
+      2.4559,
+      2.5582,
+      2.6605,
+      2.7629,
+      2.8652,
+      2.9675,
+      3.0698,
+      3.1722,
+      3.2745,
+      3.3768,
+      3.4792,
+      3.5815,
+      3.6838,
+      3.7861,
+      3.8885,
+      3.9908,
+      4.0931
+     ],
+     "counts": [
+      80431,
+      137991,
+      260230,
+      550084,
+      572919,
+      643570,
+      644086,
+      560983,
+      649139,
+      894474,
+      1153069,
+      1246062,
+      1320161,
+      1342881,
+      1536499,
+      1878259,
+      1879838,
+      2054052,
+      1911387,
+      1512470,
+      868514,
+      628758,
+      324773,
+      168711,
+      106194,
+      81123,
+      44495,
+      22169,
+      18804,
+      12498,
+      6142,
+      2070,
+      496,
+      140,
+      70,
+      25,
+      14,
+      3,
+      0,
+      1
+     ]
+    },
+    "fraud_hist_log10": {
+     "edges": [
+      0.0,
+      0.0939,
+      0.1878,
+      0.2817,
+      0.3756,
+      0.4694,
+      0.5633,
+      0.6572,
+      0.7511,
+      0.845,
+      0.9389,
+      1.0328,
+      1.1267,
+      1.2205,
+      1.3144,
+      1.4083,
+      1.5022,
+      1.5961,
+      1.69,
+      1.7839,
+      1.8778,
+      1.9717,
+      2.0655,
+      2.1594,
+      2.2533,
+      2.3472,
+      2.4411,
+      2.535,
+      2.6289,
+      2.7228,
+      2.8166,
+      2.9105,
+      3.0044,
+      3.0983,
+      3.1922,
+      3.2861,
+      3.38,
+      3.4739,
+      3.5678,
+      3.6616,
+      3.7555
+     ],
+     "counts": [
+      340,
+      301,
+      290,
+      349,
+      370,
+      359,
+      392,
+      439,
+      493,
+      550,
+      588,
+      632,
+      683,
+      744,
+      759,
+      940,
+      1070,
+      1276,
+      1638,
+      1978,
+      2137,
+      2307,
+      2106,
+      1962,
+      1643,
+      1222,
+      982,
+      831,
+      602,
+      232,
+      141,
+      99,
+      63,
+      43,
+      25,
+      25,
+      12,
+      3,
+      4,
+      2
+     ]
+    }
+   },
+   "by_hour": {
+    "0": {
+     "fraud_rate": 0.0005093205663644698,
+     "count": 235608
+    },
+    "1": {
+     "fraud_rate": 0.0008668719044472872,
+     "count": 213411
+    },
+    "2": {
+     "fraud_rate": 0.0010790610767254466,
+     "count": 214075
+    },
+    "3": {
+     "fraud_rate": 0.0018650815291487157,
+     "count": 183370
+    },
+    "4": {
+     "fraud_rate": 0.0018275607958732499,
+     "count": 203550
+    },
+    "5": {
+     "fraud_rate": 0.001570332226326853,
+     "count": 321588
+    },
+    "6": {
+     "fraud_rate": 0.000634716545241556,
+     "count": 1347058
+    },
+    "7": {
+     "fraud_rate": 0.0009710461639116196,
+     "count": 1644618
+    },
+    "8": {
+     "fraud_rate": 0.0010353458667496263,
+     "count": 1616851
+    },
+    "9": {
+     "fraud_rate": 0.0013621626489748132,
+     "count": 1598928
+    },
+    "10": {
+     "fraud_rate": 0.0018720347684198068,
+     "count": 1664499
+    },
+    "11": {
+     "fraud_rate": 0.0018122067620772982,
+     "count": 1736005
+    },
+    "12": {
+     "fraud_rate": 0.0016857600691546715,
+     "count": 1739868
+    },
+    "13": {
+     "fraud_rate": 0.0016874489958578094,
+     "count": 1681236
+    },
+    "14": {
+     "fraud_rate": 0.0014747094675367943,
+     "count": 1632864
+    },
+    "15": {
+     "fraud_rate": 0.0013822059108384184,
+     "count": 1559102
+    },
+    "16": {
+     "fraud_rate": 0.0011127353790722717,
+     "count": 1589776
+    },
+    "17": {
+     "fraud_rate": 0.0011948797846551228,
+     "count": 900509
+    },
+    "18": {
+     "fraud_rate": 0.0010598669675988641,
+     "count": 837841
+    },
+    "19": {
+     "fraud_rate": 0.0009453067467286014,
+     "count": 847344
+    },
+    "20": {
+     "fraud_rate": 0.0002722628445669067,
+     "count": 793351
+    },
+    "21": {
+     "fraud_rate": 0.0002052223198226461,
+     "count": 765024
+    },
+    "22": {
+     "fraud_rate": 0.00011579556818779935,
+     "count": 759960
+    },
+    "23": {
+     "fraud_rate": 0.00035944405985409233,
+     "count": 300464
+    }
+   },
+   "by_category": {
+    "grocery": {
+     "fraud_rate": 0.0005387488428946255,
+     "count": 6890038
+    },
+    "retail": {
+     "fraud_rate": 0.005118748438737901,
+     "count": 2053627
+    },
+    "restaurants": {
+     "fraud_rate": 0.0003401129608538588,
+     "count": 3137193
+    },
+    "entertainment": {
+     "fraud_rate": 0.0021992859992430364,
+     "count": 586554
+    },
+    "travel": {
+     "fraud_rate": 0.009057412092416455,
+     "count": 226886
+    },
+    "transport": {
+     "fraud_rate": 0.0005693609927253277,
+     "count": 2464166
+    },
+    "fuel": {
+     "fraud_rate": 0.000134142635304068,
+     "count": 2638982
+    },
+    "health": {
+     "fraud_rate": 0.0007261410147310837,
+     "count": 1618143
+    },
+    "personal_care": {
+     "fraud_rate": 0.0007035935388521374,
+     "count": 268621
+    },
+    "home": {
+     "fraud_rate": 0.003164826160248186,
+     "count": 576019
+    },
+    "utilities": {
+     "fraud_rate": 0.0004645338293903383,
+     "count": 962255
+    },
+    "financial": {
+     "fraud_rate": 0.0013106630225830419,
+     "count": 1226097
+    },
+    "digital": {
+     "fraud_rate": 0.010799529591042353,
+     "count": 120746
+    },
+    "hotel": {
+     "fraud_rate": 0.008300903740391727,
+     "count": 310930
+    },
+    "misc": {
+     "fraud_rate": 0.0001821461562186458,
+     "count": 1306643
+    }
+   },
+   "by_channel": {
+    "card_present": {
+     "fraud_rate": 0.0005263527006027588,
+     "count": 21673680
+    },
+    "online": {
+     "fraud_rate": 0.00676281318875727,
+     "count": 2713220
+    }
+   },
+   "by_txn_type": {
+    "purchase": {
+     "fraud_rate": 0.0012202042900081602,
+     "count": 24386900
+    }
+   },
+   "parquet": "tabformer.parquet",
+   "schema_version": 5
+  },
+  "ulb": {
+   "rows": 284807,
+   "fraud": 492,
+   "fraud_rate": 0.001727485630620034,
+   "build_seconds": 1.9,
+   "splits": {
+    "train": {
+     "rows": 199365,
+     "fraud": 384
+    },
+    "val": {
+     "rows": 28481,
+     "fraud": 33
+    },
+    "test": {
+     "rows": 56961,
+     "fraud": 75
+    }
+   },
+   "ts_min": 0.0,
+   "ts_max": 172792.0,
+   "absolute_time": false,
+   "coverage": {
+    "amount": 1.0,
+    "hour": 1.0,
+    "dow": 0.0,
+    "secs_since_prev_txn": 0.0,
+    "cust_txn_count_24h": 0.0,
+    "cust_amount_sum_24h": 0.0,
+    "cust_txn_count_7d": 0.0,
+    "cust_amount_mean_30d": 0.0,
+    "amount_over_cust_mean": 0.0,
+    "cust_txn_count_1h": 0.0,
+    "cust_amount_sum_1h": 0.0,
+    "cust_amount_z_30d": 0.0,
+    "cust_txn_count_prior": 0.0,
+    "cust_days_since_first": 0.0,
+    "merch_txn_count_24h": 0.0,
+    "merch_amount_ratio": 0.0,
+    "cust_age": 0.0,
+    "credit_limit": 0.0,
+    "amount_over_limit": 0.0,
+    "balance_before": 0.0,
+    "balance_after": 0.0,
+    "account_age_days": 0.0,
+    "dist_km": 0.0,
+    "city_pop": 0.0,
+    "days_since_addr_change": 0.0,
+    "dest_balance_before": 0.0,
+    "dest_balance_after": 0.0,
+    "yearly_income": 0.0,
+    "total_debt": 0.0,
+    "fico_score": 0.0,
+    "num_cards": 0.0,
+    "ieee_dist1": 0.0,
+    "ieee_c1": 0.0,
+    "ieee_c13": 0.0,
+    "ieee_c14": 0.0,
+    "ieee_d15": 0.0,
+    "screen_w": 0.0,
+    "screen_h": 0.0,
+    "session_length_min": 0.0,
+    "email_name_similarity": 0.0,
+    "cpty_txn_count_30d": 0.0,
+    "cpty_new_cust_30d": 0.0,
+    "cpty_age_days": 0.0,
+    "cpty_fraud_count_delayed": 0.0,
+    "cpty_fraud_share_delayed": 0.0,
+    "device_txn_count_30d": 0.0,
+    "device_new_cust_30d": 0.0,
+    "device_age_days": 0.0,
+    "device_fraud_count_delayed": 0.0,
+    "device_fraud_share_delayed": 0.0,
+    "email_txn_count_30d": 0.0,
+    "email_new_cust_30d": 0.0,
+    "email_age_days": 0.0,
+    "email_fraud_count_delayed": 0.0,
+    "email_fraud_share_delayed": 0.0,
+    "addr_txn_count_30d": 0.0,
+    "addr_new_cust_30d": 0.0,
+    "addr_age_days": 0.0,
+    "addr_fraud_count_delayed": 0.0,
+    "addr_fraud_share_delayed": 0.0,
+    "card_txn_count_30d": 0.0,
+    "card_new_cust_30d": 0.0,
+    "card_age_days": 0.0,
+    "card_fraud_count_delayed": 0.0,
+    "card_fraud_share_delayed": 0.0,
+    "cust_new_cpty_30d": 0.0,
+    "cust_new_device_30d": 0.0,
+    "cust_fraud_count_delayed": 0.0,
+    "cust_fraud_share_delayed": 0.0,
+    "ulb_v1": 1.0,
+    "ulb_v2": 1.0,
+    "ulb_v3": 1.0,
+    "ulb_v4": 1.0,
+    "ulb_v5": 1.0,
+    "ulb_v6": 1.0,
+    "ulb_v7": 1.0,
+    "ulb_v8": 1.0,
+    "ulb_v9": 1.0,
+    "ulb_v10": 1.0,
+    "ulb_v11": 1.0,
+    "ulb_v12": 1.0,
+    "ulb_v13": 1.0,
+    "ulb_v14": 1.0,
+    "ulb_v15": 1.0,
+    "ulb_v16": 1.0,
+    "ulb_v17": 1.0,
+    "ulb_v18": 1.0,
+    "ulb_v19": 1.0,
+    "ulb_v20": 1.0,
+    "ulb_v21": 1.0,
+    "ulb_v22": 1.0,
+    "ulb_v23": 1.0,
+    "ulb_v24": 1.0,
+    "ulb_v25": 1.0,
+    "ulb_v26": 1.0,
+    "ulb_v27": 1.0,
+    "ulb_v28": 1.0,
+    "channel": 0.0,
+    "txn_type": 1.0,
+    "merchant_category": 0.0,
+    "card_brand": 0.0,
+    "card_kind": 0.0,
+    "is_foreign": 0.0,
+    "cust_gender": 0.0,
+    "cust_new_merchant": 0.0,
+    "cust_new_category": 0.0,
+    "cust_first_foreign": 0.0,
+    "auth_error": 0.0,
+    "device_type": 0.0,
+    "is_recurring": 0.0,
+    "dest_is_merchant": 0.0,
+    "product_code": 0.0,
+    "email_bucket": 0.0,
+    "payment_format": 0.0,
+    "device_os": 0.0,
+    "browser": 0.0,
+    "email_bucket_recipient": 0.0,
+    "phone_valid": 0.0,
+    "keep_alive_session": 0.0
+   },
+   "amount": {
+    "legit_quantiles": {
+     "0.01": 0.11999999731779099,
+     "0.1": 1.0,
+     "0.5": 22.0,
+     "0.9": 202.72400207519556,
+     "0.99": 1016.9664013671842
+    },
+    "fraud_quantiles": {
+     "0.01": 0.0,
+     "0.1": 0.7599999904632568,
+     "0.5": 9.25,
+     "0.9": 346.7460021972657,
+     "0.99": 1357.4279052734366
+    },
+    "legit_hist_log10": {
+     "edges": [
+      0.0,
+      0.1102,
+      0.2205,
+      0.3307,
+      0.441,
+      0.5512,
+      0.6615,
+      0.7717,
+      0.882,
+      0.9922,
+      1.1025,
+      1.2127,
+      1.3229,
+      1.4332,
+      1.5434,
+      1.6537,
+      1.7639,
+      1.8742,
+      1.9844,
+      2.0947,
+      2.2049,
+      2.3151,
+      2.4254,
+      2.5356,
+      2.6459,
+      2.7561,
+      2.8664,
+      2.9766,
+      3.0869,
+      3.1971,
+      3.3074,
+      3.4176,
+      3.5278,
+      3.6381,
+      3.7483,
+      3.8586,
+      3.9688,
+      4.0791,
+      4.1893,
+      4.2996,
+      4.4098
+     ],
+     "counts": [
+      3145,
+      362,
+      27011,
+      6025,
+      14208,
+      6258,
+      8576,
+      9873,
+      9455,
+      22020,
+      16464,
+      15494,
+      12743,
+      13912,
+      15607,
+      15825,
+      13454,
+      13962,
+      12232,
+      10901,
+      8718,
+      6926,
+      5710,
+      4377,
+      3443,
+      2473,
+      1775,
+      1346,
+      802,
+      560,
+      262,
+      178,
+      130,
+      45,
+      22,
+      13,
+      4,
+      1,
+      2,
+      1
+     ]
+    },
+    "fraud_hist_log10": {
+     "edges": [
+      0.0,
+      0.0832,
+      0.1664,
+      0.2496,
+      0.3328,
+      0.416,
+      0.4992,
+      0.5824,
+      0.6655,
+      0.7487,
+      0.8319,
+      0.9151,
+      0.9983,
+      1.0815,
+      1.1647,
+      1.2479,
+      1.3311,
+      1.4143,
+      1.4975,
+      1.5807,
+      1.6639,
+      1.7471,
+      1.8303,
+      1.9135,
+      1.9966,
+      2.0798,
+      2.163,
+      2.2462,
+      2.3294,
+      2.4126,
+      2.4958,
+      2.579,
+      2.6622,
+      2.7454,
+      2.8286,
+      2.9118,
+      2.995,
+      3.0782,
+      3.1614,
+      3.2445,
+      3.3277
+     ],
+     "counts": [
+      33,
+      1,
+      31,
+      119,
+      7,
+      8,
+      6,
+      3,
+      9,
+      7,
+      7,
+      13,
+      7,
+      6,
+      2,
+      12,
+      4,
+      8,
+      5,
+      12,
+      9,
+      6,
+      8,
+      10,
+      47,
+      10,
+      8,
+      12,
+      11,
+      11,
+      17,
+      5,
+      8,
+      7,
+      10,
+      3,
+      2,
+      5,
+      1,
+      2
+     ]
+    }
+   },
+   "by_hour": {
+    "0": {
+     "fraud_rate": 0.0007797270955165692,
+     "count": 7695
+    },
+    "1": {
+     "fraud_rate": 0.002369668246445498,
+     "count": 4220
+    },
+    "2": {
+     "fraud_rate": 0.017127403846153848,
+     "count": 3328
+    },
+    "3": {
+     "fraud_rate": 0.004868270332187858,
+     "count": 3492
+    },
+    "4": {
+     "fraud_rate": 0.01041195110909914,
+     "count": 2209
+    },
+    "5": {
+     "fraud_rate": 0.0036789297658862876,
+     "count": 2990
+    },
+    "6": {
+     "fraud_rate": 0.0021945866861741038,
+     "count": 4101
+    },
+    "7": {
+     "fraud_rate": 0.003175479773574486,
+     "count": 7243
+    },
+    "8": {
+     "fraud_rate": 0.0008758271701050993,
+     "count": 10276
+    },
+    "9": {
+     "fraud_rate": 0.0010102285642126531,
+     "count": 15838
+    },
+    "10": {
+     "fraud_rate": 0.0004819857814194481,
+     "count": 16598
+    },
+    "11": {
+     "fraud_rate": 0.003144280968201234,
+     "count": 16856
+    },
+    "12": {
+     "fraud_rate": 0.0011024643320363165,
+     "count": 15420
+    },
+    "13": {
+     "fraud_rate": 0.0011064106736088514,
+     "count": 15365
+    },
+    "14": {
+     "fraud_rate": 0.001388050694025347,
+     "count": 16570
+    },
+    "15": {
+     "fraud_rate": 0.0015794909179272219,
+     "count": 16461
+    },
+    "16": {
+     "fraud_rate": 0.0013371421625235518,
+     "count": 16453
+    },
+    "17": {
+     "fraud_rate": 0.0017938884077693925,
+     "count": 16166
+    },
+    "18": {
+     "fraud_rate": 0.001936733376371853,
+     "count": 17039
+    },
+    "19": {
+     "fraud_rate": 0.0012141350885040577,
+     "count": 15649
+    },
+    "20": {
+     "fraud_rate": 0.0010742420625447602,
+     "count": 16756
+    },
+    "21": {
+     "fraud_rate": 0.0009038016155453877,
+     "count": 17703
+    },
+    "22": {
+     "fraud_rate": 0.0005828638041577618,
+     "count": 15441
+    },
+    "23": {
+     "fraud_rate": 0.0019199122325836533,
+     "count": 10938
+    }
+   },
+   "by_txn_type": {
+    "purchase": {
+     "fraud_rate": 0.001727485630620034,
+     "count": 284807
+    }
+   },
+   "parquet": "ulb.parquet",
+   "schema_version": 5
+  },
+  "paysim": {
+   "rows": 6362620,
+   "fraud": 8213,
+   "fraud_rate": 0.001290820448180152,
+   "build_seconds": 22.7,
+   "splits": {
+    "train": {
+     "rows": 4453834,
+     "fraud": 3643
+    },
+    "val": {
+     "rows": 636262,
+     "fraud": 316
+    },
+    "test": {
+     "rows": 1272524,
+     "fraud": 4254
+    }
+   },
+   "ts_min": 3600.0,
+   "ts_max": 2674800.0,
+   "absolute_time": false,
+   "coverage": {
+    "amount": 1.0,
+    "hour": 1.0,
+    "dow": 0.0,
+    "secs_since_prev_txn": 0.0014637052032024922,
+    "cust_txn_count_24h": 1.0,
+    "cust_amount_sum_24h": 1.0,
+    "cust_txn_count_7d": 1.0,
+    "cust_amount_mean_30d": 0.0014637052032024922,
+    "amount_over_cust_mean": 0.0014637052032024922,
+    "cust_txn_count_1h": 1.0,
+    "cust_amount_sum_1h": 1.0,
+    "cust_amount_z_30d": 2.357519386708695e-06,
+    "cust_txn_count_prior": 1.0,
+    "cust_days_since_first": 1.0,
+    "merch_txn_count_24h": 1.0,
+    "merch_amount_ratio": 0.5721316061622413,
+    "cust_age": 0.0,
+    "credit_limit": 0.0,
+    "amount_over_limit": 0.0,
+    "balance_before": 1.0,
+    "balance_after": 1.0,
+    "account_age_days": 0.0,
+    "dist_km": 0.0,
+    "city_pop": 0.0,
+    "days_since_addr_change": 0.0,
+    "dest_balance_before": 1.0,
+    "dest_balance_after": 1.0,
+    "yearly_income": 0.0,
+    "total_debt": 0.0,
+    "fico_score": 0.0,
+    "num_cards": 0.0,
+    "ieee_dist1": 0.0,
+    "ieee_c1": 0.0,
+    "ieee_c13": 0.0,
+    "ieee_c14": 0.0,
+    "ieee_d15": 0.0,
+    "screen_w": 0.0,
+    "screen_h": 0.0,
+    "session_length_min": 0.0,
+    "email_name_similarity": 0.0,
+    "cpty_txn_count_30d": 1.0,
+    "cpty_new_cust_30d": 1.0,
+    "cpty_age_days": 1.0,
+    "cpty_fraud_count_delayed": 1.0,
+    "cpty_fraud_share_delayed": 6.286718364778565e-07,
+    "device_txn_count_30d": 0.0,
+    "device_new_cust_30d": 0.0,
+    "device_age_days": 0.0,
+    "device_fraud_count_delayed": 0.0,
+    "device_fraud_share_delayed": 0.0,
+    "email_txn_count_30d": 0.0,
+    "email_new_cust_30d": 0.0,
+    "email_age_days": 0.0,
+    "email_fraud_count_delayed": 0.0,
+    "email_fraud_share_delayed": 0.0,
+    "addr_txn_count_30d": 0.0,
+    "addr_new_cust_30d": 0.0,
+    "addr_age_days": 0.0,
+    "addr_fraud_count_delayed": 0.0,
+    "addr_fraud_share_delayed": 0.0,
+    "card_txn_count_30d": 0.0,
+    "card_new_cust_30d": 0.0,
+    "card_age_days": 0.0,
+    "card_fraud_count_delayed": 0.0,
+    "card_fraud_share_delayed": 0.0,
+    "cust_new_cpty_30d": 1.0,
+    "cust_new_device_30d": 0.0,
+    "cust_fraud_count_delayed": 1.0,
+    "cust_fraud_share_delayed": 0.0,
+    "ulb_v1": 0.0,
+    "ulb_v2": 0.0,
+    "ulb_v3": 0.0,
+    "ulb_v4": 0.0,
+    "ulb_v5": 0.0,
+    "ulb_v6": 0.0,
+    "ulb_v7": 0.0,
+    "ulb_v8": 0.0,
+    "ulb_v9": 0.0,
+    "ulb_v10": 0.0,
+    "ulb_v11": 0.0,
+    "ulb_v12": 0.0,
+    "ulb_v13": 0.0,
+    "ulb_v14": 0.0,
+    "ulb_v15": 0.0,
+    "ulb_v16": 0.0,
+    "ulb_v17": 0.0,
+    "ulb_v18": 0.0,
+    "ulb_v19": 0.0,
+    "ulb_v20": 0.0,
+    "ulb_v21": 0.0,
+    "ulb_v22": 0.0,
+    "ulb_v23": 0.0,
+    "ulb_v24": 0.0,
+    "ulb_v25": 0.0,
+    "ulb_v26": 0.0,
+    "ulb_v27": 0.0,
+    "ulb_v28": 0.0,
+    "channel": 1.0,
+    "txn_type": 1.0,
+    "merchant_category": 0.0,
+    "card_brand": 0.0,
+    "card_kind": 0.0,
+    "is_foreign": 0.0,
+    "cust_gender": 0.0,
+    "cust_new_merchant": 1.0,
+    "cust_new_category": 0.0,
+    "cust_first_foreign": 0.0,
+    "auth_error": 0.0,
+    "device_type": 0.0,
+    "is_recurring": 0.0,
+    "dest_is_merchant": 1.0,
+    "product_code": 0.0,
+    "email_bucket": 0.0,
+    "payment_format": 0.0,
+    "device_os": 0.0,
+    "browser": 0.0,
+    "email_bucket_recipient": 0.0,
+    "phone_valid": 0.0,
+    "keep_alive_session": 0.0
+   },
+   "amount": {
+    "legit_quantiles": {
+     "0.01": 449.239990234375,
+     "0.1": 4496.355957031251,
+     "0.5": 74684.71875,
+     "0.9": 364373.43125,
+     "0.99": 1586064.1574999916
+    },
+    "fraud_quantiles": {
+     "0.01": 1842.0,
+     "0.1": 37720.98828125,
+     "0.5": 441423.4375,
+     "0.9": 4521723.300000004,
+     "0.99": 10000000.0
+    },
+    "legit_hist_log10": {
+     "edges": [
+      0.0043,
+      0.2034,
+      0.4024,
+      0.6014,
+      0.8005,
+      0.9995,
+      1.1986,
+      1.3976,
+      1.5966,
+      1.7957,
+      1.9947,
+      2.1938,
+      2.3928,
+      2.5918,
+      2.7909,
+      2.9899,
+      3.1889,
+      3.388,
+      3.587,
+      3.7861,
+      3.9851,
+      4.1841,
+      4.3832,
+      4.5822,
+      4.7813,
+      4.9803,
+      5.1793,
+      5.3784,
+      5.5774,
+      5.7765,
+      5.9755,
+      6.1745,
+      6.3736,
+      6.5726,
+      6.7717,
+      6.9707,
+      7.1697,
+      7.3688,
+      7.5678,
+      7.7668,
+      7.9659
+     ],
+     "counts": [
+      73,
+      109,
+      206,
+      328,
+      489,
+      846,
+      1309,
+      2100,
+      3188,
+      5115,
+      8064,
+      12869,
+      20378,
+      32550,
+      51476,
+      81505,
+      128622,
+      199659,
+      296817,
+      405683,
+      479795,
+      459242,
+      394077,
+      385554,
+      494340,
+      700045,
+      863661,
+      736589,
+      341055,
+      110918,
+      67564,
+      38077,
+      16677,
+      6404,
+      3273,
+      4303,
+      834,
+      447,
+      149,
+      17
+     ]
+    },
+    "fraud_hist_log10": {
+     "edges": [
+      0.0,
+      0.175,
+      0.35,
+      0.525,
+      0.7,
+      0.875,
+      1.05,
+      1.225,
+      1.4,
+      1.575,
+      1.75,
+      1.925,
+      2.1,
+      2.275,
+      2.45,
+      2.625,
+      2.8,
+      2.975,
+      3.15,
+      3.325,
+      3.5,
+      3.675,
+      3.85,
+      4.025,
+      4.2,
+      4.375,
+      4.55,
+      4.725,
+      4.9,
+      5.075,
+      5.25,
+      5.425,
+      5.6,
+      5.775,
+      5.95,
+      6.125,
+      6.3,
+      6.475,
+      6.65,
+      6.825,
+      7.0
+     ],
+     "counts": [
+      16,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      2,
+      4,
+      10,
+      6,
+      8,
+      6,
+      6,
+      8,
+      26,
+      28,
+      38,
+      48,
+      86,
+      88,
+      197,
+      200,
+      295,
+      384,
+      497,
+      638,
+      631,
+      709,
+      703,
+      658,
+      668,
+      571,
+      505,
+      347,
+      297,
+      533
+     ]
+    }
+   },
+   "by_hour": {
+    "0": {
+     "fraud_rate": 0.004190705016273904,
+     "count": 71587
+    },
+    "1": {
+     "fraud_rate": 0.013204972151525211,
+     "count": 27111
+    },
+    "2": {
+     "fraud_rate": 0.04125083166999335,
+     "count": 9018
+    },
+    "3": {
+     "fraud_rate": 0.16243148978574987,
+     "count": 2007
+    },
+    "4": {
+     "fraud_rate": 0.22078968573730862,
+     "count": 1241
+    },
+    "5": {
+     "fraud_rate": 0.2230347349177331,
+     "count": 1641
+    },
+    "6": {
+     "fraud_rate": 0.10467836257309941,
+     "count": 3420
+    },
+    "7": {
+     "fraud_rate": 0.03649310191366266,
+     "count": 8988
+    },
+    "8": {
+     "fraud_rate": 0.013672673230540592,
+     "count": 26915
+    },
+    "9": {
+     "fraud_rate": 0.0012027455046945872,
+     "count": 283518
+    },
+    "10": {
+     "fraud_rate": 0.0008808420380100957,
+     "count": 425729
+    },
+    "11": {
+     "fraud_rate": 0.0007264704299628692,
+     "count": 445992
+    },
+    "12": {
+     "fraud_rate": 0.0007012564695563673,
+     "count": 483418
+    },
+    "13": {
+     "fraud_rate": 0.0007385682022908422,
+     "count": 468474
+    },
+    "14": {
+     "fraud_rate": 0.0008029059280841937,
+     "count": 439653
+    },
+    "15": {
+     "fraud_rate": 0.0008183620280019007,
+     "count": 416686
+    },
+    "16": {
+     "fraud_rate": 0.0007812287709573109,
+     "count": 441612
+    },
+    "17": {
+     "fraud_rate": 0.0008023803191791627,
+     "count": 439941
+    },
+    "18": {
+     "fraud_rate": 0.0005908607790749153,
+     "count": 580509
+    },
+    "19": {
+     "fraud_rate": 0.0005279293130435587,
+     "count": 647814
+    },
+    "20": {
+     "fraud_rate": 0.0006140198797965788,
+     "count": 553728
+    },
+    "21": {
+     "fraud_rate": 0.0014002889356997006,
+     "count": 247806
+    },
+    "22": {
+     "fraud_rate": 0.001804117087712986,
+     "count": 194555
+    },
+    "23": {
+     "fraud_rate": 0.002286612344874944,
+     "count": 141257
+    }
+   },
+   "by_channel": {
+    "mobile_money": {
+     "fraud_rate": 0.001290820448180152,
+     "count": 6362620
+    }
+   },
+   "by_txn_type": {
+    "cash_in": {
+     "fraud_rate": 0.0,
+     "count": 1399284
+    },
+    "cash_out": {
+     "fraud_rate": 0.0018395530726256983,
+     "count": 2237500
+    },
+    "debit": {
+     "fraud_rate": 0.0,
+     "count": 41432
+    },
+    "payment": {
+     "fraud_rate": 0.0,
+     "count": 2151495
+    },
+    "transfer": {
+     "fraud_rate": 0.007687991758442811,
+     "count": 532909
+    }
+   },
+   "parquet": "paysim.parquet",
+   "schema_version": 5
+  },
+  "sparkov": {
+   "rows": 1852394,
+   "fraud": 9651,
+   "fraud_rate": 0.005210014716091717,
+   "build_seconds": 18.2,
+   "splits": {
+    "train": {
+     "rows": 1296676,
+     "fraud": 7506
+    },
+    "val": {
+     "rows": 185239,
+     "fraud": 796
+    },
+    "test": {
+     "rows": 370479,
+     "fraud": 1349
+    }
+   },
+   "ts_min": 1546300818.0,
+   "ts_max": 1609459174.0,
+   "absolute_time": true,
+   "coverage": {
+    "amount": 1.0,
+    "hour": 1.0,
+    "dow": 1.0,
+    "secs_since_prev_txn": 0.9994606978860868,
+    "cust_txn_count_24h": 1.0,
+    "cust_amount_sum_24h": 1.0,
+    "cust_txn_count_7d": 1.0,
+    "cust_amount_mean_30d": 0.9994606978860868,
+    "amount_over_cust_mean": 0.9994606978860868,
+    "cust_txn_count_1h": 1.0,
+    "cust_amount_sum_1h": 1.0,
+    "cust_amount_z_30d": 0.9989213957721738,
+    "cust_txn_count_prior": 1.0,
+    "cust_days_since_first": 1.0,
+    "merch_txn_count_24h": 1.0,
+    "merch_amount_ratio": 0.9996258895245828,
+    "cust_age": 1.0,
+    "credit_limit": 0.0,
+    "amount_over_limit": 0.0,
+    "balance_before": 0.0,
+    "balance_after": 0.0,
+    "account_age_days": 0.0,
+    "dist_km": 1.0,
+    "city_pop": 1.0,
+    "days_since_addr_change": 0.0,
+    "dest_balance_before": 0.0,
+    "dest_balance_after": 0.0,
+    "yearly_income": 0.0,
+    "total_debt": 0.0,
+    "fico_score": 0.0,
+    "num_cards": 0.0,
+    "ieee_dist1": 0.0,
+    "ieee_c1": 0.0,
+    "ieee_c13": 0.0,
+    "ieee_c14": 0.0,
+    "ieee_d15": 0.0,
+    "screen_w": 0.0,
+    "screen_h": 0.0,
+    "session_length_min": 0.0,
+    "email_name_similarity": 0.0,
+    "cpty_txn_count_30d": 1.0,
+    "cpty_new_cust_30d": 1.0,
+    "cpty_age_days": 1.0,
+    "cpty_fraud_count_delayed": 1.0,
+    "cpty_fraud_share_delayed": 0.9721247207667483,
+    "device_txn_count_30d": 0.0,
+    "device_new_cust_30d": 0.0,
+    "device_age_days": 0.0,
+    "device_fraud_count_delayed": 0.0,
+    "device_fraud_share_delayed": 0.0,
+    "email_txn_count_30d": 0.0,
+    "email_new_cust_30d": 0.0,
+    "email_age_days": 0.0,
+    "email_fraud_count_delayed": 0.0,
+    "email_fraud_share_delayed": 0.0,
+    "addr_txn_count_30d": 0.0,
+    "addr_new_cust_30d": 0.0,
+    "addr_age_days": 0.0,
+    "addr_fraud_count_delayed": 0.0,
+    "addr_fraud_share_delayed": 0.0,
+    "card_txn_count_30d": 1.0,
+    "card_new_cust_30d": 1.0,
+    "card_age_days": 1.0,
+    "card_fraud_count_delayed": 1.0,
+    "card_fraud_share_delayed": 0.9715190180922633,
+    "cust_new_cpty_30d": 1.0,
+    "cust_new_device_30d": 0.0,
+    "cust_fraud_count_delayed": 1.0,
+    "cust_fraud_share_delayed": 0.9715190180922633,
+    "ulb_v1": 0.0,
+    "ulb_v2": 0.0,
+    "ulb_v3": 0.0,
+    "ulb_v4": 0.0,
+    "ulb_v5": 0.0,
+    "ulb_v6": 0.0,
+    "ulb_v7": 0.0,
+    "ulb_v8": 0.0,
+    "ulb_v9": 0.0,
+    "ulb_v10": 0.0,
+    "ulb_v11": 0.0,
+    "ulb_v12": 0.0,
+    "ulb_v13": 0.0,
+    "ulb_v14": 0.0,
+    "ulb_v15": 0.0,
+    "ulb_v16": 0.0,
+    "ulb_v17": 0.0,
+    "ulb_v18": 0.0,
+    "ulb_v19": 0.0,
+    "ulb_v20": 0.0,
+    "ulb_v21": 0.0,
+    "ulb_v22": 0.0,
+    "ulb_v23": 0.0,
+    "ulb_v24": 0.0,
+    "ulb_v25": 0.0,
+    "ulb_v26": 0.0,
+    "ulb_v27": 0.0,
+    "ulb_v28": 0.0,
+    "channel": 0.4058191723790943,
+    "txn_type": 1.0,
+    "merchant_category": 1.0,
+    "card_brand": 1.0,
+    "card_kind": 0.0,
+    "is_foreign": 1.0,
+    "cust_gender": 1.0,
+    "cust_new_merchant": 1.0,
+    "cust_new_category": 1.0,
+    "cust_first_foreign": 1.0,
+    "auth_error": 0.0,
+    "device_type": 0.0,
+    "is_recurring": 0.0,
+    "dest_is_merchant": 0.0,
+    "product_code": 0.0,
+    "email_bucket": 0.0,
+    "payment_format": 0.0,
+    "device_os": 0.0,
+    "browser": 0.0,
+    "email_bucket_recipient": 0.0,
+    "phone_valid": 0.0,
+    "keep_alive_session": 0.0
+   },
+   "amount": {
+    "legit_quantiles": {
+     "0.01": 1.2599999904632568,
+     "0.1": 4.079999923706055,
+     "0.5": 47.2400016784668,
+     "0.9": 134.1699981689453,
+     "0.99": 484.9100036621094
+    },
+    "fraud_quantiles": {
+     "0.01": 6.840000152587891,
+     "0.1": 12.100000381469727,
+     "0.5": 390.0,
+     "0.9": 1024.6099853515625,
+     "0.99": 1175.8499755859375
+    },
+    "legit_hist_log10": {
+     "edges": [
+      0.301,
+      0.405,
+      0.5091,
+      0.6131,
+      0.7171,
+      0.8211,
+      0.9251,
+      1.0291,
+      1.1332,
+      1.2372,
+      1.3412,
+      1.4452,
+      1.5492,
+      1.6532,
+      1.7572,
+      1.8613,
+      1.9653,
+      2.0693,
+      2.1733,
+      2.2773,
+      2.3813,
+      2.4854,
+      2.5894,
+      2.6934,
+      2.7974,
+      2.9014,
+      3.0054,
+      3.1094,
+      3.2135,
+      3.3175,
+      3.4215,
+      3.5255,
+      3.6295,
+      3.7335,
+      3.8376,
+      3.9416,
+      4.0456,
+      4.1496,
+      4.2536,
+      4.3576,
+      4.4616
+     ],
+     "counts": [
+      37575,
+      42272,
+      50695,
+      60680,
+      73414,
+      89656,
+      110639,
+      49578,
+      46698,
+      54388,
+      65677,
+      84405,
+      113256,
+      166693,
+      202304,
+      207795,
+      140484,
+      97720,
+      55287,
+      43224,
+      14890,
+      8866,
+      8850,
+      7854,
+      3380,
+      2254,
+      1557,
+      1072,
+      550,
+      349,
+      250,
+      175,
+      86,
+      59,
+      48,
+      24,
+      18,
+      13,
+      3,
+      5
+     ]
+    },
+    "fraud_hist_log10": {
+     "edges": [
+      0.3139,
+      0.3845,
+      0.4551,
+      0.5257,
+      0.5964,
+      0.667,
+      0.7376,
+      0.8083,
+      0.8789,
+      0.9495,
+      1.0201,
+      1.0908,
+      1.1614,
+      1.232,
+      1.3026,
+      1.3733,
+      1.4439,
+      1.5145,
+      1.5852,
+      1.6558,
+      1.7264,
+      1.797,
+      1.8677,
+      1.9383,
+      2.0089,
+      2.0795,
+      2.1502,
+      2.2208,
+      2.2914,
+      2.3621,
+      2.4327,
+      2.5033,
+      2.5739,
+      2.6446,
+      2.7152,
+      2.7858,
+      2.8564,
+      2.9271,
+      2.9977,
+      3.0683,
+      3.1389
+     ],
+     "counts": [
+      3,
+      2,
+      4,
+      7,
+      4,
+      5,
+      9,
+      38,
+      178,
+      317,
+      320,
+      165,
+      88,
+      293,
+      474,
+      102,
+      0,
+      0,
+      1,
+      104,
+      9,
+      0,
+      0,
+      12,
+      86,
+      94,
+      13,
+      5,
+      46,
+      229,
+      1324,
+      851,
+      100,
+      104,
+      110,
+      297,
+      1176,
+      1785,
+      1184,
+      112
+     ]
+    }
+   },
+   "by_hour": {
+    "0": {
+     "fraud_rate": 0.013568543401203528,
+     "count": 60655
+    },
+    "1": {
+     "fraud_rate": 0.013484428501548996,
+     "count": 61330
+    },
+    "2": {
+     "fraud_rate": 0.0130436212908744,
+     "count": 60796
+    },
+    "3": {
+     "fraud_rate": 0.013170843721296418,
+     "count": 60968
+    },
+    "4": {
+     "fraud_rate": 0.0010177183089192165,
+     "count": 59938
+    },
+    "5": {
+     "fraud_rate": 0.0013313806417254693,
+     "count": 60088
+    },
+    "6": {
+     "fraud_rate": 0.0008939509320266199,
+     "count": 60406
+    },
+    "7": {
+     "fraud_rate": 0.001194010049584584,
+     "count": 60301
+    },
+    "8": {
+     "fraud_rate": 0.0009752388508711032,
+     "count": 60498
+    },
+    "9": {
+     "fraud_rate": 0.0010127675117464429,
+     "count": 60231
+    },
+    "10": {
+     "fraud_rate": 0.0008620689655172414,
+     "count": 60320
+    },
+    "11": {
+     "fraud_rate": 0.0009805550939006149,
+     "count": 60170
+    },
+    "12": {
+     "fraud_rate": 0.0009003794456235128,
+     "count": 93294
+    },
+    "13": {
+     "fraud_rate": 0.001005433619988876,
+     "count": 93492
+    },
+    "14": {
+     "fraud_rate": 0.0010742407803285027,
+     "count": 93089
+    },
+    "15": {
+     "fraud_rate": 0.0010702169329723135,
+     "count": 93439
+    },
+    "16": {
+     "fraud_rate": 0.0010287520283384065,
+     "count": 94289
+    },
+    "17": {
+     "fraud_rate": 0.0010051970827897427,
+     "count": 93514
+    },
+    "18": {
+     "fraud_rate": 0.0011801981882362947,
+     "count": 94052
+    },
+    "19": {
+     "fraud_rate": 0.0011237999422045743,
+     "count": 93433
+    },
+    "20": {
+     "fraud_rate": 0.001052846445568913,
+     "count": 93081
+    },
+    "21": {
+     "fraud_rate": 0.001077471249653289,
+     "count": 93738
+    },
+    "22": {
+     "fraud_rate": 0.026014469959106636,
+     "count": 95370
+    },
+    "23": {
+     "fraud_rate": 0.02546349398344143,
+     "count": 95902
+    }
+   },
+   "by_category": {
+    "grocery": {
+     "fraud_rate": 0.009968100419382002,
+     "count": 241069
+    },
+    "retail": {
+     "fraud_rate": 0.006343752065023459,
+     "count": 166463
+    },
+    "online_retail": {
+     "fraud_rate": 0.015927132828986088,
+     "count": 139322
+    },
+    "restaurants": {
+     "fraud_rate": 0.0015681294892487512,
+     "count": 130729
+    },
+    "entertainment": {
+     "fraud_rate": 0.0021771872530160006,
+     "count": 134118
+    },
+    "travel": {
+     "fraud_rate": 0.0026916971495617365,
+     "count": 57956
+    },
+    "fuel": {
+     "fraud_rate": 0.004105749645001569,
+     "count": 188029
+    },
+    "health": {
+     "fraud_rate": 0.0015095509697845013,
+     "count": 122553
+    },
+    "personal_care": {
+     "fraud_rate": 0.0022293116039512626,
+     "count": 130085
+    },
+    "home": {
+     "fraud_rate": 0.0015103157414795396,
+     "count": 175460
+    },
+    "kids_pets": {
+     "fraud_rate": 0.0018797108707884274,
+     "count": 161727
+    },
+    "misc": {
+     "fraud_rate": 0.007340774978890391,
+     "count": 204883
+    }
+   },
+   "by_channel": {
+    "unknown": {
+     "fraud_rate": 0.0022432056489896488,
+     "count": 1100657
+    },
+    "card_present": {
+     "fraud_rate": 0.007892611456324704,
+     "count": 456883
+    },
+    "online": {
+     "fraud_rate": 0.012128036248448385,
+     "count": 294854
+    }
+   },
+   "by_txn_type": {
+    "purchase": {
+     "fraud_rate": 0.005210014716091717,
+     "count": 1852394
+    }
+   },
+   "parquet": "sparkov.parquet",
+   "schema_version": 5
+  },
+  "banksim": {
+   "rows": 594643,
+   "fraud": 7200,
+   "fraud_rate": 0.012108105199254007,
+   "build_seconds": 3.1,
+   "splits": {
+    "train": {
+     "rows": 416250,
+     "fraud": 5268
+    },
+    "val": {
+     "rows": 59464,
+     "fraud": 652
+    },
+    "test": {
+     "rows": 118929,
+     "fraud": 1280
+    }
+   },
+   "ts_min": 0.0,
+   "ts_max": 15465600.0,
+   "absolute_time": false,
+   "coverage": {
+    "amount": 1.0,
+    "hour": 0.0,
+    "dow": 0.0,
+    "secs_since_prev_txn": 0.9930849265862038,
+    "cust_txn_count_24h": 1.0,
+    "cust_amount_sum_24h": 1.0,
+    "cust_txn_count_7d": 1.0,
+    "cust_amount_mean_30d": 0.9919262481858864,
+    "amount_over_cust_mean": 0.9919262481858864,
+    "cust_txn_count_1h": 1.0,
+    "cust_amount_sum_1h": 1.0,
+    "cust_amount_z_30d": 0.9831192833347067,
+    "cust_txn_count_prior": 1.0,
+    "cust_days_since_first": 1.0,
+    "merch_txn_count_24h": 1.0,
+    "merch_amount_ratio": 0.9999159159361163,
+    "cust_age": 0.9980189794548998,
+    "credit_limit": 0.0,
+    "amount_over_limit": 0.0,
+    "balance_before": 0.0,
+    "balance_after": 0.0,
+    "account_age_days": 0.0,
+    "dist_km": 0.0,
+    "city_pop": 0.0,
+    "days_since_addr_change": 0.0,
+    "dest_balance_before": 0.0,
+    "dest_balance_after": 0.0,
+    "yearly_income": 0.0,
+    "total_debt": 0.0,
+    "fico_score": 0.0,
+    "num_cards": 0.0,
+    "ieee_dist1": 0.0,
+    "ieee_c1": 0.0,
+    "ieee_c13": 0.0,
+    "ieee_c14": 0.0,
+    "ieee_d15": 0.0,
+    "screen_w": 0.0,
+    "screen_h": 0.0,
+    "session_length_min": 0.0,
+    "email_name_similarity": 0.0,
+    "cpty_txn_count_30d": 1.0,
+    "cpty_new_cust_30d": 1.0,
+    "cpty_age_days": 1.0,
+    "cpty_fraud_count_delayed": 1.0,
+    "cpty_fraud_share_delayed": 0.8645540265335672,
+    "device_txn_count_30d": 0.0,
+    "device_new_cust_30d": 0.0,
+    "device_age_days": 0.0,
+    "device_fraud_count_delayed": 0.0,
+    "device_fraud_share_delayed": 0.0,
+    "email_txn_count_30d": 0.0,
+    "email_new_cust_30d": 0.0,
+    "email_age_days": 0.0,
+    "email_fraud_count_delayed": 0.0,
+    "email_fraud_share_delayed": 0.0,
+    "addr_txn_count_30d": 0.0,
+    "addr_new_cust_30d": 0.0,
+    "addr_age_days": 0.0,
+    "addr_fraud_count_delayed": 0.0,
+    "addr_fraud_share_delayed": 0.0,
+    "card_txn_count_30d": 0.0,
+    "card_new_cust_30d": 0.0,
+    "card_age_days": 0.0,
+    "card_fraud_count_delayed": 0.0,
+    "card_fraud_share_delayed": 0.0,
+    "cust_new_cpty_30d": 1.0,
+    "cust_new_device_30d": 0.0,
+    "cust_fraud_count_delayed": 1.0,
+    "cust_fraud_share_delayed": 0.8524930084100881,
+    "ulb_v1": 0.0,
+    "ulb_v2": 0.0,
+    "ulb_v3": 0.0,
+    "ulb_v4": 0.0,
+    "ulb_v5": 0.0,
+    "ulb_v6": 0.0,
+    "ulb_v7": 0.0,
+    "ulb_v8": 0.0,
+    "ulb_v9": 0.0,
+    "ulb_v10": 0.0,
+    "ulb_v11": 0.0,
+    "ulb_v12": 0.0,
+    "ulb_v13": 0.0,
+    "ulb_v14": 0.0,
+    "ulb_v15": 0.0,
+    "ulb_v16": 0.0,
+    "ulb_v17": 0.0,
+    "ulb_v18": 0.0,
+    "ulb_v19": 0.0,
+    "ulb_v20": 0.0,
+    "ulb_v21": 0.0,
+    "ulb_v22": 0.0,
+    "ulb_v23": 0.0,
+    "ulb_v24": 0.0,
+    "ulb_v25": 0.0,
+    "ulb_v26": 0.0,
+    "ulb_v27": 0.0,
+    "ulb_v28": 0.0,
+    "channel": 0.0,
+    "txn_type": 1.0,
+    "merchant_category": 1.0,
+    "card_brand": 0.0,
+    "card_kind": 0.0,
+    "is_foreign": 0.0,
+    "cust_gender": 0.9971529135968976,
+    "cust_new_merchant": 1.0,
+    "cust_new_category": 1.0,
+    "cust_first_foreign": 0.0,
+    "auth_error": 0.0,
+    "device_type": 0.0,
+    "is_recurring": 0.0,
+    "dest_is_merchant": 0.0,
+    "product_code": 0.0,
+    "email_bucket": 0.0,
+    "payment_format": 0.0,
+    "device_os": 0.0,
+    "browser": 0.0,
+    "email_bucket_recipient": 0.0,
+    "phone_valid": 0.0,
+    "keep_alive_session": 0.0
+   },
+   "amount": {
+    "legit_quantiles": {
+     "0.01": 0.5600000023841858,
+     "0.1": 5.510000228881836,
+     "0.5": 26.610000610351562,
+     "0.9": 58.310001373291016,
+     "0.99": 153.757404785155
+    },
+    "fraud_quantiles": {
+     "0.01": 6.308799943923949,
+     "0.1": 61.45000076293945,
+     "0.5": 319.1750030517578,
+     "0.9": 901.733984375,
+     "0.99": 4774.789189453125
+    },
+    "legit_hist_log10": {
+     "edges": [
+      0.0,
+      0.0833,
+      0.1666,
+      0.2499,
+      0.3332,
+      0.4165,
+      0.4997,
+      0.583,
+      0.6663,
+      0.7496,
+      0.8329,
+      0.9162,
+      0.9995,
+      1.0828,
+      1.1661,
+      1.2494,
+      1.3326,
+      1.4159,
+      1.4992,
+      1.5825,
+      1.6658,
+      1.7491,
+      1.8324,
+      1.9157,
+      1.999,
+      2.0823,
+      2.1655,
+      2.2488,
+      2.3321,
+      2.4154,
+      2.4987,
+      2.582,
+      2.6653,
+      2.7486,
+      2.8319,
+      2.9152,
+      2.9984,
+      3.0817,
+      3.165,
+      3.2483,
+      3.3316
+     ],
+     "counts": [
+      2222,
+      2610,
+      3308,
+      4057,
+      4812,
+      6071,
+      6987,
+      8667,
+      10348,
+      12769,
+      15437,
+      19004,
+      22935,
+      28340,
+      34935,
+      42713,
+      51369,
+      59872,
+      65201,
+      63539,
+      51917,
+      32757,
+      15525,
+      7201,
+      4623,
+      3496,
+      2685,
+      1939,
+      1170,
+      580,
+      195,
+      64,
+      15,
+      12,
+      19,
+      18,
+      5,
+      13,
+      7,
+      6
+     ]
+    },
+    "fraud_hist_log10": {
+     "edges": [
+      0.0128,
+      0.1105,
+      0.2082,
+      0.3059,
+      0.4036,
+      0.5013,
+      0.599,
+      0.6967,
+      0.7944,
+      0.8921,
+      0.9898,
+      1.0875,
+      1.1852,
+      1.2829,
+      1.3806,
+      1.4783,
+      1.576,
+      1.6737,
+      1.7714,
+      1.8691,
+      1.9668,
+      2.0645,
+      2.1622,
+      2.2599,
+      2.3576,
+      2.4552,
+      2.5529,
+      2.6506,
+      2.7483,
+      2.846,
+      2.9437,
+      3.0414,
+      3.1391,
+      3.2368,
+      3.3345,
+      3.4322,
+      3.5299,
+      3.6276,
+      3.7253,
+      3.823,
+      3.9207
+     ],
+     "counts": [
+      5,
+      2,
+      3,
+      7,
+      5,
+      8,
+      9,
+      17,
+      21,
+      25,
+      25,
+      36,
+      46,
+      53,
+      73,
+      95,
+      122,
+      123,
+      190,
+      186,
+      239,
+      336,
+      403,
+      508,
+      660,
+      826,
+      772,
+      660,
+      579,
+      409,
+      236,
+      82,
+      52,
+      67,
+      59,
+      75,
+      73,
+      64,
+      40,
+      9
+     ]
+    }
+   },
+   "by_category": {
+    "grocery": {
+     "fraud_rate": 0.008654797230464886,
+     "count": 32352
+    },
+    "retail": {
+     "fraud_rate": 0.031051677243880325,
+     "count": 8824
+    },
+    "restaurants": {
+     "fraud_rate": 0.018829436686019142,
+     "count": 6373
+    },
+    "entertainment": {
+     "fraud_rate": 0.9498997995991983,
+     "count": 499
+    },
+    "travel": {
+     "fraud_rate": 0.7939560439560439,
+     "count": 728
+    },
+    "transport": {
+     "fraud_rate": 0.0,
+     "count": 505119
+    },
+    "health": {
+     "fraud_rate": 0.10512613896981343,
+     "count": 16133
+    },
+    "personal_care": {
+     "fraud_rate": 0.04759379557205356,
+     "count": 15086
+    },
+    "home": {
+     "fraud_rate": 0.15206445115810674,
+     "count": 1986
+    },
+    "digital": {
+     "fraud_rate": 0.0,
+     "count": 885
+    },
+    "kids_pets": {
+     "fraud_rate": 0.49525237381309345,
+     "count": 4002
+    },
+    "hotel": {
+     "fraud_rate": 0.31422018348623854,
+     "count": 1744
+    },
+    "misc": {
+     "fraud_rate": 0.25,
+     "count": 912
+    }
+   },
+   "by_txn_type": {
+    "purchase": {
+     "fraud_rate": 0.012108105199254007,
+     "count": 594643
+    }
+   },
+   "parquet": "banksim.parquet",
+   "schema_version": 5
+  },
+  "ieee": {
+   "rows": 590540,
+   "fraud": 20663,
+   "fraud_rate": 0.03499000914417313,
+   "build_seconds": 27.6,
+   "splits": {
+    "train": {
+     "rows": 413378,
+     "fraud": 14538
+    },
+    "val": {
+     "rows": 59054,
+     "fraud": 2061
+    },
+    "test": {
+     "rows": 118108,
+     "fraud": 4064
+    }
+   },
+   "ts_min": 1512172800.0,
+   "ts_max": 1527897531.0,
+   "absolute_time": true,
+   "coverage": {
+    "amount": 1.0,
+    "hour": 1.0,
+    "dow": 1.0,
+    "secs_since_prev_txn": 0.630795543062282,
+    "cust_txn_count_24h": 1.0,
+    "cust_amount_sum_24h": 1.0,
+    "cust_txn_count_7d": 1.0,
+    "cust_amount_mean_30d": 0.5702695837707861,
+    "amount_over_cust_mean": 0.5702695837707861,
+    "cust_txn_count_1h": 1.0,
+    "cust_amount_sum_1h": 1.0,
+    "cust_amount_z_30d": 0.38078030277373254,
+    "cust_txn_count_prior": 1.0,
+    "cust_days_since_first": 1.0,
+    "merch_txn_count_24h": 0.0,
+    "merch_amount_ratio": 0.0,
+    "cust_age": 0.0,
+    "credit_limit": 0.0,
+    "amount_over_limit": 0.0,
+    "balance_before": 0.0,
+    "balance_after": 0.0,
+    "account_age_days": 0.9978511193145256,
+    "dist_km": 0.0,
+    "city_pop": 0.0,
+    "days_since_addr_change": 0.0,
+    "dest_balance_before": 0.0,
+    "dest_balance_after": 0.0,
+    "yearly_income": 0.0,
+    "total_debt": 0.0,
+    "fico_score": 0.0,
+    "num_cards": 0.0,
+    "ieee_dist1": 0.403476479154672,
+    "ieee_c1": 1.0,
+    "ieee_c13": 1.0,
+    "ieee_c14": 1.0,
+    "ieee_d15": 0.8490991296101873,
+    "screen_w": 0.12410505638906766,
+    "screen_h": 0.12410505638906766,
+    "session_length_min": 0.0,
+    "email_name_similarity": 0.0,
+    "cpty_txn_count_30d": 0.0,
+    "cpty_new_cust_30d": 0.0,
+    "cpty_age_days": 0.0,
+    "cpty_fraud_count_delayed": 0.0,
+    "cpty_fraud_share_delayed": 0.0,
+    "device_txn_count_30d": 0.11913164222575945,
+    "device_new_cust_30d": 0.11913164222575945,
+    "device_age_days": 0.11913164222575945,
+    "device_fraud_count_delayed": 0.11913164222575945,
+    "device_fraud_share_delayed": 0.01027534121312701,
+    "email_txn_count_30d": 0.8400514783079893,
+    "email_new_cust_30d": 0.8400514783079893,
+    "email_age_days": 0.8400514783079893,
+    "email_fraud_count_delayed": 0.8400514783079893,
+    "email_fraud_share_delayed": 0.645885122091645,
+    "addr_txn_count_30d": 0.8887357333965523,
+    "addr_new_cust_30d": 0.8887357333965523,
+    "addr_age_days": 0.8887357333965523,
+    "addr_fraud_count_delayed": 0.8887357333965523,
+    "addr_fraud_share_delayed": 0.6837809462525823,
+    "card_txn_count_30d": 1.0,
+    "card_new_cust_30d": 1.0,
+    "card_age_days": 1.0,
+    "card_fraud_count_delayed": 1.0,
+    "card_fraud_share_delayed": 0.7452010024723135,
+    "cust_new_cpty_30d": 0.0,
+    "cust_new_device_30d": 1.0,
+    "cust_fraud_count_delayed": 1.0,
+    "cust_fraud_share_delayed": 0.25738137975412334,
+    "ulb_v1": 0.0,
+    "ulb_v2": 0.0,
+    "ulb_v3": 0.0,
+    "ulb_v4": 0.0,
+    "ulb_v5": 0.0,
+    "ulb_v6": 0.0,
+    "ulb_v7": 0.0,
+    "ulb_v8": 0.0,
+    "ulb_v9": 0.0,
+    "ulb_v10": 0.0,
+    "ulb_v11": 0.0,
+    "ulb_v12": 0.0,
+    "ulb_v13": 0.0,
+    "ulb_v14": 0.0,
+    "ulb_v15": 0.0,
+    "ulb_v16": 0.0,
+    "ulb_v17": 0.0,
+    "ulb_v18": 0.0,
+    "ulb_v19": 0.0,
+    "ulb_v20": 0.0,
+    "ulb_v21": 0.0,
+    "ulb_v22": 0.0,
+    "ulb_v23": 0.0,
+    "ulb_v24": 0.0,
+    "ulb_v25": 0.0,
+    "ulb_v26": 0.0,
+    "ulb_v27": 0.0,
+    "ulb_v28": 0.0,
+    "channel": 1.0,
+    "txn_type": 1.0,
+    "merchant_category": 0.0,
+    "card_brand": 0.9973295627730552,
+    "card_kind": 0.9973397229654215,
+    "is_foreign": 0.0,
+    "cust_gender": 0.0,
+    "cust_new_merchant": 0.0,
+    "cust_new_category": 0.0,
+    "cust_first_foreign": 0.0,
+    "auth_error": 0.0,
+    "device_type": 0.23844278118332374,
+    "is_recurring": 0.0,
+    "dest_is_merchant": 0.0,
+    "product_code": 1.0,
+    "email_bucket": 0.8400514783079893,
+    "payment_format": 0.0,
+    "device_os": 0.13134588681545703,
+    "browser": 0.23754868425508857,
+    "email_bucket_recipient": 0.23248382836048362,
+    "phone_valid": 0.0,
+    "keep_alive_session": 0.0
+   },
+   "amount": {
+    "legit_quantiles": {
+     "0.01": 9.512879905700686,
+     "0.1": 26.309999465942383,
+     "0.5": 68.5,
+     "0.9": 267.11199340820497,
+     "0.99": 1104.0
+    },
+    "fraud_quantiles": {
+     "0.01": 6.740959978103638,
+     "0.1": 18.93600082397461,
+     "0.5": 75.0,
+     "0.9": 335.0,
+     "0.99": 994.0
+    },
+    "legit_hist_log10": {
+     "edges": [
+      0.0973,
+      0.2074,
+      0.3176,
+      0.4278,
+      0.538,
+      0.6481,
+      0.7583,
+      0.8685,
+      0.9787,
+      1.0888,
+      1.199,
+      1.3092,
+      1.4194,
+      1.5296,
+      1.6397,
+      1.7499,
+      1.8601,
+      1.9703,
+      2.0804,
+      2.1906,
+      2.3008,
+      2.411,
+      2.5211,
+      2.6313,
+      2.7415,
+      2.8517,
+      2.9618,
+      3.072,
+      3.1822,
+      3.2924,
+      3.4025,
+      3.5127,
+      3.6229,
+      3.7331,
+      3.8433,
+      3.9534,
+      4.0636,
+      4.1738,
+      4.284,
+      4.3941,
+      4.5043
+     ],
+     "counts": [
+      8,
+      150,
+      34,
+      97,
+      216,
+      615,
+      1315,
+      2253,
+      4266,
+      5014,
+      9725,
+      24241,
+      44900,
+      46295,
+      70917,
+      77712,
+      39646,
+      99554,
+      24430,
+      22324,
+      37025,
+      16532,
+      13712,
+      9681,
+      6873,
+      3780,
+      3426,
+      1564,
+      1476,
+      1210,
+      694,
+      128,
+      57,
+      5,
+      0,
+      0,
+      0,
+      0,
+      0,
+      2
+     ]
+    },
+    "fraud_hist_log10": {
+     "edges": [
+      0.1113,
+      0.2014,
+      0.2915,
+      0.3816,
+      0.4717,
+      0.5618,
+      0.6519,
+      0.742,
+      0.8321,
+      0.9222,
+      1.0123,
+      1.1024,
+      1.1925,
+      1.2826,
+      1.3727,
+      1.4628,
+      1.5529,
+      1.643,
+      1.7331,
+      1.8232,
+      1.9133,
+      2.0034,
+      2.0935,
+      2.1836,
+      2.2737,
+      2.3638,
+      2.4539,
+      2.544,
+      2.6341,
+      2.7242,
+      2.8143,
+      2.9044,
+      2.9945,
+      3.0846,
+      3.1747,
+      3.2648,
+      3.3549,
+      3.445,
+      3.5351,
+      3.6252,
+      3.7153
+     ],
+     "counts": [
+      22,
+      0,
+      1,
+      2,
+      6,
+      10,
+      17,
+      83,
+      95,
+      250,
+      352,
+      414,
+      671,
+      692,
+      1035,
+      1435,
+      1170,
+      1729,
+      1727,
+      1283,
+      1099,
+      2043,
+      1159,
+      748,
+      1198,
+      572,
+      865,
+      371,
+      635,
+      258,
+      158,
+      201,
+      230,
+      43,
+      44,
+      18,
+      10,
+      14,
+      2,
+      1
+     ]
+    }
+   },
+   "by_hour": {
+    "0": {
+     "fraud_rate": 0.03137981214446355,
+     "count": 37795
+    },
+    "1": {
+     "fraud_rate": 0.03131383968045858,
+     "count": 32797
+    },
+    "2": {
+     "fraud_rate": 0.037483166242705375,
+     "count": 26732
+    },
+    "3": {
+     "fraud_rate": 0.0383136236900298,
+     "count": 20802
+    },
+    "4": {
+     "fraud_rate": 0.05189028910303929,
+     "count": 14839
+    },
+    "5": {
+     "fraud_rate": 0.07030203071848264,
+     "count": 9701
+    },
+    "6": {
+     "fraud_rate": 0.07774263359414017,
+     "count": 6007
+    },
+    "7": {
+     "fraud_rate": 0.10610151187904968,
+     "count": 3704
+    },
+    "8": {
+     "fraud_rate": 0.09301428020069472,
+     "count": 2591
+    },
+    "9": {
+     "fraud_rate": 0.0899556272690601,
+     "count": 2479
+    },
+    "10": {
+     "fraud_rate": 0.05321202095395644,
+     "count": 3627
+    },
+    "11": {
+     "fraud_rate": 0.038816464039841805,
+     "count": 6827
+    },
+    "12": {
+     "fraud_rate": 0.030439322142799777,
+     "count": 12451
+    },
+    "13": {
+     "fraud_rate": 0.02288949052424317,
+     "count": 20315
+    },
+    "14": {
+     "fraud_rate": 0.02421632307257837,
+     "count": 28328
+    },
+    "15": {
+     "fraud_rate": 0.0253994506630438,
+     "count": 33859
+    },
+    "16": {
+     "fraud_rate": 0.029510569021654866,
+     "count": 38698
+    },
+    "17": {
+     "fraud_rate": 0.03153009355892247,
+     "count": 40723
+    },
+    "18": {
+     "fraud_rate": 0.035231393645380533,
+     "count": 41639
+    },
+    "19": {
+     "fraud_rate": 0.03473821678736792,
+     "count": 42115
+    },
+    "20": {
+     "fraud_rate": 0.03427313197070509,
+     "count": 41782
+    },
+    "21": {
+     "fraud_rate": 0.03400494704738119,
+     "count": 41641
+    },
+    "22": {
+     "fraud_rate": 0.03269403728821799,
+     "count": 41139
+    },
+    "23": {
+     "fraud_rate": 0.03699717139352675,
+     "count": 39949
+    }
+   },
+   "by_channel": {
+    "online": {
+     "fraud_rate": 0.03499000914417313,
+     "count": 590540
+    }
+   },
+   "by_txn_type": {
+    "purchase": {
+     "fraud_rate": 0.03499000914417313,
+     "count": 590540
+    }
+   },
+   "parquet": "ieee.parquet",
+   "schema_version": 5
+  },
+  "amlworld": {
+   "rows": 5078345,
+   "fraud": 5177,
+   "fraud_rate": 0.0010194266045335635,
+   "build_seconds": 24.8,
+   "splits": {
+    "train": {
+     "rows": 3554842,
+     "fraud": 2856
+    },
+    "val": {
+     "rows": 507834,
+     "fraud": 524
+    },
+    "test": {
+     "rows": 1015669,
+     "fraud": 1797
+    }
+   },
+   "ts_min": 1661990400.0,
+   "ts_max": 1663517880.0,
+   "absolute_time": true,
+   "coverage": {
+    "amount": 1.0,
+    "hour": 1.0,
+    "dow": 1.0,
+    "secs_since_prev_txn": 0.9021336675629561,
+    "cust_txn_count_24h": 1.0,
+    "cust_amount_sum_24h": 1.0,
+    "cust_txn_count_7d": 1.0,
+    "cust_amount_mean_30d": 0.9021336675629561,
+    "amount_over_cust_mean": 0.9021336675629561,
+    "cust_txn_count_1h": 1.0,
+    "cust_amount_sum_1h": 1.0,
+    "cust_amount_z_30d": 0.8343468196823965,
+    "cust_txn_count_prior": 1.0,
+    "cust_days_since_first": 1.0,
+    "merch_txn_count_24h": 1.0,
+    "merch_amount_ratio": 0.9171698653793706,
+    "cust_age": 0.0,
+    "credit_limit": 0.0,
+    "amount_over_limit": 0.0,
+    "balance_before": 0.0,
+    "balance_after": 0.0,
+    "account_age_days": 0.0,
+    "dist_km": 0.0,
+    "city_pop": 0.0,
+    "days_since_addr_change": 0.0,
+    "dest_balance_before": 0.0,
+    "dest_balance_after": 0.0,
+    "yearly_income": 0.0,
+    "total_debt": 0.0,
+    "fico_score": 0.0,
+    "num_cards": 0.0,
+    "ieee_dist1": 0.0,
+    "ieee_c1": 0.0,
+    "ieee_c13": 0.0,
+    "ieee_c14": 0.0,
+    "ieee_d15": 0.0,
+    "screen_w": 0.0,
+    "screen_h": 0.0,
+    "session_length_min": 0.0,
+    "email_name_similarity": 0.0,
+    "cpty_txn_count_30d": 1.0,
+    "cpty_new_cust_30d": 1.0,
+    "cpty_age_days": 1.0,
+    "cpty_fraud_count_delayed": 1.0,
+    "cpty_fraud_share_delayed": 0.0,
+    "device_txn_count_30d": 0.0,
+    "device_new_cust_30d": 0.0,
+    "device_age_days": 0.0,
+    "device_fraud_count_delayed": 0.0,
+    "device_fraud_share_delayed": 0.0,
+    "email_txn_count_30d": 0.0,
+    "email_new_cust_30d": 0.0,
+    "email_age_days": 0.0,
+    "email_fraud_count_delayed": 0.0,
+    "email_fraud_share_delayed": 0.0,
+    "addr_txn_count_30d": 0.0,
+    "addr_new_cust_30d": 0.0,
+    "addr_age_days": 0.0,
+    "addr_fraud_count_delayed": 0.0,
+    "addr_fraud_share_delayed": 0.0,
+    "card_txn_count_30d": 0.0,
+    "card_new_cust_30d": 0.0,
+    "card_age_days": 0.0,
+    "card_fraud_count_delayed": 0.0,
+    "card_fraud_share_delayed": 0.0,
+    "cust_new_cpty_30d": 1.0,
+    "cust_new_device_30d": 0.0,
+    "cust_fraud_count_delayed": 1.0,
+    "cust_fraud_share_delayed": 0.0,
+    "ulb_v1": 0.0,
+    "ulb_v2": 0.0,
+    "ulb_v3": 0.0,
+    "ulb_v4": 0.0,
+    "ulb_v5": 0.0,
+    "ulb_v6": 0.0,
+    "ulb_v7": 0.0,
+    "ulb_v8": 0.0,
+    "ulb_v9": 0.0,
+    "ulb_v10": 0.0,
+    "ulb_v11": 0.0,
+    "ulb_v12": 0.0,
+    "ulb_v13": 0.0,
+    "ulb_v14": 0.0,
+    "ulb_v15": 0.0,
+    "ulb_v16": 0.0,
+    "ulb_v17": 0.0,
+    "ulb_v18": 0.0,
+    "ulb_v19": 0.0,
+    "ulb_v20": 0.0,
+    "ulb_v21": 0.0,
+    "ulb_v22": 0.0,
+    "ulb_v23": 0.0,
+    "ulb_v24": 0.0,
+    "ulb_v25": 0.0,
+    "ulb_v26": 0.0,
+    "ulb_v27": 0.0,
+    "ulb_v28": 0.0,
+    "channel": 0.0,
+    "txn_type": 1.0,
+    "merchant_category": 0.0,
+    "card_brand": 0.0,
+    "card_kind": 0.0,
+    "is_foreign": 1.0,
+    "cust_gender": 0.0,
+    "cust_new_merchant": 1.0,
+    "cust_new_category": 0.0,
+    "cust_first_foreign": 1.0,
+    "auth_error": 0.0,
+    "device_type": 0.0,
+    "is_recurring": 0.0,
+    "dest_is_merchant": 0.0,
+    "product_code": 0.0,
+    "email_bucket": 0.0,
+    "payment_format": 1.0,
+    "device_os": 0.0,
+    "browser": 0.0,
+    "email_bucket_recipient": 0.0,
+    "phone_valid": 0.0,
+    "keep_alive_session": 0.0
+   },
+   "amount": {
+    "legit_quantiles": {
+     "0.01": 2.109999895095825,
+     "0.1": 29.139999389648438,
+     "0.5": 859.9330444335938,
+     "0.9": 34700.4375,
+     "0.99": 3019183.422500022
+    },
+    "fraud_quantiles": {
+     "0.01": 43.36000061035156,
+     "0.1": 535.1661499023438,
+     "0.5": 5683.33984375,
+     "0.9": 17840.310546875,
+     "0.99": 14657912.11999978
+    },
+    "legit_hist_log10": {
+     "edges": [
+      0.0,
+      0.2614,
+      0.5228,
+      0.7841,
+      1.0455,
+      1.3069,
+      1.5682,
+      1.8296,
+      2.091,
+      2.3523,
+      2.6137,
+      2.8751,
+      3.1364,
+      3.3978,
+      3.6592,
+      3.9205,
+      4.1819,
+      4.4433,
+      4.7046,
+      4.966,
+      5.2274,
+      5.4888,
+      5.7501,
+      6.0115,
+      6.2729,
+      6.5342,
+      6.7956,
+      7.057,
+      7.3183,
+      7.5797,
+      7.8411,
+      8.1024,
+      8.3638,
+      8.6252,
+      8.8865,
+      9.1479,
+      9.4093,
+      9.6706,
+      9.932,
+      10.1934,
+      10.4547
+     ],
+     "counts": [
+      29990,
+      23988,
+      57453,
+      105856,
+      166566,
+      181992,
+      224597,
+      328681,
+      441756,
+      447638,
+      431773,
+      433059,
+      444382,
+      417531,
+      306414,
+      255759,
+      216929,
+      120739,
+      93890,
+      80396,
+      66411,
+      54837,
+      43657,
+      31576,
+      20269,
+      14788,
+      12284,
+      8856,
+      5191,
+      2813,
+      1376,
+      906,
+      456,
+      192,
+      83,
+      54,
+      12,
+      12,
+      4,
+      2
+     ]
+    },
+    "fraud_hist_log10": {
+     "edges": [
+      0.1239,
+      0.3761,
+      0.6283,
+      0.8806,
+      1.1328,
+      1.385,
+      1.6373,
+      1.8895,
+      2.1417,
+      2.394,
+      2.6462,
+      2.8984,
+      3.1507,
+      3.4029,
+      3.6551,
+      3.9074,
+      4.1596,
+      4.4119,
+      4.6641,
+      4.9163,
+      5.1686,
+      5.4208,
+      5.673,
+      5.9253,
+      6.1775,
+      6.4297,
+      6.682,
+      6.9342,
+      7.1864,
+      7.4387,
+      7.6909,
+      7.9431,
+      8.1954,
+      8.4476,
+      8.6999,
+      8.9521,
+      9.2043,
+      9.4566,
+      9.7088,
+      9.961,
+      10.2133
+     ],
+     "counts": [
+      1,
+      5,
+      1,
+      7,
+      19,
+      18,
+      44,
+      68,
+      131,
+      166,
+      207,
+      308,
+      521,
+      805,
+      773,
+      1095,
+      765,
+      66,
+      28,
+      7,
+      9,
+      9,
+      9,
+      4,
+      10,
+      6,
+      12,
+      31,
+      21,
+      9,
+      4,
+      7,
+      3,
+      2,
+      2,
+      2,
+      1,
+      0,
+      0,
+      1
+     ]
+    }
+   },
+   "by_hour": {
+    "0": {
+     "fraud_rate": 0.00027728500171727644,
+     "count": 634726
+    },
+    "1": {
+     "fraud_rate": 0.0007846052196894615,
+     "count": 193728
+    },
+    "2": {
+     "fraud_rate": 0.0008542893089576117,
+     "count": 193143
+    },
+    "3": {
+     "fraud_rate": 0.0007555019689623232,
+     "count": 193249
+    },
+    "4": {
+     "fraud_rate": 0.0007972417506186389,
+     "count": 193166
+    },
+    "5": {
+     "fraud_rate": 0.0009695719443011862,
+     "count": 193900
+    },
+    "6": {
+     "fraud_rate": 0.001064508166371827,
+     "count": 194456
+    },
+    "7": {
+     "fraud_rate": 0.001008606777837547,
+     "count": 193336
+    },
+    "8": {
+     "fraud_rate": 0.0013373349713094998,
+     "count": 192921
+    },
+    "9": {
+     "fraud_rate": 0.0011246320328371824,
+     "count": 192952
+    },
+    "10": {
+     "fraud_rate": 0.0012109983491090882,
+     "count": 193229
+    },
+    "11": {
+     "fraud_rate": 0.0015245478036175712,
+     "count": 193500
+    },
+    "12": {
+     "fraud_rate": 0.0017411852496735279,
+     "count": 192972
+    },
+    "13": {
+     "fraud_rate": 0.0015167176567751051,
+     "count": 192521
+    },
+    "14": {
+     "fraud_rate": 0.001447193016126606,
+     "count": 192787
+    },
+    "15": {
+     "fraud_rate": 0.001349610768149186,
+     "count": 194871
+    },
+    "16": {
+     "fraud_rate": 0.0016080079831650353,
+     "count": 193407
+    },
+    "17": {
+     "fraud_rate": 0.0013305445395901715,
+     "count": 193154
+    },
+    "18": {
+     "fraud_rate": 0.0013190496635130172,
+     "count": 193321
+    },
+    "19": {
+     "fraud_rate": 0.0011979836534871178,
+     "count": 192824
+    },
+    "20": {
+     "fraud_rate": 0.000694988304487861,
+     "count": 192809
+    },
+    "21": {
+     "fraud_rate": 0.0008012820512820513,
+     "count": 192192
+    },
+    "22": {
+     "fraud_rate": 0.0006672365979273963,
+     "count": 191836
+    },
+    "23": {
+     "fraud_rate": 0.0007758152525278647,
+     "count": 193345
+    }
+   },
+   "by_txn_type": {
+    "cash_out": {
+     "fraud_rate": 0.0002200081077061914,
+     "count": 490891
+    },
+    "payment": {
+     "fraud_rate": 0.0001662664246915052,
+     "count": 3187655
+    },
+    "transfer": {
+     "fraud_rate": 0.0032426084030635826,
+     "count": 1399799
+    }
+   },
+   "by_scenario": {
+    "0": 5075136,
+    "8": 1546,
+    "3": 716,
+    "1": 342,
+    "2": 318,
+    "5": 287
+   },
+   "parquet": "amlworld.parquet",
+   "schema_version": 5
+  },
+  "baf": {
+   "rows": 1000000,
+   "fraud": 11029,
+   "fraud_rate": 0.011029,
+   "build_seconds": 6.7,
+   "splits": {
+    "train": {
+     "rows": 700000,
+     "fraud": 7044
+    },
+    "val": {
+     "rows": 100000,
+     "fraud": 1186
+    },
+    "test": {
+     "rows": 200000,
+     "fraud": 2799
+    }
+   },
+   "ts_min": 0.0,
+   "ts_max": 20735973.235029895,
+   "absolute_time": false,
+   "coverage": {
+    "amount": 1.0,
+    "hour": 0.0,
+    "dow": 0.0,
+    "secs_since_prev_txn": 0.0,
+    "cust_txn_count_24h": 0.0,
+    "cust_amount_sum_24h": 0.0,
+    "cust_txn_count_7d": 0.0,
+    "cust_amount_mean_30d": 0.0,
+    "amount_over_cust_mean": 0.0,
+    "cust_txn_count_1h": 0.0,
+    "cust_amount_sum_1h": 0.0,
+    "cust_amount_z_30d": 0.0,
+    "cust_txn_count_prior": 0.0,
+    "cust_days_since_first": 0.0,
+    "merch_txn_count_24h": 0.0,
+    "merch_amount_ratio": 0.0,
+    "cust_age": 1.0,
+    "credit_limit": 1.0,
+    "amount_over_limit": 0.0,
+    "balance_before": 0.0,
+    "balance_after": 0.0,
+    "account_age_days": 0.746365,
+    "dist_km": 0.0,
+    "city_pop": 0.0,
+    "days_since_addr_change": 0.995746,
+    "dest_balance_before": 0.0,
+    "dest_balance_after": 0.0,
+    "yearly_income": 0.0,
+    "total_debt": 0.0,
+    "fico_score": 0.0,
+    "num_cards": 0.0,
+    "ieee_dist1": 0.0,
+    "ieee_c1": 0.0,
+    "ieee_c13": 0.0,
+    "ieee_c14": 0.0,
+    "ieee_d15": 0.0,
+    "screen_w": 0.0,
+    "screen_h": 0.0,
+    "session_length_min": 0.997985,
+    "email_name_similarity": 1.0,
+    "cpty_txn_count_30d": 0.0,
+    "cpty_new_cust_30d": 0.0,
+    "cpty_age_days": 0.0,
+    "cpty_fraud_count_delayed": 0.0,
+    "cpty_fraud_share_delayed": 0.0,
+    "device_txn_count_30d": 0.0,
+    "device_new_cust_30d": 0.999641,
+    "device_age_days": 0.0,
+    "device_fraud_count_delayed": 0.0,
+    "device_fraud_share_delayed": 0.0,
+    "email_txn_count_30d": 0.0,
+    "email_new_cust_30d": 0.0,
+    "email_age_days": 0.0,
+    "email_fraud_count_delayed": 0.0,
+    "email_fraud_share_delayed": 0.0,
+    "addr_txn_count_30d": 1.0,
+    "addr_new_cust_30d": 0.0,
+    "addr_age_days": 0.0,
+    "addr_fraud_count_delayed": 0.0,
+    "addr_fraud_share_delayed": 0.0,
+    "card_txn_count_30d": 0.0,
+    "card_new_cust_30d": 0.0,
+    "card_age_days": 0.0,
+    "card_fraud_count_delayed": 0.0,
+    "card_fraud_share_delayed": 0.0,
+    "cust_new_cpty_30d": 0.0,
+    "cust_new_device_30d": 0.0,
+    "cust_fraud_count_delayed": 0.0,
+    "cust_fraud_share_delayed": 0.0,
+    "ulb_v1": 0.0,
+    "ulb_v2": 0.0,
+    "ulb_v3": 0.0,
+    "ulb_v4": 0.0,
+    "ulb_v5": 0.0,
+    "ulb_v6": 0.0,
+    "ulb_v7": 0.0,
+    "ulb_v8": 0.0,
+    "ulb_v9": 0.0,
+    "ulb_v10": 0.0,
+    "ulb_v11": 0.0,
+    "ulb_v12": 0.0,
+    "ulb_v13": 0.0,
+    "ulb_v14": 0.0,
+    "ulb_v15": 0.0,
+    "ulb_v16": 0.0,
+    "ulb_v17": 0.0,
+    "ulb_v18": 0.0,
+    "ulb_v19": 0.0,
+    "ulb_v20": 0.0,
+    "ulb_v21": 0.0,
+    "ulb_v22": 0.0,
+    "ulb_v23": 0.0,
+    "ulb_v24": 0.0,
+    "ulb_v25": 0.0,
+    "ulb_v26": 0.0,
+    "ulb_v27": 0.0,
+    "ulb_v28": 0.0,
+    "channel": 1.0,
+    "txn_type": 1.0,
+    "merchant_category": 0.0,
+    "card_brand": 0.0,
+    "card_kind": 0.0,
+    "is_foreign": 1.0,
+    "cust_gender": 0.0,
+    "cust_new_merchant": 0.0,
+    "cust_new_category": 0.0,
+    "cust_first_foreign": 0.0,
+    "auth_error": 0.0,
+    "device_type": 0.0,
+    "is_recurring": 0.0,
+    "dest_is_merchant": 0.0,
+    "product_code": 0.0,
+    "email_bucket": 1.0,
+    "payment_format": 0.0,
+    "device_os": 1.0,
+    "browser": 0.0,
+    "email_bucket_recipient": 0.0,
+    "phone_valid": 1.0,
+    "keep_alive_session": 1.0
+   },
+   "amount": {
+    "legit_quantiles": {
+     "0.01": 200.0,
+     "0.1": 200.0,
+     "0.5": 200.0,
+     "0.9": 1500.0,
+     "0.99": 1500.0
+    },
+    "fraud_quantiles": {
+     "0.01": 200.0,
+     "0.1": 200.0,
+     "0.5": 500.0,
+     "0.9": 1500.0,
+     "0.99": 2000.0
+    },
+    "legit_hist_log10": {
+     "edges": [
+      2.281,
+      2.3071,
+      2.3331,
+      2.3591,
+      2.3852,
+      2.4112,
+      2.4372,
+      2.4633,
+      2.4893,
+      2.5153,
+      2.5414,
+      2.5674,
+      2.5935,
+      2.6195,
+      2.6455,
+      2.6716,
+      2.6976,
+      2.7236,
+      2.7497,
+      2.7757,
+      2.8017,
+      2.8278,
+      2.8538,
+      2.8798,
+      2.9059,
+      2.9319,
+      2.9579,
+      2.984,
+      3.01,
+      3.036,
+      3.0621,
+      3.0881,
+      3.1141,
+      3.1402,
+      3.1662,
+      3.1923,
+      3.2183,
+      3.2443,
+      3.2704,
+      3.2964,
+      3.3224
+     ],
+     "counts": [
+      609592,
+      606,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      858,
+      141274,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      88422,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      142552,
+      0,
+      0,
+      0,
+      310,
+      5357
+     ]
+    },
+    "fraud_hist_log10": {
+     "edges": [
+      2.281,
+      2.3071,
+      2.3331,
+      2.3591,
+      2.3852,
+      2.4112,
+      2.4372,
+      2.4633,
+      2.4893,
+      2.5153,
+      2.5414,
+      2.5674,
+      2.5935,
+      2.6195,
+      2.6455,
+      2.6716,
+      2.6976,
+      2.7236,
+      2.7497,
+      2.7757,
+      2.8017,
+      2.8278,
+      2.8538,
+      2.8798,
+      2.9059,
+      2.9319,
+      2.9579,
+      2.984,
+      3.01,
+      3.036,
+      3.0621,
+      3.0881,
+      3.1141,
+      3.1402,
+      3.1662,
+      3.1923,
+      3.2183,
+      3.2443,
+      3.2704,
+      3.2964,
+      3.3224
+     ],
+     "counts": [
+      4425,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      12,
+      1490,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1040,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      3183,
+      0,
+      0,
+      0,
+      80,
+      798
+     ]
+    }
+   },
+   "by_channel": {
+    "online": {
+     "fraud_rate": 0.011029,
+     "count": 1000000
+    }
+   },
+   "by_txn_type": {
+    "address_verification": {
+     "fraud_rate": 0.011029,
+     "count": 1000000
+    }
+   },
+   "parquet": "baf.parquet",
+   "schema_version": 5
+  },
+  "fraudecom": {
+   "rows": 151112,
+   "fraud": 14151,
+   "fraud_rate": 0.09364577267192546,
+   "build_seconds": 1.6,
+   "splits": {
+    "train": {
+     "rows": 105779,
+     "fraud": 12077
+    },
+    "val": {
+     "rows": 15111,
+     "fraud": 685
+    },
+    "test": {
+     "rows": 30222,
+     "fraud": 1389
+    }
+   },
+   "ts_min": 1420070444.0,
+   "ts_max": 1450234565.0,
+   "absolute_time": true,
+   "coverage": {
+    "amount": 1.0,
+    "hour": 1.0,
+    "dow": 1.0,
+    "secs_since_prev_txn": 0.0,
+    "cust_txn_count_24h": 0.0,
+    "cust_amount_sum_24h": 0.0,
+    "cust_txn_count_7d": 0.0,
+    "cust_amount_mean_30d": 0.0,
+    "amount_over_cust_mean": 0.0,
+    "cust_txn_count_1h": 0.0,
+    "cust_amount_sum_1h": 0.0,
+    "cust_amount_z_30d": 0.0,
+    "cust_txn_count_prior": 0.0,
+    "cust_days_since_first": 0.0,
+    "merch_txn_count_24h": 0.0,
+    "merch_amount_ratio": 0.0,
+    "cust_age": 1.0,
+    "credit_limit": 0.0,
+    "amount_over_limit": 0.0,
+    "balance_before": 0.0,
+    "balance_after": 0.0,
+    "account_age_days": 1.0,
+    "dist_km": 0.0,
+    "city_pop": 0.0,
+    "days_since_addr_change": 0.0,
+    "dest_balance_before": 0.0,
+    "dest_balance_after": 0.0,
+    "yearly_income": 0.0,
+    "total_debt": 0.0,
+    "fico_score": 0.0,
+    "num_cards": 0.0,
+    "ieee_dist1": 0.0,
+    "ieee_c1": 0.0,
+    "ieee_c13": 0.0,
+    "ieee_c14": 0.0,
+    "ieee_d15": 0.0,
+    "screen_w": 0.0,
+    "screen_h": 0.0,
+    "session_length_min": 0.0,
+    "email_name_similarity": 0.0,
+    "cpty_txn_count_30d": 0.0,
+    "cpty_new_cust_30d": 0.0,
+    "cpty_age_days": 0.0,
+    "cpty_fraud_count_delayed": 0.0,
+    "cpty_fraud_share_delayed": 0.0,
+    "device_txn_count_30d": 1.0,
+    "device_new_cust_30d": 1.0,
+    "device_age_days": 1.0,
+    "device_fraud_count_delayed": 1.0,
+    "device_fraud_share_delayed": 0.03232701572343688,
+    "email_txn_count_30d": 0.0,
+    "email_new_cust_30d": 0.0,
+    "email_age_days": 0.0,
+    "email_fraud_count_delayed": 0.0,
+    "email_fraud_share_delayed": 0.0,
+    "addr_txn_count_30d": 1.0,
+    "addr_new_cust_30d": 1.0,
+    "addr_age_days": 1.0,
+    "addr_fraud_count_delayed": 1.0,
+    "addr_fraud_share_delayed": 0.0037918894594737296,
+    "card_txn_count_30d": 0.0,
+    "card_new_cust_30d": 0.0,
+    "card_age_days": 0.0,
+    "card_fraud_count_delayed": 0.0,
+    "card_fraud_share_delayed": 0.0,
+    "cust_new_cpty_30d": 0.0,
+    "cust_new_device_30d": 1.0,
+    "cust_fraud_count_delayed": 1.0,
+    "cust_fraud_share_delayed": 0.0,
+    "ulb_v1": 0.0,
+    "ulb_v2": 0.0,
+    "ulb_v3": 0.0,
+    "ulb_v4": 0.0,
+    "ulb_v5": 0.0,
+    "ulb_v6": 0.0,
+    "ulb_v7": 0.0,
+    "ulb_v8": 0.0,
+    "ulb_v9": 0.0,
+    "ulb_v10": 0.0,
+    "ulb_v11": 0.0,
+    "ulb_v12": 0.0,
+    "ulb_v13": 0.0,
+    "ulb_v14": 0.0,
+    "ulb_v15": 0.0,
+    "ulb_v16": 0.0,
+    "ulb_v17": 0.0,
+    "ulb_v18": 0.0,
+    "ulb_v19": 0.0,
+    "ulb_v20": 0.0,
+    "ulb_v21": 0.0,
+    "ulb_v22": 0.0,
+    "ulb_v23": 0.0,
+    "ulb_v24": 0.0,
+    "ulb_v25": 0.0,
+    "ulb_v26": 0.0,
+    "ulb_v27": 0.0,
+    "ulb_v28": 0.0,
+    "channel": 1.0,
+    "txn_type": 1.0,
+    "merchant_category": 0.0,
+    "card_brand": 0.0,
+    "card_kind": 0.0,
+    "is_foreign": 0.0,
+    "cust_gender": 1.0,
+    "cust_new_merchant": 0.0,
+    "cust_new_category": 0.0,
+    "cust_first_foreign": 0.0,
+    "auth_error": 0.0,
+    "device_type": 0.0,
+    "is_recurring": 0.0,
+    "dest_is_merchant": 0.0,
+    "product_code": 0.0,
+    "email_bucket": 0.0,
+    "payment_format": 0.0,
+    "device_os": 0.0,
+    "browser": 1.0,
+    "email_bucket_recipient": 0.0,
+    "phone_valid": 0.0,
+    "keep_alive_session": 0.0
+   },
+   "amount": {
+    "legit_quantiles": {
+     "0.01": 9.0,
+     "0.1": 15.0,
+     "0.5": 35.0,
+     "0.9": 62.0,
+     "0.99": 87.0
+    },
+    "fraud_quantiles": {
+     "0.01": 9.0,
+     "0.1": 15.0,
+     "0.5": 35.0,
+     "0.9": 62.0,
+     "0.99": 88.0
+    },
+    "legit_hist_log10": {
+     "edges": [
+      1.0,
+      1.0298,
+      1.0595,
+      1.0893,
+      1.119,
+      1.1488,
+      1.1785,
+      1.2083,
+      1.2381,
+      1.2678,
+      1.2976,
+      1.3273,
+      1.3571,
+      1.3869,
+      1.4166,
+      1.4464,
+      1.4761,
+      1.5059,
+      1.5356,
+      1.5654,
+      1.5952,
+      1.6249,
+      1.6547,
+      1.6844,
+      1.7142,
+      1.744,
+      1.7737,
+      1.8035,
+      1.8332,
+      1.863,
+      1.8927,
+      1.9225,
+      1.9523,
+      1.982,
+      2.0118,
+      2.0415,
+      2.0713,
+      2.1011,
+      2.1308,
+      2.1606,
+      2.1903
+     ],
+     "counts": [
+      2098,
+      2041,
+      2215,
+      2249,
+      2337,
+      2460,
+      2525,
+      2443,
+      2489,
+      2667,
+      5357,
+      2667,
+      5516,
+      5666,
+      2907,
+      5889,
+      8450,
+      5544,
+      5544,
+      7969,
+      7587,
+      7170,
+      6435,
+      6077,
+      6813,
+      5724,
+      4724,
+      4455,
+      2637,
+      2789,
+      1411,
+      1015,
+      548,
+      301,
+      173,
+      44,
+      13,
+      10,
+      1,
+      1
+     ]
+    },
+    "fraud_hist_log10": {
+     "edges": [
+      1.0,
+      1.0262,
+      1.0525,
+      1.0787,
+      1.1049,
+      1.1312,
+      1.1574,
+      1.1836,
+      1.2098,
+      1.2361,
+      1.2623,
+      1.2885,
+      1.3148,
+      1.341,
+      1.3672,
+      1.3935,
+      1.4197,
+      1.4459,
+      1.4721,
+      1.4984,
+      1.5246,
+      1.5508,
+      1.5771,
+      1.6033,
+      1.6295,
+      1.6558,
+      1.682,
+      1.7082,
+      1.7345,
+      1.7607,
+      1.7869,
+      1.8131,
+      1.8394,
+      1.8656,
+      1.8918,
+      1.9181,
+      1.9443,
+      1.9705,
+      1.9968,
+      2.023,
+      2.0492
+     ],
+     "counts": [
+      226,
+      223,
+      0,
+      203,
+      219,
+      258,
+      222,
+      266,
+      279,
+      315,
+      281,
+      352,
+      289,
+      537,
+      323,
+      557,
+      238,
+      635,
+      444,
+      622,
+      548,
+      498,
+      760,
+      554,
+      722,
+      654,
+      629,
+      601,
+      471,
+      590,
+      469,
+      346,
+      268,
+      157,
+      149,
+      84,
+      114,
+      20,
+      23,
+      5
+     ]
+    }
+   },
+   "by_hour": {
+    "0": {
+     "fraud_rate": 0.08939540898803751,
+     "count": 6186
+    },
+    "1": {
+     "fraud_rate": 0.0899165061014772,
+     "count": 6228
+    },
+    "2": {
+     "fraud_rate": 0.09198485326601452,
+     "count": 6338
+    },
+    "3": {
+     "fraud_rate": 0.09507587488386497,
+     "count": 6458
+    },
+    "4": {
+     "fraud_rate": 0.08297520661157025,
+     "count": 6050
+    },
+    "5": {
+     "fraud_rate": 0.08983680723864922,
+     "count": 6189
+    },
+    "6": {
+     "fraud_rate": 0.09310344827586207,
+     "count": 6380
+    },
+    "7": {
+     "fraud_rate": 0.08817343471930109,
+     "count": 6181
+    },
+    "8": {
+     "fraud_rate": 0.10145608266791921,
+     "count": 6387
+    },
+    "9": {
+     "fraud_rate": 0.10579619819258336,
+     "count": 6418
+    },
+    "10": {
+     "fraud_rate": 0.09967213114754099,
+     "count": 6100
+    },
+    "11": {
+     "fraud_rate": 0.08914177335229967,
+     "count": 6327
+    },
+    "12": {
+     "fraud_rate": 0.09433078244572857,
+     "count": 6403
+    },
+    "13": {
+     "fraud_rate": 0.09075015893197712,
+     "count": 6292
+    },
+    "14": {
+     "fraud_rate": 0.0952006294256491,
+     "count": 6355
+    },
+    "15": {
+     "fraud_rate": 0.09907363793374156,
+     "count": 6369
+    },
+    "16": {
+     "fraud_rate": 0.09874782057378348,
+     "count": 6309
+    },
+    "17": {
+     "fraud_rate": 0.10748530776368698,
+     "count": 6466
+    },
+    "18": {
+     "fraud_rate": 0.09564939219449776,
+     "count": 6252
+    },
+    "19": {
+     "fraud_rate": 0.09684076837593268,
+     "count": 6299
+    },
+    "20": {
+     "fraud_rate": 0.08181964314418903,
+     "count": 6221
+    },
+    "21": {
+     "fraud_rate": 0.09109897172236504,
+     "count": 6224
+    },
+    "22": {
+     "fraud_rate": 0.08540421516200063,
+     "count": 6358
+    },
+    "23": {
+     "fraud_rate": 0.09316671939259728,
+     "count": 6322
+    }
+   },
+   "by_channel": {
+    "online": {
+     "fraud_rate": 0.09364577267192546,
+     "count": 151112
+    }
+   },
+   "by_txn_type": {
+    "purchase": {
+     "fraud_rate": 0.09364577267192546,
+     "count": 151112
+    }
+   },
+   "parquet": "fraudecom.parquet",
+   "schema_version": 5
+  }
+ },
+ "generated": "2026-10-18T22:20:41",
+ "schema_version": 5,
+ "note": "statistics of the build the shipped generations were trained on (fraudvae build on the full raw downloads): per source the row and fraud counts, the time split, field coverage, amount quantiles and the hourly / categorical fraud rates. Numbers, not data: the data tab and the how-it-works page read this on a machine without the datasets - the public site included - and a local build replaces it"
+}

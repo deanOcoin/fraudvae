@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import math
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -58,31 +59,52 @@ def get_schema():
     }
 
 
+CORPUS_STATS = Path(__file__).resolve().parent.parent / "data" / "corpus_stats.json"
+EXPECTED_FILES = Path(__file__).resolve().parent.parent / "data" / "expected.json"
+
+
+def _corpus_stats() -> tuple[dict, str]:
+    """the build's statistics and where they came from: a local build when there is one (and
+    this is not the public site), otherwise the statistics of the build the shipped
+    generations were trained on, which travel with the package"""
+    if not public.PUBLIC and STATS.exists():
+        return json.loads(STATS.read_text()), "build"
+    if CORPUS_STATS.exists():
+        return json.loads(CORPUS_STATS.read_text()), "packaged"
+    return {"sources": {}}, "none"
+
+
 @router.get("/datasets")
 def get_datasets():
-    stats = json.loads(STATS.read_text()) if STATS.exists() else {"sources": {}}
-    lock = json.loads(LOCK.read_text()) if LOCK.exists() else {"sources": {}}
+    stats, stats_from = _corpus_stats()
+    lock = json.loads(LOCK.read_text()) if LOCK.exists() and not public.PUBLIC else {"sources": {}}
+    if not lock.get("sources") and EXPECTED_FILES.exists():
+        # no local download manifest: the recorded checksums of the trained-on files stand in
+        exp = json.loads(EXPECTED_FILES.read_text())
+        lock = {"sources": {k: {"files": v} for k, v in exp.get("sources", {}).items()}}
     out = []
     for k in ORDER:
         s = SOURCES[k]
         entry = {"key": k, "name": s.name, "access": s.access, "url": s.url, "license": s.license, "citation": s.citation,
+                 "license_url": s.license_url, "redistributable": s.redistributable,
                  "context": s.context, "approx_rows": s.approx_rows, "label_rate_hint": s.label_rate_hint, "notes": s.notes,
                  "files": list(s.files), "kaggle_ref": s.kaggle_ref,
-                 "raw_present": available(RAW_DIR, k), "built": k in stats["sources"],
+                 "raw_present": (not public.PUBLIC) and available(RAW_DIR, k), "built": k in stats["sources"],
                  "stats": stats["sources"].get(k), "lock": lock.get("sources", {}).get(k)}
         out.append(entry)
     total_rows = sum(s["rows"] for s in stats["sources"].values())
     total_fraud = sum(s["fraud"] for s in stats["sources"].values())
     prepared = []
-    if PREPARED_DIR.exists():
+    if PREPARED_DIR.exists() and not public.PUBLIC:
         for d in sorted(PREPARED_DIR.iterdir()):
             m = d / "meta.json"
             if m.exists():
                 meta = json.loads(m.read_text())
                 prepared.append({k: meta.get(k) for k in ("name", "created", "counts", "fraud_counts", "sources", "max_rows_per_source")})
     return _clean({"sources": out, "total_rows": total_rows, "total_fraud": total_fraud, "generated": stats.get("generated"),
-                   "raw_dir": str(RAW_DIR), "processed_dir": str(PROCESSED_DIR), "prepared": prepared,
-                   "vocab": {c.name: list(c.values) for c in schema.CATEGORICAL}})
+                   "stats_from": stats_from, "public": public.PUBLIC,
+                   "raw_dir": None if public.PUBLIC else str(RAW_DIR), "processed_dir": None if public.PUBLIC else str(PROCESSED_DIR),
+                   "prepared": prepared, "vocab": {c.name: list(c.values) for c in schema.CATEGORICAL}})
 
 
 def _row_to_features(row: pd.Series) -> dict:
