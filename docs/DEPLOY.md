@@ -31,6 +31,15 @@ build's own samples file is never read in public mode even if it is on the disk)
 receipts, the model timeline, the comparison strip, the batch upload, the story pages -
 works as it does on a laptop.
 
+## The site
+
+[finfraud.dev](https://www.finfraud.dev). Every tab is also a host - `score.`, `data.`,
+`models.`, `define.` (how it works), `story.` (the development process) and `api.` (the
+API docs) - served by the same app: `app.js` opens the tab that matches the host and
+the navigation moves between hosts; nginx holds one certificate for all of them
+(`install.sh --domain` requests it for every name that resolves to the server, and
+adds the rest on a later run).
+
 ## The server
 
 The site runs on a VPS at 1984.hosting (Iceland): 6 vCPU, 16 GB of RAM, 320 GB SSD, no

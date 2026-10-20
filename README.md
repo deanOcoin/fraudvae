@@ -5,10 +5,12 @@ public transaction datasets (~43M rows), with a web UI to score new
 transactions, browse the data, train locally, or push a training run to a
 rented GPU over ssh.
 
-**Try it without installing anything:** the demonstration site runs this
-repository in its public mode, with every generation of the model loaded -
-score a transaction on any of them, compare them side by side, read the story
-of how they were built. **Every pretrained generation is on the
+**Try it without installing anything:** [finfraud.dev](https://www.finfraud.dev)
+runs this repository in its public mode, with every generation of the model
+loaded - score a transaction on any of them ([score.finfraud.dev](https://score.finfraud.dev)),
+compare them side by side, read how they were built
+([story.finfraud.dev](https://story.finfraud.dev)) and how they work
+([define.finfraud.dev](https://define.finfraud.dev)). **Every pretrained generation is on the
 [Releases](https://github.com/deanOcoin/fraudvae/releases) page**, and
 `fraudvae models pull v5-h200-h` drops the shipped one into `runs/` so the app
 below scores with it in minutes; training it yourself is optional and
@@ -270,7 +272,7 @@ time and numbers.
 
 ## Hosting it
 
-`docs/DEPLOY.md`: `FRAUDVAE_PUBLIC=1` turns the app into the demonstration site -
+`docs/DEPLOY.md`: `FRAUDVAE_PUBLIC=1` turns the app into the demonstration site ([finfraud.dev](https://www.finfraud.dev)) -
 no training, no data build, no remote routes, no visitor state, rate limits per
 address - and `deploy/` has the install script, the systemd unit and the nginx
 configuration the site runs on.
