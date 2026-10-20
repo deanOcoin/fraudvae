@@ -2,6 +2,12 @@
 # Update a deployed site to the current code: pull (or rsync from a checkout), reinstall,
 # restart. Run as root:  bash /srv/fraudvae/app/deploy/update.sh [--source /path/to/checkout]
 set -euo pipefail
+# the pull or rsync below replaces this very file while bash is still reading it: run from a
+# copy, so the new version is picked up on the next run rather than halfway through this one
+if [ -z "${FV_UPDATE_COPY:-}" ]; then
+  cp "$0" "/tmp/fraudvae-update.$$" && FV_UPDATE_COPY=1 exec bash "/tmp/fraudvae-update.$$" "$@"
+fi
+trap 'rm -f "/tmp/fraudvae-update.$$"' EXIT
 APP=/srv/fraudvae/app
 SRC=""
 [ "${1:-}" = "--source" ] && SRC="$2"
