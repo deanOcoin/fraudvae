@@ -39,7 +39,7 @@ log() { printf '\n== %s\n' "$*"; }
 log "packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq python3 python3-venv python3-pip nginx certbot python3-certbot-nginx git rsync ufw curl libgomp1 >/dev/null
+apt-get install -y -qq python3 python3-venv python3-pip nginx certbot python3-certbot-nginx git rsync ufw curl libgomp1 dnsutils >/dev/null
 
 log "user and directories"
 id fraudvae >/dev/null 2>&1 || useradd --system --home-dir /srv/fraudvae --shell /usr/sbin/nologin fraudvae
@@ -134,6 +134,14 @@ EOF
     log "certificate for $DOMAIN"
     # one certificate for the domain and every subdomain (each validated over http)
     if [ "$EMAIL" = "-" ]; then MAIL_ARGS="--register-unsafely-without-email"; else MAIL_ARGS="-m $EMAIL"; fi
+    # only the names that already point here go on the certificate; a missing record would fail
+    # the whole request. Re-run once the record exists and --expand adds the name
+    MYIP=$(curl -s -m 5 https://api.ipify.org || hostname -I | awk '{print $1}')
+    LIVE_ARGS=""
+    for n in $NAMES; do
+      if dig +short "$n" @1.1.1.1 | grep -qx "$MYIP"; then LIVE_ARGS="$LIVE_ARGS -d $n"; else echo "  $n does not resolve to $MYIP yet: left off the certificate for now"; fi
+    done
+    CERT_ARGS="$LIVE_ARGS"
     certbot certonly --webroot -w /var/www/html $CERT_ARGS --non-interactive --agree-tos $MAIL_ARGS --expand \
       || echo "certbot failed (dns not pointing here yet for one of the names?); re-run install.sh once it does"
     if [ -e "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
