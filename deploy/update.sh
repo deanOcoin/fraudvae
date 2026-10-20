@@ -12,7 +12,12 @@ else
   git -C "$APP" pull --ff-only
 fi
 [ -f /etc/fraudvae/pip-constraints.txt ] && export PIP_CONSTRAINT=/etc/fraudvae/pip-constraints.txt
-"$APP/.venv/bin/pip" install -q -e "$APP"
+if [ -f "$APP/deploy/requirements.lock" ]; then
+  "$APP/.venv/bin/pip" install -q -r "$APP/deploy/requirements.lock"
+  "$APP/.venv/bin/pip" install -q --no-deps -e "$APP"
+else
+  "$APP/.venv/bin/pip" install -q -e "$APP"
+fi
 chown -R root:fraudvae "$APP"
 chmod -R u=rwX,g=rX,o= "$APP"
 # nginx config may have changed too. install.sh records the names in /etc/fraudvae/site.conf;
