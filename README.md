@@ -1,5 +1,12 @@
 # FinFraud
 
+[![live site](https://img.shields.io/badge/live-finfraud.dev-2563eb)](https://www.finfraud.dev)
+[![pretrained models](https://img.shields.io/badge/pretrained-6%20generations-10b981)](https://github.com/deanOcoin/fraudvae/releases)
+[![python](https://img.shields.io/badge/python-3.10%2B-3776ab)](pyproject.toml)
+[![pytorch](https://img.shields.io/badge/pytorch-2.1%2B-ee4c2c)](https://pytorch.org)
+[![lightgbm](https://img.shields.io/badge/lightgbm-4%2B-5e8b2f)](https://lightgbm.readthedocs.io)
+[![license: MIT](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
+
 Fraud screening for payment transactions: a variational autoencoder that learnt what
 normal payments look like, a boosted model that learnt what known fraud looks like,
 and a per-bank blend of the two, trained on a merged corpus of eleven public
@@ -43,10 +50,22 @@ them - and, since v5, the signals of five more modules - into one probability:
 
 ![score tab](docs/img/score.png)
 
-The other tabs: [data explorer](docs/img/data.png), [model & runs](docs/img/model.png)
-(the generations and their [per-source results table](docs/img/model_results.png)),
-[compute / remote training](docs/img/compute.png), [how it works](docs/img/explain.png),
-[the story](docs/img/story.png).
+<table>
+  <tr>
+    <td align="center"><a href="docs/img/data.png"><img src="docs/img/data.png" width="290" alt="data explorer"></a><br><sub><b>Data</b> · browse the corpus, per-source</sub></td>
+    <td align="center"><a href="docs/img/model.png"><img src="docs/img/model.png" width="290" alt="model and runs"></a><br><sub><b>Model</b> · generations, timeline, results</sub></td>
+    <td align="center"><a href="docs/img/explain.png"><img src="docs/img/explain.png" width="290" alt="how it works"></a><br><sub><b>How it works</b> · the models, explained</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="docs/img/compute.png"><img src="docs/img/compute.png" width="290" alt="compute and remote training"></a><br><sub><b>Compute</b> · benchmark, rent a GPU, train there</sub></td>
+    <td align="center"><a href="docs/img/story.png"><img src="docs/img/story.png" width="290" alt="the story"></a><br><sub><b>Story</b> · how it was built, step by step</sub></td>
+    <td align="center"><a href="docs/img/model_results.png"><img src="docs/img/model_results.png" width="290" alt="per-source results table"></a><br><sub><b>Results</b> · every generation, every bank</sub></td>
+  </tr>
+</table>
+
+## Contents
+
+[Quick start](#quick-start) · [What's in the corpus](#whats-in-the-corpus) · [The models](#the-models) · [Results](#results) · [The generations](#the-generations) · [Hosting it](#hosting-it) · [Remote training](#remote-training) · [Layout](#layout) · [Credits](#credits) · [License](#license)
 
 ## Quick start
 
