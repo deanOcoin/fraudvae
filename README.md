@@ -1,5 +1,8 @@
 # FinFraud
 
+[![tests](https://github.com/deanOcoin/fraudvae/actions/workflows/tests.yml/badge.svg)](https://github.com/deanOcoin/fraudvae/actions/workflows/tests.yml)
+[![pretrained bundles](https://github.com/deanOcoin/fraudvae/actions/workflows/pretrained.yml/badge.svg)](https://github.com/deanOcoin/fraudvae/actions/workflows/pretrained.yml)
+[![uptime](https://github.com/deanOcoin/fraudvae/actions/workflows/uptime.yml/badge.svg)](https://github.com/deanOcoin/fraudvae/actions/workflows/uptime.yml)
 [![live site](https://img.shields.io/badge/live-finfraud.dev-2563eb)](https://www.finfraud.dev)
 [![pretrained models](https://img.shields.io/badge/pretrained-6%20generations-10b981)](https://github.com/deanOcoin/fraudvae/releases)
 [![python](https://img.shields.io/badge/python-3.10%2B-3776ab)](pyproject.toml)
