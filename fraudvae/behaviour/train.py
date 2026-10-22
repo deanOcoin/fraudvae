@@ -137,8 +137,8 @@ def load_bbmas(raw=RAW_DIR, log=print, max_users=None):
             if ac is not None and len(ac) > 500:
                 w, _ = motion_features(_parse_ts(ac["time"]), ac["Xvalue"].to_numpy(), ac["Yvalue"].to_numpy(), ac["Zvalue"].to_numpy())
                 _pseudo_sessions(out, u, "motion", "bbmas", w)
-    log(f"  bbmas: {len(out)} pseudo-sessions from {len({r['user'] for r in out})} users "
-        f"({', '.join(f'{m}={sum(r['modality'] == m for r in out)}' for m in MODALITIES)})")
+    counts = ", ".join(f"{m}={sum(r['modality'] == m for r in out)}" for m in MODALITIES)
+    log(f"  bbmas: {len(out)} pseudo-sessions from {len({r['user'] for r in out})} users ({counts})")
     return out
 
 
@@ -179,8 +179,8 @@ def load_hmog(raw=RAW_DIR, log=print, max_users=None):
                         w, _ = motion_features(ac[0].to_numpy() / 1e3, ac[3].to_numpy(), ac[4].to_numpy(), ac[5].to_numpy())
                         if len(w):
                             out.append({"dataset": "hmog", "user": user, "session": sess, "modality": "motion", "windows": w})
-    log(f"  hmog: {len(out)} sessions from {len({r['user'] for r in out})} users "
-        f"({', '.join(f'{m}={sum(r['modality'] == m for r in out)}' for m in ('touch', 'motion'))})")
+    counts = ", ".join(f"{m}={sum(r['modality'] == m for r in out)}" for m in ("touch", "motion"))
+    log(f"  hmog: {len(out)} sessions from {len({r['user'] for r in out})} users ({counts})")
     return out
 
 
