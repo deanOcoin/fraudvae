@@ -21,7 +21,7 @@ Python package and its command are called `fraudvae`.
 runs this repository in its public mode, with every generation of the model
 loaded - score a transaction on any of them ([score.finfraud.dev](https://score.finfraud.dev)),
 compare them side by side, read how they were built
-([story.finfraud.dev](https://story.finfraud.dev)) and how they work
+([story.finfraud.dev](https://story.finfraud.dev), also as a [nine-page PDF](docs/FinFraud-development-process.pdf)) and how they work
 ([define.finfraud.dev](https://define.finfraud.dev)). **Every pretrained generation is on the
 [Releases](https://github.com/deanOcoin/fraudvae/releases) page**, and
 `fraudvae models pull v5-h200-h` drops the shipped one into `runs/` so the app
