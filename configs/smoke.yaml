@@ -1,5 +1,6 @@
-# ci / sanity: tiny model, 2 epochs, run on whatever is there
+# ci / sanity: tiny model, 2 epochs, always on the cpu (torch's mps backend can deadlock a training loop)
 name: smoke
+device: cpu
 model:
   latent_dim: 8
   hidden: [64, 64]
