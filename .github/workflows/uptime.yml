@@ -1,0 +1,21 @@
+name: uptime
+
+# finfraud.dev answers, every ten minutes; a failed run is an e-mail from GitHub
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: www, score and api must answer
+        run: |
+          set -e
+          for u in https://www.finfraud.dev/ https://score.finfraud.dev/ https://www.finfraud.dev/api/meta; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$u")
+            echo "$code $u"; [ "$code" = 200 ]
+          done
+          curl -sf --max-time 20 -H 'content-type: application/json' --data '{"features": {"amount": 12.5}}' https://www.finfraud.dev/api/score > /dev/null && echo "score ok"

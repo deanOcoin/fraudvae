@@ -1,0 +1,45 @@
+name: pretrained bundles
+
+# the one check that would catch a broken release asset: pull two generations from the
+# public Releases page with no credentials, verify them, and score with the shipped one
+on:
+  schedule:
+    - cron: "17 6 * * 1"     # mondays
+  release:
+    types: [published, edited]
+  workflow_dispatch:
+
+jobs:
+  pull-and-score:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: install
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e .
+      - name: pull (anonymous)
+        env:
+          GH_TOKEN: ""
+          GITHUB_TOKEN: ""
+          FRAUDVAE_RUNS_DIR: ${{ runner.temp }}/runs
+          FRAUDVAE_HOME: ${{ runner.temp }}/home
+        run: |
+          fraudvae models pull cpu_small-8src
+          fraudvae models pull v5-h200-h
+      - name: serve and score
+        env:
+          FRAUDVAE_RUNS_DIR: ${{ runner.temp }}/runs
+          FRAUDVAE_HOME: ${{ runner.temp }}/home
+          FRAUDVAE_PUBLIC: "1"
+        run: |
+          fraudvae serve --port 8765 > serve.log 2>&1 &
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:8765/api/meta > /dev/null && break; sleep 2; done
+          curl -sf http://127.0.0.1:8765/api/meta | python -c "import json,sys; print(json.dumps(json.load(sys.stdin))[:300])"
+          curl -sf -H 'content-type: application/json' --data '{"features": {"amount": 12.5}}' http://127.0.0.1:8765/api/score | python -c "import json,sys; r=json.load(sys.stdin); assert r.get('p_fraud') is not None, r; print('p_fraud', r['p_fraud'])"
+          tail -5 serve.log
