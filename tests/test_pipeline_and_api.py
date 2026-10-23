@@ -582,6 +582,7 @@ def test_public_mode_gates(client, monkeypatch):
 
     # an example row from the build, fetched before public mode hides the build's samples
     ex = client.get("/api/examples?source=fdh&fraud=0").json()[0]
+    assert 'class="public"' not in client.get("/").text
     monkeypatch.setattr(public, "PUBLIC", True)
     monkeypatch.setattr(public, "SCORE_PER_MINUTE", 60)
     monkeypatch.setattr(public, "SCORE_BURST", 3)
@@ -591,6 +592,8 @@ def test_public_mode_gates(client, monkeypatch):
     assert client.post("/api/data/build", json={}).status_code == 403
     assert client.post("/api/runs/test-run/load").status_code == 403
     assert client.delete("/api/history/fdh/c1").status_code == 403
+    # the page itself says it is public, so the rail hides the compute tab before any fetch
+    assert '<html lang="en" class="public">' in client.get("/").text
     meta = client.get("/api/meta").json()
     assert meta["host"] is None and meta["data_dir"] is None and meta["public"]["public"] is True
     mx = client.get("/api/runs/test-run/metrics").json()
