@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 import torch
 from fastapi import FastAPI
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from .. import __version__
@@ -194,7 +194,13 @@ def meta():
 
 @app.get("/")
 def index():
-    return FileResponse(WEB_DIR / "index.html")
+    """the one page. on the public site the html arrives already marked public, so the rail
+    never shows the compute tab for the moment before /api/meta has answered: every tab there
+    is its own host, and a tab switch is a full page load"""
+    html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
+    if public.PUBLIC:
+        html = html.replace('<html lang="en">', '<html lang="en" class="public">', 1)
+    return HTMLResponse(html)
 
 
 app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
