@@ -310,17 +310,27 @@ def post_score_batch(request: Request, file: UploadFile = File(..., description=
     # takes to score never stall the event loop that every other request goes through
     public.limit("batch", request)
     m = _model_named(run)
-    raw = file.file.read()
     cap = public.BATCH_ROWS if public.PUBLIC else 500_000
-    if len(raw) > (cap * 4000):
+    max_bytes = cap * 4000
+    # the declared length first, then the upload's own size (starlette has already spooled it
+    # to a temporary file), so a body past the cap is refused without being read into memory
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > max_bytes + 4096:
+        raise HTTPException(413, f"file too large for {cap:,} rows")
+    file.file.seek(0, io.SEEK_END)
+    size = file.file.tell()
+    file.file.seek(0)
+    if size > max_bytes:
         raise HTTPException(413, f"file too large for {cap:,} rows")
     # the header decides how wide the frame gets; a file that is all commas must not become a
     # million-column frame before the row cap is even checked
-    header = raw.split(b"\n", 1)[0]
+    header = file.file.readline()
+    file.file.seek(0)
     if header.count(b",") + header.count(b";") + header.count(b"\t") > 3000:
         raise HTTPException(413, "too many columns")
     try:
-        df = pd.read_csv(io.BytesIO(raw), nrows=cap + 1)
+        # read straight from the spooled upload, one row past the cap and no further
+        df = pd.read_csv(file.file, nrows=cap + 1)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(400, _error_detail("not a csv that could be read", e))
     if len(df) > cap:
