@@ -120,6 +120,17 @@ def test_session_run_upload_download(mock_server, tmp_path):
     assert keys.KNOWN_HOSTS.exists() and "127.0.0.1" in keys.KNOWN_HOSTS.read_text()
 
 
+def test_expand_never_runs_the_path(mock_server, tmp_path):
+    host = RemoteHost("127.0.0.1", mock_server, "tester", key_path=str(keys.PRIVATE))
+    marker = tmp_path / "pwned"
+    with SSHSession(host, timeout=10) as s:
+        home = s.run('printf %s "$HOME"')[1].strip()
+        evil = f"~/x; touch {marker}; echo"
+        assert s.expand(evil) == home + evil[1:]
+        assert s.expand("~") == home and s.expand("/srv/x") == "/srv/x" and s.expand("~user/x") == "~user/x"
+    assert not marker.exists()
+
+
 def test_probe_against_mock(mock_server, tmp_path):
     from fraudvae.remote.provision import probe
 
