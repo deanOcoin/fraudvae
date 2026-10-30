@@ -3,6 +3,8 @@ and in-process threads (ssh provisioning, uploads). Each task keeps a log
 buffer and a state; the UI polls /api/tasks/<id>."""
 from __future__ import annotations
 
+import os
+import signal
 import subprocess
 import sys
 import threading
@@ -15,6 +17,17 @@ from ..paths import ROOT, RUNS_DIR
 
 _tasks: dict[str, "Task"] = {}
 _lock = threading.Lock()
+# finished tasks are kept for the ui to show, but not forever: past this many, or this old,
+# they go when the next task starts. A running task is never pruned
+KEEP_FINISHED = 200
+KEEP_SECONDS = 24 * 3600
+
+
+def _prune(now: float):
+    done = sorted((t for t in _tasks.values() if t.state != "running"), key=lambda t: -(t.finished or t.created))
+    for i, t in enumerate(done):
+        if i >= KEEP_FINISHED or now - (t.finished or t.created) > KEEP_SECONDS:
+            _tasks.pop(t.id, None)
 
 
 class Task:
@@ -29,8 +42,28 @@ class Task:
         self.result = None
         self.error: str | None = None
         self.meta: dict = {}
+        self.proc: subprocess.Popen | None = None
+        self.cancel_requested = False
         with _lock:
+            _prune(self.created)
             _tasks[self.id] = self
+
+    def cancel(self) -> str:
+        """stop the task: a child process gets SIGTERM for its whole process group (it was started
+        as a session leader, so training's own children go with it); a thread task can only be
+        asked, through cancel_requested, which the long loops check. Returns what happened."""
+        if self.state != "running":
+            return "already finished"
+        self.cancel_requested = True
+        if self.proc is not None and self.proc.poll() is None:
+            try:
+                os.killpg(self.proc.pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError, OSError):
+                self.proc.terminate()
+            self.log("cancel: SIGTERM sent")
+            return "signalled"
+        self.log("cancel requested")
+        return "requested"
 
     def log(self, line: str):
         self.lines.append(f"[{time.strftime('%H:%M:%S')}] {line}")
@@ -91,7 +124,10 @@ def run_subprocess(kind: str, title: str, args: list[str], log_file: Path | None
         full_env.setdefault("PYTHONUNBUFFERED", "1")
         lf = open(log_file, "a") if log_file else None
         try:
-            proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=full_env)
+            # its own session (process group), so a cancel can take the whole tree down at once
+            proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=full_env,
+                                    start_new_session=True)
+            t.proc = proc
             t.meta["pid"] = proc.pid
             for line in proc.stdout:
                 line = line.rstrip("\n")
@@ -100,7 +136,9 @@ def run_subprocess(kind: str, title: str, args: list[str], log_file: Path | None
                     lf.write(line + "\n")
                     lf.flush()
             rc = proc.wait()
-            if rc == 0:
+            if t.cancel_requested:
+                t.fail(f"cancelled (exited with {rc})")
+            elif rc == 0:
                 t.done({"returncode": 0})
             else:
                 t.fail(f"exited with {rc}")
