@@ -763,7 +763,7 @@ class ActiveModel:
 def _percentile(quantiles: dict, value: float) -> float:
     """where does value sit among legit scores, interpolating the stored quantiles"""
     pts = sorted((float(k), v) for k, v in quantiles.items())
-    if value <= pts[0][1]:
+    if value < pts[0][1]:
         return 0.0
     for (q0, v0), (q1, v1) in zip(pts[:-1], pts[1:]):
         if v0 <= value <= v1:
