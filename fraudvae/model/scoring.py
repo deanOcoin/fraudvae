@@ -36,7 +36,7 @@ def extra_signals(r: dict) -> list[str]:
 
 
 @torch.no_grad()
-def score_batch(model: TabularVAE, num, mask, cat, src, n_samples=8, hist=None):
+def score_batch(model: TabularVAE, num, mask, cat, src, n_samples=8, hist=None, generator=None):
     """returns dict of numpy arrays: raw, kl, nll_num [N,D], nll_cat [N,C], mu [N,latent],
     dec_mu (decoder mean, standardised units) [N,D], cat_prob (prob of the observed class) [N,C],
     and with a v5 history encoder 'h' [N, hdim] (the customer-history read-out).
@@ -49,7 +49,7 @@ def score_batch(model: TabularVAE, num, mask, cat, src, n_samples=8, hist=None):
     dec_mu = torch.zeros_like(num)
     cat_prob = torch.zeros_like(nll_cat)
     for _ in range(n_samples):
-        z = mu if n_samples == 1 else model.reparameterize(mu, logvar)
+        z = mu if n_samples == 1 else model.reparameterize(mu, logvar, generator)
         num_mu, num_logvar, cat_logits = model.decode(z, src, h)
         out = {"num_mu": num_mu, "num_logvar": num_logvar, "cat_logits": cat_logits}
         a, b = model.nll_terms(out, num, mask, cat)

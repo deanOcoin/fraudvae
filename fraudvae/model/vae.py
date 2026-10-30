@@ -158,8 +158,11 @@ class TabularVAE(nn.Module):
         return mu, logvar.clamp(-10.0, 6.0)
 
     @staticmethod
-    def reparameterize(mu, logvar):
-        return mu + torch.randn_like(mu) * torch.exp(0.5 * logvar)
+    def reparameterize(mu, logvar, generator=None):
+        # a generator makes the draw repeatable: the server scores every request with one, so
+        # the same transaction gets the same receipt; training leaves it None
+        eps = torch.randn_like(mu) if generator is None else torch.randn(mu.shape, dtype=mu.dtype, device=mu.device, generator=generator)
+        return mu + eps * torch.exp(0.5 * logvar)
 
     def decode(self, z, src, h=None):
         parts = [z, self.src_emb(src)]

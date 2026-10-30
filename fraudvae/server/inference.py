@@ -211,6 +211,10 @@ class ActiveModel:
 
     # -- scoring ------------------------------------------------------------------------
 
+    def _generator(self, seed: int | None) -> torch.Generator:
+        """the latent draws of one request, repeatable: a fresh generator per call, seeded"""
+        return torch.Generator(device=self.device.type).manual_seed(int(seed if seed is not None else 0) % (2**63 - 1))
+
     def _calibration_for(self, source: str | None, block: dict | None = None, name: str | None = None):
         """(block for this source or generic, kind). block defaults to the VAE calibration;
         name="booster" / "seq" picks that signal's block and never falls back to the VAE's"""
@@ -302,7 +306,8 @@ class ActiveModel:
     def score(self, features: dict, source: str | None = None, fpr_target: str = "fpr_0.01", wide: dict | None = None,
               history: list | None = None, customer_id: str | None = None, ts: float | None = None,
               remember: bool = True, device: dict | None = None, entities: dict | None = None,
-              text: dict | None = None, session: dict | None = None, label_delay_days: float | None = None) -> dict:
+              text: dict | None = None, session: dict | None = None, label_delay_days: float | None = None,
+              seed: int | None = None) -> dict:
         """wide: the source's own raw columns keyed by raw name ({'V1': 3.0, 'DeviceInfo': 12}), the
         v5 wide block; only the booster reads it and only for a source that has one.
         history: the customer's previous transactions, oldest first (dicts with 'features' and
@@ -317,7 +322,10 @@ class ActiveModel:
         ratios are added to the blend's log-odds (the fusion step) rather than blended, because no
         training row ever carried text.
         session: raw interaction events per modality (see behaviour/scorer.py); compared with the
-        customer's enrolled behaviour profile (customer_id) and enrolled for next time."""
+        customer's enrolled behaviour profile (customer_id) and enrolled for next time.
+        seed: the novelty score is a Monte-Carlo estimate over n_samples draws of the latent; the
+        draws come from a generator seeded here (0 when not given), so the same request gets the
+        same receipt and a different seed shows how much of the score is sampling noise."""
         features = merge_payloads(features, device=device)
         num, mask, cat, src, src_idx = self.encode(features, source)
         cur_ts = float(ts) if ts is not None else time.time()
@@ -332,7 +340,7 @@ class ActiveModel:
                     hist, n_hist = self.history_tensors(past, source, cur_ts)
                 hist_from = "entity store"
         with _lock:
-            r = score_batch(self.model, num, mask, cat, src, n_samples=self.n_samples, hist=hist)
+            r = score_batch(self.model, num, mask, cat, src, n_samples=self.n_samples, hist=hist, generator=self._generator(seed))
             if self.seqhead is not None:
                 r["seq"] = self.seqhead.logit(self.model, num, mask, cat, src, torch.from_numpy(r["h"]).to(self.device))
             for name, head in self.heads.items():
@@ -660,7 +668,7 @@ class ActiveModel:
                 num_t, mask_t = torch.from_numpy(num[sl]).to(self.device), torch.from_numpy(mask[sl]).to(self.device)
                 cat_t, src_t = torch.from_numpy(cat[sl]).to(self.device), torch.from_numpy(src[sl]).to(self.device)
                 # a csv carries no history: every row gets the "no history" context (a trained state)
-                r = score_batch(self.model, num_t, mask_t, cat_t, src_t, n_samples=self.n_samples)
+                r = score_batch(self.model, num_t, mask_t, cat_t, src_t, n_samples=self.n_samples, generator=self._generator(0))
                 raw[sl] = r["raw"]
                 b = None
                 if self.seqhead is not None:
