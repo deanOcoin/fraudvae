@@ -146,18 +146,23 @@ if not public.PUBLIC:
     # a workbench feature, never a public one
     app.include_router(api_remote.router)
 
-# what the public site answers with 403 is not part of its api either: the reference lists only
-# what a visitor can call
-_HIDDEN = {"/api/train/local", "/api/data/fetch", "/api/data/build", "/api/data/prepare", "/api/tasks",
-           "/api/tasks/{task_id}", "/api/runs/{name}/load", "/api/history/{source}/{customer_id}"}
+# the routes a public site answers with 403 are marked where they are defined
+# (openapi_extra={"x-workbench-only": True}), and the reference drops them in public mode, so
+# it lists only what a visitor can call and a new workbench-only route cannot forget to hide
+# itself; the remote router is not mounted at all
 _openapi_full = app.openapi
 
 
 def _openapi():
     schema = _openapi_full()
-    if public.PUBLIC:
-        return {**schema, "paths": {k: v for k, v in schema["paths"].items() if k not in _HIDDEN}}
-    return schema
+    if not public.PUBLIC:
+        return schema
+    paths = {}
+    for path, ops in schema["paths"].items():
+        kept = {m: op for m, op in ops.items() if not (isinstance(op, dict) and op.get("x-workbench-only"))}
+        if kept:
+            paths[path] = kept
+    return {**schema, "paths": paths}
 
 
 app.openapi = _openapi
