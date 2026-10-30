@@ -24,6 +24,14 @@ from . import keys
 HOSTS_FILE = APP_HOME / "remote_hosts.json"
 
 
+def _sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 class RemoteError(RuntimeError):
     pass
 
@@ -219,9 +227,12 @@ class SSHSession:
             yield buf.decode("utf-8", "replace")
 
     def expand(self, path: str) -> str:
-        if path.startswith("~"):
-            rc, out, _ = self.run(f"echo {path}")
-            return out.strip() or path
+        """a leading ~ becomes the remote home. the path itself never reaches a shell unquoted:
+        only $HOME is asked of the shell, then joined here"""
+        if path == "~" or path.startswith("~/"):
+            rc, out, _ = self.run('printf %s "$HOME"')
+            home = out.strip()
+            return (home + path[1:]) if home else path
         return path
 
     # -- files -----------------------------------------------------------------------
@@ -241,15 +252,19 @@ class SSHSession:
         return out.strip() or None
 
     def upload(self, local: Path, remote: str, progress: Callable[[int, int], None] | None = None, resume=True) -> bool:
-        """returns True if bytes were actually sent (False = remote already had it)"""
+        """returns True if bytes were actually sent (False = remote already had it). A file of the
+        same size is only "already there" when its sha256 agrees: a rebuilt parquet is often the
+        same size as the one it replaces."""
         local = Path(local)
         size = local.stat().st_size
         offset = 0
         if resume and self.exists(remote):
             st = self.sftp.stat(remote)
             if st.st_size == size:
-                return False
-            if 0 < st.st_size < size:
+                if self.remote_sha256(remote) == _sha256(local):
+                    return False
+                offset = 0
+            elif 0 < st.st_size < size:
                 offset = st.st_size   # a partial upload from a dropped connection: carry on from there
         if offset == 0:
             self.sftp.put(str(local), remote, callback=progress)
