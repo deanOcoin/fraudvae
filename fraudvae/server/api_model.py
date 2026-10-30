@@ -464,9 +464,20 @@ def get_log(name: str, tail: int = Query(300, description="how many lines from t
     for fname in ("train.log", "launcher.log"):
         p = d / fname
         if p.exists():
-            lines = public.scrub_log_lines(p.read_text(errors="replace").splitlines())
+            # the tail only: a launcher log that has been appended to for weeks is read from its
+            # last few megabytes, not whole, and the line count is what that window held
+            lines = public.scrub_log_lines(_tail_lines(p, max_bytes=4 << 20))
             return {"lines": lines[-tail:], "n": len(lines)}
     return {"lines": [], "n": 0}
+
+
+def _tail_lines(p, max_bytes: int) -> list[str]:
+    size = p.stat().st_size
+    with open(p, "rb") as f:
+        if size > max_bytes:
+            f.seek(size - max_bytes)
+            f.readline()           # the rest of a line cut in half
+        return f.read().decode("utf-8", errors="replace").splitlines()
 
 
 @router.get("/runs/{name}/latent", summary="A run's latent map", tags=["models"])
