@@ -406,8 +406,12 @@ function renderReceipt(r, label) {
     if (bl.threshold != null) {
       lines.push(`<div class="rc-line"><span class="k">alert budget</span><span>${esc(opPct)} of legit flagged</span></div>`);
       lines.push(`<div class="rc-line"><span class="k">flagged above</span><span>${(100 * bl.threshold).toFixed(bl.threshold < 0.1 ? 2 : 1)}%</span></div>`);
-      if (bl.expected_recall != null) lines.push(`<div class="rc-line"><span class="k">fraud caught at this budget</span><span>${fmt.pct(bl.expected_recall, 1)}</span></div>`);
-      if (bl.expected_precision != null) lines.push(`<div class="rc-line"><span class="k">flags that are fraud</span><span>${fmt.pct(bl.expected_precision, 1)}</span></div>`);
+      // what this threshold did on the held-out test split when the run recorded it; the
+      // validation figure it was set on is in-sample and says so
+      const rec = bl.test_recall != null ? [bl.test_recall, "held-out test"] : bl.expected_recall != null ? [bl.expected_recall, "validation, in-sample"] : null;
+      const prec = bl.test_precision != null ? [bl.test_precision, "held-out test"] : bl.expected_precision != null ? [bl.expected_precision, "validation, in-sample"] : null;
+      if (rec) lines.push(`<div class="rc-line"><span class="k">fraud caught at this budget (${rec[1]})</span><span>${fmt.pct(rec[0], 1)}</span></div>`);
+      if (prec) lines.push(`<div class="rc-line"><span class="k">flags that are fraud (${prec[1]})</span><span>${fmt.pct(prec[0], 1)}</span></div>`);
     }
   } else {
     lines.push(`<div class="rc-verdict ${verdictClass}"><span class="big">${pct == null ? fmt.num(nov.score, 2) : pctText(pct, "")}</span>${pct == null ? "raw score" : "percentile of legit traffic"}<br>${verdictText}</div>`);
