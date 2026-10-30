@@ -543,3 +543,14 @@ def get_task(task_id: str, tail: int = 400):
     if not t:
         raise HTTPException(404, "no such task")
     return _clean(t.to_dict(tail=tail))
+
+
+@router.post("/tasks/{task_id}/cancel", openapi_extra={"x-workbench-only": True})
+def cancel_task(task_id: str):
+    """stop a running task: a child process (build, prepare, train) gets SIGTERM for its whole
+    process group; a thread task is asked to stop at its next check"""
+    public.forbid("background tasks")
+    t = tasks.get(task_id)
+    if not t:
+        raise HTTPException(404, "no such task")
+    return {"id": t.id, "cancel": t.cancel(), "state": t.state}
