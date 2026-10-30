@@ -8,11 +8,12 @@ import socket
 import threading
 import time
 from contextlib import asynccontextmanager
+from urllib.parse import urlsplit
 
 import torch
 from fastapi import FastAPI
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .. import __version__
@@ -123,9 +124,24 @@ if not public.PUBLIC:
     # train, build data and run commands on a rented box over ssh. So the server answers only
     # to the names it is meant to be reached by. FRAUDVAE_ALLOWED_HOSTS adds more (a machine
     # on a lan, say), comma separated; the public site has nginx in front for this
-    _hosts = {"localhost", "127.0.0.1", "[::1]", "0.0.0.0", os.environ.get("FRAUDVAE_HOST", "127.0.0.1")}
+    _hosts = {"localhost", "127.0.0.1", "[::1]", "::1", os.environ.get("FRAUDVAE_HOST", "127.0.0.1")}
+    _hosts.discard("0.0.0.0")   # a bind address, not a name anyone reaches the server by
     _hosts.update(h.strip() for h in os.environ.get("FRAUDVAE_ALLOWED_HOSTS", "").split(",") if h.strip())
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=sorted(_hosts))
+
+    @app.middleware("http")
+    async def _same_site_api(request, call_next):
+        # the api is for this ui and for programs on this machine. a page on another site can
+        # still make a browser send requests here (an image tag, a form, a multipart post), so
+        # anything the browser marks as coming from another site, or carrying another site's
+        # Origin, is refused before it reaches a handler. Programs send neither header.
+        if request.url.path.startswith("/api/"):
+            if request.headers.get("sec-fetch-site") == "cross-site":
+                return JSONResponse({"detail": "cross-site requests to the workbench api are refused"}, status_code=403)
+            origin = request.headers.get("origin")
+            if origin and origin != "null" and (urlsplit(origin).hostname or "") not in _hosts:
+                return JSONResponse({"detail": "cross-site requests to the workbench api are refused"}, status_code=403)
+        return await call_next(request)
     # the remote-training api provisions and drives machines over ssh with the app's own key:
     # a workbench feature, never a public one
     app.include_router(api_remote.router)

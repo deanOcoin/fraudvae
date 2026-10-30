@@ -305,6 +305,27 @@ knowing on a laptop, which is that a run directory is read with torch's
 `weights_only` loader and the pretrained bundles are checksummed before they are
 unpacked.
 
+## The workbench on a network
+
+Workbench mode has no login: it is built to be reached from the browser on the same machine,
+and `fraudvae serve` binds to 127.0.0.1. Three things stand in for a login, and it is worth
+knowing what each one does before putting the server anywhere else:
+
+- The server answers only to its own names (`localhost`, `127.0.0.1`, the address it was
+  bound to, and whatever `FRAUDVAE_ALLOWED_HOSTS` adds). A request for any other host name
+  is a 400, which is what stops a hostile page from reaching it through DNS rebinding.
+- The API refuses requests the browser marks as coming from another site (the
+  `Sec-Fetch-Site` and `Origin` headers), so an image tag or a form on some other page cannot
+  make your browser train a model, upload a file or touch a remote box here.
+- `/api/remote/*` - the Compute tab's backend, which runs commands on a rented machine as
+  root with the app's own key - answers only to connections from the local machine. To use it
+  from another computer, start the server with `FRAUDVAE_TOKEN=<a long random string>` and the
+  UI will ask for the token once per browser session; programs send it as `X-Fraudvae-Token`.
+  Without the token the rest of the workbench works over a LAN; the remote routes give a 403.
+
+The public site runs with `FRAUDVAE_PUBLIC=1`, which removes the remote routes and every
+other mutating endpoint altogether (`SECURITY.md`).
+
 ## Remote training
 
 The full corpus is ~29M legitimate rows per epoch; a laptop does it in days,
