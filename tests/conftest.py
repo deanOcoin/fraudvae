@@ -21,6 +21,14 @@ from fraudvae.data import schema  # noqa: E402
 from fraudvae.paths import PROCESSED_DIR, ensure_dirs  # noqa: E402
 
 
+def pytest_collection_modifyitems(items):
+    """a test that needs the trained smoke model (directly or through the api client) is slow:
+    the fixture trains for about a minute. `pytest -m "not slow"` runs the rest in seconds."""
+    for item in items:
+        if {"trained_run", "client"} & set(getattr(item, "fixturenames", ())):
+            item.add_marker(pytest.mark.slow)
+
+
 def synthetic_source(key: str, n: int = 6000, fraud_rate: float = 0.03, seed: int = 0, wide: bool = False,
                      device: bool = False) -> pd.DataFrame:
     """a fake unified-schema source with a planted fraud pattern (big amounts at night, out of

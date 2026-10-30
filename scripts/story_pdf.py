@@ -1,5 +1,6 @@
 # renders fraudvae/web/story.html to an A4 pdf: python3 scripts/story_pdf.py $PWD/fraudvae/web/story.html docs/FinFraud-development-process.pdf
-import sys, asyncio
+import asyncio
+import sys
 from playwright.async_api import async_playwright
 src, out = sys.argv[1], sys.argv[2]
 PRINT_CSS = """

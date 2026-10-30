@@ -4,7 +4,7 @@ PREPARED ?= default
 CONFIG ?= cpu_small
 CAP ?= 1500000
 
-.PHONY: setup fix-omp data build prepare prepare-full train post serve test lint clean-runs
+.PHONY: setup fix-omp data build prepare prepare-full train post serve test test-fast lint clean-runs
 
 setup:
 	$(PY) -m pip install -e ".[dev]"
@@ -39,8 +39,13 @@ serve:
 test:
 	$(PY) -m pytest -q -p no:warnings
 
+# everything that does not train a model first: seconds, for the edit loop
+test-fast:
+	$(PY) -m pytest -q -p no:warnings -m "not slow"
+
+# fails on a finding, as a gate should; the rules are in pyproject.toml
 lint:
-	$(PY) -m pyflakes fraudvae tests || true
+	$(PY) -m ruff check fraudvae tests scripts
 
 clean-runs:
 	rm -rf runs/smoke-* runs/test-run

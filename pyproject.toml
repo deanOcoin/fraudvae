@@ -28,7 +28,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.4", "asyncssh>=2.14"]
+dev = ["pytest>=7.4", "asyncssh>=2.14", "ruff>=0.5"]
 kaggle = ["kaggle>=1.5"]
 
 [project.scripts]
@@ -45,3 +45,14 @@ fraudvae = ["web/**/*", "configs/*.yaml", "*.json", "data/*.json", "data/taxonom
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = ["slow: trains the two-epoch smoke model first (about a minute); `pytest -m 'not slow'` is the quick loop"]
+
+[tool.ruff]
+line-length = 160
+target-version = "py310"
+
+[tool.ruff.lint]
+# pyflakes plus the pycodestyle errors that are bugs rather than taste. The code puts two short
+# statements on a line and names a loop variable l where it reads well; those stay.
+select = ["E4", "E7", "E9", "F"]
+ignore = ["E702", "E731", "E741"]
