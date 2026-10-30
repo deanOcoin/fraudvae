@@ -211,7 +211,12 @@ validation rows. The interaction terms give every bank its
 own booster-vs-novelty weighting. Calibration then scores the whole
 validation split once and records, per bank and for the generic context,
 operating thresholds at 0.1/0.5/1/2/5% false positive rate for every
-score. The app flags on the blend; the receipt shows them all.
+score. The app flags on the blend; the receipt shows them all. The recall and
+precision a receipt quotes for a threshold are what that threshold did on the
+held-out test split (`eval.json`, `at_val_thresholds`); the figures measured on
+the validation rows the threshold was set on are kept as `expected_*` and
+labelled in-sample, because at 0.1% FPR a threshold is the n-th highest of a
+few thousand legitimate scores and fitted to noise.
 
 `docs/ARCHITECTURE.md` has the longer version, the UI's "How it works" tab
 the friendly one.

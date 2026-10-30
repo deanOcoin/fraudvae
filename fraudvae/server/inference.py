@@ -231,20 +231,40 @@ class ActiveModel:
             return block["generic"], "generic"
         return None, "none"
 
-    @staticmethod
-    def _operating(cal: dict, score: float, fpr_target: str) -> dict:
+    def _operating(self, cal: dict, score: float, fpr_target: str, kind: str | None = None, signal: str | None = None) -> dict:
+        """where the score sits against this context's legitimate traffic and the chosen threshold.
+        The threshold was set on the validation split, and the recall / precision recorded with it
+        were measured on those same rows, which at the smallest budgets means on a handful of
+        them: they are reported as expected_* and labelled in-sample. What the threshold did on the
+        held-out test split (eval.json, at_val_thresholds) is the number to quote, and comes back
+        as test_* when the run has it."""
         thr = cal["thresholds"]
         op = fpr_target if fpr_target in thr else "fpr_0.01"
         chosen = thr.get(op)
-        return {
+        out = {
             "z_score": (score - cal["legit_mean"]) / cal["legit_std"],
             "legit_percentile": _percentile(cal["legit_quantiles"], score),
             "operating_point": op, "threshold": chosen["threshold"] if chosen else None,
             "flag": bool(chosen and score > chosen["threshold"]),
             "expected_recall": chosen.get("recall") if chosen else None,
             "expected_precision": chosen.get("precision") if chosen else None,
+            "recall_basis": "validation split, in-sample at this threshold",
             "context_auroc": cal.get("auroc"),
         }
+        held = self._held_out_point(kind, signal, op)
+        if held:
+            out.update({"test_recall": held.get("recall"), "test_precision": held.get("precision"), "test_fpr": held.get("fpr"),
+                        "test_basis": "held-out test split at this threshold"})
+        return out
+
+    def _held_out_point(self, kind: str | None, signal: str | None, op: str) -> dict | None:
+        """eval.json's record of what this signal's validation threshold did on the test split, for
+        the bank (kind) or the generic context"""
+        if not self.eval or not kind or not signal:
+            return None
+        block = self.eval.get("generic") if kind == "generic" else (self.eval.get("sources") or {}).get(kind)
+        sig = (block or {}).get(signal) if isinstance(block, dict) else None
+        return ((sig or {}).get("at_val_thresholds") or {}).get(op) if isinstance(sig, dict) else None
 
     def _fuse(self, blend_prob: float, llrs: dict[str, list[float]]) -> dict | None:
         """blend probability + external likelihood ratios -> final probability. each ratio is
@@ -373,7 +393,7 @@ class ActiveModel:
         cal, kind = self._calibration_for(ctx)
         nov["calibration"] = kind
         if cal:
-            nov.update(self._operating(cal, vae_score, fpr_target))
+            nov.update(self._operating(cal, vae_score, fpr_target, kind, "vae"))
             nov["thresholds"] = cal["thresholds"]
         else:
             nov.update({"z_score": None, "legit_percentile": None, "flag": None, "thresholds": None})
@@ -403,7 +423,7 @@ class ActiveModel:
             bcal, bkind = self._calibration_for(ctx, name="booster")
             sup["calibration"] = bkind
             if bcal:
-                sup.update(self._operating(bcal, p_sup, fpr_target))
+                sup.update(self._operating(bcal, p_sup, fpr_target, bkind, "booster"))
             contrib = self.booster.contributions(num_np, mask_np, cat_np, np.array([src_idx]), wide=wide_np, hist=hist_np)[0]
             sup["bias"] = float(contrib[-1])
             sup["pushes"] = self._booster_pushes(contrib[:-1], num, mask, cat, features, wide=wide_np)
@@ -419,7 +439,7 @@ class ActiveModel:
                     lcal, lkind = self._calibration_for(ctx, name="local")
                     lb["calibration"] = lkind
                     if lcal:
-                        lb.update(self._operating(lcal, lb["prob"], fpr_target))
+                        lb.update(self._operating(lcal, lb["prob"], fpr_target, lkind, "local"))
                 out["local"] = lb
 
         # -- v5 sequence: the history read-out through the sequence head -------------------
@@ -431,7 +451,7 @@ class ActiveModel:
                 scal, skind = self._calibration_for(ctx, name="seq")
                 sq["calibration"] = skind
                 if scal:
-                    sq.update(self._operating(scal, sq["prob"], fpr_target))
+                    sq.update(self._operating(scal, sq["prob"], fpr_target, skind, "seq"))
             out["sequence"] = sq
 
         # -- v5 field heads: the device block (and whatever lands next) through its own head -----
@@ -445,7 +465,7 @@ class ActiveModel:
                 hcal, hkind = self._calibration_for(ctx, name=name)
                 hb["calibration"] = hkind
                 if hcal:
-                    hb.update(self._operating(hcal, hb["prob"], fpr_target))
+                    hb.update(self._operating(hcal, hb["prob"], fpr_target, hkind, name))
             out[name] = hb
 
         # -- v5 graph: the entities' embeddings through the transaction head --------------------
@@ -461,7 +481,7 @@ class ActiveModel:
                 gcal, gkind = self._calibration_for(ctx, name="graph")
                 gb["calibration"] = gkind
                 if gcal:
-                    gb.update(self._operating(gcal, gb["prob"], fpr_target))
+                    gb.update(self._operating(gcal, gb["prob"], fpr_target, gkind, "graph"))
             out["graph"] = gb
 
         # -- v5 text: free text through the text heads, as likelihood ratios ----------------------
@@ -491,7 +511,7 @@ class ActiveModel:
             blcal, blkind = self._calibration_for(ctx, name="blend")
             bl["calibration"] = blkind
             if blcal:
-                bl.update(self._operating(blcal, p, fpr_target))
+                bl.update(self._operating(blcal, p, fpr_target, blkind, "blend"))
                 bl["thresholds"] = blcal["thresholds"]
             out["blend"] = bl
             # v5 fusion: external modules (text, behaviour) were never present on a training row, so

@@ -586,6 +586,9 @@ def test_same_request_same_receipt(client):
     assert a["contributions"] == b["contributions"]
     assert client.post("/api/score", json={**body, "seed": 0}).json()["novelty"]["score_raw"] == a["novelty"]["score_raw"]
     assert a["n_samples"] > 1
+    # the operating point says which split its recall comes from, and quotes the held-out one
+    assert a["blend"]["recall_basis"].startswith("validation") and a["blend"]["test_basis"].startswith("held-out")
+    assert 0.0 <= a["blend"]["test_recall"] <= 1.0 and a["blend"]["test_fpr"] is not None
     c = client.post("/api/score", json={**body, "seed": 7}).json()
     assert c["novelty"]["score_raw"] != a["novelty"]["score_raw"]
 
