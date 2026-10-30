@@ -19,7 +19,7 @@ from .ssh import RemoteError, SSHSession
 Log = Callable[[str], None]
 
 # what goes to the server. data/ and runs/ are synced separately, .git never
-CODE_INCLUDE = ["fraudvae", "configs", "pyproject.toml", "requirements.txt", "README.md", "scripts", "Makefile"]
+CODE_INCLUDE = ["fraudvae", "pyproject.toml", "requirements.txt", "README.md", "scripts", "Makefile"]
 CODE_EXCLUDE_DIRS = {"__pycache__", ".pytest_cache", "node_modules", ".git"}
 
 

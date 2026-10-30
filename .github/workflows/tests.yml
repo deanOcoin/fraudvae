@@ -31,3 +31,47 @@ jobs:
           pip install -e ".[dev]"
       - name: pytest
         run: python -m pytest tests/ -p no:warnings -q
+
+  # the installed package, not the checkout: a wheel built from the tree goes into a clean
+  # virtualenv and is run from another directory, so a data file or config that only exists
+  # in the repository shows up here rather than on a user's machine
+  wheel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: build the wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel --outdir dist
+      - name: install it in a clean virtualenv (cpu torch)
+        run: |
+          python -m venv /tmp/venv
+          /tmp/venv/bin/pip install --upgrade pip
+          /tmp/venv/bin/pip install torch --index-url https://download.pytorch.org/whl/cpu
+          /tmp/venv/bin/pip install dist/*.whl
+      - name: the installed package finds its configs, manifests and ui
+        working-directory: /tmp
+        run: |
+          /tmp/venv/bin/fraudvae models list
+          /tmp/venv/bin/fraudvae train --help > /dev/null
+          /tmp/venv/bin/python - <<'EOF'
+          import json
+          import fraudvae.models as m
+          import fraudvae.paths as p
+          from fraudvae.config import load_config
+          from fraudvae.data import fetch
+          assert not p.IN_CHECKOUT, p.ROOT
+          assert p.CONFIG_DIR.exists() and p.WEB_DIR.joinpath("index.html").exists(), (p.CONFIG_DIR, p.WEB_DIR)
+          assert "site-packages" not in str(p.DATA_DIR) and "site-packages" not in str(p.RUNS_DIR), (p.DATA_DIR, p.RUNS_DIR)
+          for name in ("base", "cpu_small", "gpu_full", "smoke"):
+              load_config(name)
+          json.load(open(m.MANIFEST))
+          json.load(open(fetch.EXPECTED))
+          import fraudvae.server.app  # noqa: F401  (the ui and the api modules import)
+          print("installed package ok")
+          EOF
