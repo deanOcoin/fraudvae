@@ -22,7 +22,10 @@ site was put up.
   of at most 5,000 rows each with two running at once server-wide, a comparison across at
   most 6 generations per request. 429 with `Retry-After` past that. On top of the buckets a
   global ceiling: four transactions scoring at once across every visitor, then a 503 with
-  `Retry-After` after a three-second wait. All of it is in `deploy/env.example`.
+  `Retry-After` after a three-second wait. All of it is in `deploy/env.example`. The buckets
+  believe `X-Real-IP` / `X-Forwarded-For` only from a trusted proxy (loopback, or
+  `FRAUDVAE_TRUSTED_PROXIES`); if a load balancer in front of nginx terminates the
+  connection, list its address there or every visitor shares one bucket.
 - **Fewer details in the metadata.** `/api/meta` drops the host name, file paths and the
   kernel version; a run's metrics drop where it was fetched from and the training process id;
   `remote.json` never leaves the machine that trained a run (`fraudvae models pack` excludes

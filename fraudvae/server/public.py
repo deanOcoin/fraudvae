@@ -35,19 +35,28 @@ SCORE_CONCURRENCY = int(os.environ.get("FRAUDVAE_SCORE_CONCURRENCY", "4"))   # t
 _buckets: dict[tuple[str, str], list[float]] = {}
 _lock = threading.Lock()
 batch_slots = threading.BoundedSemaphore(BATCH_CONCURRENCY)
+# the proxies whose X-Real-IP / X-Forwarded-For are believed: the local nginx by default, more
+# with FRAUDVAE_TRUSTED_PROXIES (comma separated addresses). A connection from anywhere else is
+# charged to its own socket address whatever headers it sends
+TRUSTED_PROXIES = {"127.0.0.1", "::1"} | {p.strip() for p in os.environ.get("FRAUDVAE_TRUSTED_PROXIES", "").split(",") if p.strip()}
 
 
 def client_ip(request: Request) -> str:
-    """the visitor's address as nginx saw it. X-Real-IP is set (overwritten) by nginx; the
-    *last* X-Forwarded-For entry is the one nginx appended, so a visitor who sends their own
-    X-Forwarded-For cannot pick which bucket they are charged to. Without a proxy, the socket."""
+    """the visitor's address. Behind a trusted proxy (nginx on this box) X-Real-IP is what the
+    proxy saw, and the *last* X-Forwarded-For entry is the one the proxy appended, so a visitor
+    who sends their own cannot pick which bucket they are charged to. A connection that does
+    not come from a trusted proxy is the visitor: its headers are not consulted, which is what
+    keeps the limits real when the app is reached without nginx in front."""
+    peer = request.client.host if request.client else "unknown"
+    if peer not in TRUSTED_PROXIES:
+        return peer
     real = request.headers.get("x-real-ip")
     if real:
         return real.strip()
     fwd = request.headers.get("x-forwarded-for")
     if fwd:
         return fwd.split(",")[-1].strip()
-    return request.client.host if request.client else "unknown"
+    return peer
 
 
 def take(kind: str, ip: str, per_minute: int, burst: int) -> float | None:
