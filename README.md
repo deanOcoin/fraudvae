@@ -6,7 +6,7 @@
 [![live site](https://img.shields.io/badge/live-finfraud.dev-2563eb)](https://www.finfraud.dev)
 [![pretrained models](https://img.shields.io/badge/pretrained-6%20generations-10b981)](https://github.com/deanOcoin/fraudvae/releases)
 [![python](https://img.shields.io/badge/python-3.10%2B-3776ab)](pyproject.toml)
-[![pytorch](https://img.shields.io/badge/pytorch-2.1%2B-ee4c2c)](https://pytorch.org)
+[![pytorch](https://img.shields.io/badge/pytorch-2.4%2B-ee4c2c)](https://pytorch.org)
 [![lightgbm](https://img.shields.io/badge/lightgbm-4%2B-5e8b2f)](https://lightgbm.readthedocs.io)
 [![license: MIT](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 
@@ -100,7 +100,7 @@ clearly below it for v5, whose history encoder needs the full corpus's long
 customer sequences. `docs/TRAINING_NOTES.md` has every run's hardware and time;
 the site's story page has the same as a table.
 
-Python 3.10+, PyTorch 2.1+, LightGBM 4+. CPU is fine for the capped set, MPS
+Python 3.10+, PyTorch 2.4+, LightGBM 4+. CPU is fine for the capped set, MPS
 works on Apple silicon, CUDA for the full corpus.
 
 **macOS:** LightGBM needs `brew install libomp`, and then `make fix-omp` once
