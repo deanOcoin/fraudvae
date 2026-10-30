@@ -128,9 +128,13 @@ repository when the box is gone. Long jobs are launched detached inside a comman
 ## Security notes
 
 - The private key lives in `~/.fraudvae/ssh/id_ed25519` with mode 600 and is
-  not in the repo (`.gitignore`). `GET /api/remote/key?rotate=1` makes a new
-  one.
-- The web server binds to 127.0.0.1 by default. If you expose it, anyone who
-  can reach it can use your remote boxes.
+  not in the repo (`.gitignore`). `POST /api/remote/key/rotate` makes a new
+  one (a POST, so a page you visit cannot trigger it with an image tag).
+- The web server binds to 127.0.0.1 by default, and `/api/remote/*` answers
+  only to connections from the local machine unless the server was started with
+  `FRAUDVAE_TOKEN`, which every request must then carry as `X-Fraudvae-Token`
+  (the UI asks for it once). Cross-site browser requests to the API are refused
+  (`Sec-Fetch-Site` / `Origin`). The README's "The workbench on a network" has
+  the whole picture.
 - Host keys are trust-on-first-use. If you re-rent and get the same IP with a
   different key, delete the line from `~/.fraudvae/ssh/known_hosts`.

@@ -5,18 +5,39 @@ Each operation opens its own ssh session, nothing is kept open between calls.
 """
 from __future__ import annotations
 
+import hmac
+import os
+import re
 from pathlib import Path
 
-
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, field_validator
 
 from ..remote import advisor, jobs, keys, provision
 from ..remote.ssh import RemoteError, RemoteHost, SSHSession, forget_host, load_hosts, remember_host, ssh_config_hosts
 from . import inference, tasks
 from .api_data import _clean
 
-router = APIRouter(prefix="/api/remote")
+# every route here runs commands on a machine as root with the app's own key, with no login of
+# its own: the trust is that only the person at this keyboard can reach the server. So the
+# router answers only to connections from this machine, unless FRAUDVAE_TOKEN is set, in which
+# case every request has to carry it as X-Fraudvae-Token (the ui asks for it once).
+TOKEN = os.environ.get("FRAUDVAE_TOKEN", "")
+_LOOPBACK = {"127.0.0.1", "::1"}
+_REMOTE_DIR = re.compile(r"^[~A-Za-z0-9_./-]{1,200}$")
+
+
+def _guard(request: Request):
+    if TOKEN:
+        if not hmac.compare_digest(request.headers.get("x-fraudvae-token", ""), TOKEN):
+            raise HTTPException(401, "the remote api needs the server's FRAUDVAE_TOKEN in an X-Fraudvae-Token header")
+        return
+    if (request.client.host if request.client else "") not in _LOOPBACK:
+        raise HTTPException(403, "the remote api answers only to this machine; to use it from another, start the server "
+                                 "with FRAUDVAE_TOKEN set and send the token as X-Fraudvae-Token")
+
+
+router = APIRouter(prefix="/api/remote", dependencies=[Depends(_guard)])
 
 
 class HostIn(BaseModel):
@@ -26,6 +47,14 @@ class HostIn(BaseModel):
     key_path: str | None = None
     label: str = ""
     remote_dir: str = "~/fraudvae"
+
+    @field_validator("remote_dir")
+    @classmethod
+    def _v_remote_dir(cls, v):
+        # it ends up in shell commands on the box: a path, not a command
+        if not _REMOTE_DIR.match(v or "") or ".." in v:
+            raise ValueError("remote_dir: letters, digits, '_', '-', '.', '/' and a leading '~' only")
+        return v
 
 
 def _host(h: HostIn) -> RemoteHost:
@@ -38,11 +67,20 @@ def _host(h: HostIn) -> RemoteHost:
     return rh
 
 
-@router.get("/key")
-def get_key(rotate: bool = False):
-    if rotate:
-        keys.rotate()
+def _key_info():
     return {"public_key": keys.public_key_text(), "fingerprint": keys.fingerprint(), "path": str(keys.PUBLIC)}
+
+
+@router.get("/key")
+def get_key():
+    return _key_info()
+
+
+@router.post("/key/rotate")
+def post_key_rotate():
+    """a new keypair; a POST because a GET that changes state can be triggered by an image tag"""
+    keys.rotate()
+    return _key_info()
 
 
 @router.get("/hosts")

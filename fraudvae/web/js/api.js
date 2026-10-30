@@ -1,13 +1,27 @@
 // tiny fetch wrapper. every api error becomes an Error with the server's detail.
 
+// a workbench reached from another machine wants its FRAUDVAE_TOKEN on every /api/remote call;
+// asked for once per browser session, kept in sessionStorage only
+const TOKEN_KEY = "fraudvae_token";
+const readToken = () => { try { return sessionStorage.getItem(TOKEN_KEY) || ""; } catch (_) { return ""; } };
+const isRemote = (path) => path.startsWith("/api/remote/");
+
 export async function api(path, opts = {}, retried = false) {
   const init = { headers: {}, ...opts };
   if (init.body && !(init.body instanceof FormData)) {
     init.headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(init.body);
   }
+  if (isRemote(path) && readToken()) init.headers["X-Fraudvae-Token"] = readToken();
   const res = await fetch(path, init);
   if (!res.ok) {
+    if (res.status === 401 && isRemote(path) && !retried) {
+      const t = window.prompt("This server was started with FRAUDVAE_TOKEN. Paste it to use the Compute tab from here:");
+      if (t && t.trim()) {
+        try { sessionStorage.setItem(TOKEN_KEY, t.trim()); } catch (_) { /* private mode */ }
+        return api(path, opts, true);
+      }
+    }
     // the public site answers "busy" (503) or "too fast" (429) with a Retry-After: wait that long, once
     const wait = Number(res.headers.get("Retry-After"));
     if ((res.status === 503 || res.status === 429) && wait > 0 && wait <= 10 && !retried) {
