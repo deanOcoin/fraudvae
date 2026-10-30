@@ -24,7 +24,7 @@ import math
 
 from ..data.taxonomy import browser_class, email_bucket, os_class, screen_wh
 
-_YES_NO = {True: "yes", False: "no", 1: "yes", 0: "no", "true": "yes", "false": "no", "yes": "yes", "no": "no", "1": "yes", "0": "no"}
+_YES_NO = {True: "yes", False: "no", "true": "yes", "false": "no", "yes": "yes", "no": "no", "1": "yes", "0": "no"}   # 1 / 0 hash as True / False
 
 
 def _yes_no(v):
