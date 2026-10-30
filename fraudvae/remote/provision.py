@@ -5,6 +5,7 @@ dropped connection just continues.
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import tarfile
 import tempfile
@@ -100,7 +101,9 @@ def _find_python(s: SSHSession) -> str | None:
 
 
 def _code_tarball() -> Path:
-    tmp = Path(tempfile.mkstemp(prefix="fraudvae-code-", suffix=".tar.gz")[1])
+    fd, name = tempfile.mkstemp(prefix="fraudvae-code-", suffix=".tar.gz")
+    os.close(fd)   # tarfile opens the path itself; the descriptor mkstemp hands back would otherwise leak
+    tmp = Path(name)
     with tarfile.open(tmp, "w:gz") as tar:
         for name in CODE_INCLUDE:
             p = ROOT / name
