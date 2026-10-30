@@ -36,9 +36,11 @@ Three layers, from the outside in:
    a request body at 6 MB, times out slow clients, and keeps the read-only answers in a cache
    for ten minutes so repeated requests for them never reach python.
 2. **The app's own buckets** are finer: 60 scores a minute with a burst of 20, 4 batch
-   uploads of at most 5,000 rows, a comparison across at most 6 generations. A forged
-   `X-Forwarded-For` does not buy a fresh bucket; the address nginx appended is the one that
-   counts.
+   uploads of at most 5,000 rows, a comparison across at most 6 generations. The address a
+   bucket is charged to comes from `X-Real-IP` / the last `X-Forwarded-For` entry only when
+   the connection is from a trusted proxy (nginx on the same box, or an address listed in
+   `FRAUDVAE_TRUSTED_PROXIES`); any other connection is charged to its own socket address, so
+   a forged header buys nothing, with or without nginx in front.
 3. **A global ceiling** on scoring: at most four transactions score at once across every
    visitor, and two batches. Past that a request waits up to three seconds and then gets a
    503 with `Retry-After`, so the box answers slowly under load rather than swapping.

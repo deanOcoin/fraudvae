@@ -637,10 +637,15 @@ def test_public_mode_gates(client, monkeypatch):
     body = {"source": "fdh", "features": ex["features"], "wide": ex["wide"], "customer_id": "visitor-1", "remember": True, "ts": 1.7e9}
     codes = [client.post("/api/score", json=body).status_code for _ in range(5)]
     assert codes[:3] == [200, 200, 200] and 429 in codes[3:]
-    # a forged X-Forwarded-For does not buy a fresh bucket: the address nginx appended counts
-    spoof = {"X-Forwarded-For": "9.9.9.9, testclient"}
-    assert client.post("/api/score", json=body, headers=spoof).status_code == 429
+    # a forged header buys nothing: the test client is not a trusted proxy, so its headers are
+    # not consulted at all; from a trusted proxy the last X-Forwarded-For entry (the one the
+    # proxy appended) is what counts, never one the visitor sent
+    assert client.post("/api/score", json=body, headers={"X-Forwarded-For": "9.9.9.9, testclient"}).status_code == 429
+    assert client.post("/api/score", json=body, headers={"X-Real-IP": "5.5.5.5"}).status_code == 429
+    monkeypatch.setattr(public, "TRUSTED_PROXIES", public.TRUSTED_PROXIES | {"testclient"})
     assert client.post("/api/score", json=body, headers={"X-Real-IP": "5.5.5.5"}).status_code == 200
+    assert client.post("/api/score", json=body, headers={"X-Forwarded-For": "9.9.9.9, 7.7.7.7"}).status_code == 200
+    assert client.post("/api/score", json=body, headers={"X-Forwarded-For": "9.9.9.9, 7.7.7.7"}).status_code == 200
     public._buckets.clear()
     r = client.post("/api/score", json=body).json()
     assert r["sequence"]["history_from"] is None     # nothing remembered, nothing read back
