@@ -197,7 +197,7 @@ class BuildRequest(BaseModel):
     max_rows: int | None = None
 
 
-@router.post("/data/fetch")
+@router.post("/data/fetch", openapi_extra={"x-workbench-only": True})
 def post_fetch(req: BuildRequest):
     public.forbid("downloading data")
     args = ["fraudvae.data.fetch"]
@@ -207,7 +207,7 @@ def post_fetch(req: BuildRequest):
     return {"task": t.id}
 
 
-@router.post("/data/build")
+@router.post("/data/build", openapi_extra={"x-workbench-only": True})
 def post_build(req: BuildRequest):
     public.forbid("building data")
     args = ["fraudvae.data.build"]
@@ -225,7 +225,7 @@ class PrepareRequest(BaseModel):
     max_rows_per_source: int | None = None
 
 
-@router.post("/data/prepare")
+@router.post("/data/prepare", openapi_extra={"x-workbench-only": True})
 def post_prepare(req: PrepareRequest):
     public.forbid("preparing data")
     args = ["fraudvae.data.prepare", "--name", req.name]

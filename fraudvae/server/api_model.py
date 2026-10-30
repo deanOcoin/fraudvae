@@ -278,7 +278,7 @@ def get_models():
     return {"models": items, "active": act.name if act else None}
 
 
-@router.delete("/history/{source}/{customer_id}")
+@router.delete("/history/{source}/{customer_id}", openapi_extra={"x-workbench-only": True})
 def delete_history(source: str, customer_id: str):
     """v5: forget a customer's stored history (source 'generic' for the no-bank context)"""
     public.forbid("the customer store")
@@ -375,7 +375,7 @@ def get_runs():
     return _clean({"runs": [public.scrub_run(r) for r in inference.list_runs()], "active": m.name if m else None})
 
 
-@router.post("/runs/{name}/load")
+@router.post("/runs/{name}/load", openapi_extra={"x-workbench-only": True})
 def post_load(name: str):
     public.forbid("changing the default model (pick a model per request instead)")
     _run_dir(name)
@@ -505,7 +505,7 @@ class TrainRequest(BaseModel):
     device: str | None = None
 
 
-@router.post("/train/local")
+@router.post("/train/local", openapi_extra={"x-workbench-only": True})
 def post_train_local(req: TrainRequest):
     public.forbid("training")
     name = req.name or tasks.run_name_from(req.config)
@@ -522,14 +522,14 @@ def post_train_local(req: TrainRequest):
     return {"task": t.id, "run": name}
 
 
-@router.get("/tasks")
+@router.get("/tasks", openapi_extra={"x-workbench-only": True})
 def get_tasks():
     if public.PUBLIC:
         return []
     return tasks.list_tasks()
 
 
-@router.get("/tasks/{task_id}")
+@router.get("/tasks/{task_id}", openapi_extra={"x-workbench-only": True})
 def get_task(task_id: str, tail: int = 400):
     public.forbid("background tasks")
     tail = max(1, min(int(tail), 5000))
