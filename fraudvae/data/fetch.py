@@ -75,6 +75,11 @@ def _download(url: str, dest: Path):
                 print(f"\r  {dest.name}: {done / 1e6:.0f}/{total / 1e6:.0f} MB", end="", flush=True)
                 t0 = time.time()
     print()
+    if total and done != total:
+        # a connection that closed early leaves a short file; it stays a .part rather than becoming
+        # a download that `fetch` would then report as present for ever
+        tmp.unlink(missing_ok=True)
+        raise RuntimeError(f"{dest.name}: got {done:,} of {total:,} bytes, the download was cut short; run fetch again")
     tmp.rename(dest)
 
 
@@ -337,10 +342,15 @@ def main(argv=None):
         write_lock(raw_dir, got)
     missing = [k for k in keys if k not in got]
     print(f"\n{len(got)}/{len(keys)} sources available" + (f", missing: {', '.join(missing)}" if missing else ""))
+    bad = []
     if got:
         print("\nagainst the files the shipped generations were built from:")
-        verify(raw_dir, got, quick=args.no_lock)
-    return 0 if not missing else 2
+        res = verify(raw_dir, got, quick=args.no_lock)
+        bad = [1 for r in res.values() for st in r.values() if not _ok(st)]
+        if bad:
+            print(f"{len(bad)} file(s) differ from the ones the published numbers came from: the build will run, "
+                  f"the numbers will not reproduce", file=sys.stderr)
+    return 0 if not (missing or bad) else 2
 
 
 if __name__ == "__main__":
