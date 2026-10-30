@@ -365,7 +365,7 @@ fraudvae/
   server/      fastapi app + api modules, inference (the loaded generations + fusion), timeline,
                public (the demonstration-site mode), entity_store, payloads
   web/         the ui: index.html, css/, js/, explain.html, story.html + story_plain.html, vendored libs
-configs/       base, cpu_small, gpu_full, smoke
+  configs/     base, cpu_small, gpu_full, gpu_hist, gpu_long, smoke (yaml; `train --config NAME`)
 data/examples/ labelled example rows for the six sources whose licences allow it
 deploy/        install.sh, update.sh, the systemd unit, nginx, env.example, relay_bootstrap.sh
 tests/         pytest, no real data needed

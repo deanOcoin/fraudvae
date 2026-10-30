@@ -619,7 +619,7 @@ one-week block blanked; the last two columns are the v4 release):
   booster stopped earlier (937 rounds against 1,387) at the same validation AUC, so the
   128 columns are not useless - they let the trees get there faster - but the velocity
   and entity blocks already say what the summary says. The option stays in the code
-  (`boost.history_features`, `configs/gpu_hist.yaml`) as the documented negative result;
+  (`boost.history_features`, `fraudvae/configs/gpu_hist.yaml`) as the documented negative result;
   it is off in `gpu_full`.
 - A longer VAE (`gpu_long`: window 48, 40 epochs) was started alongside and stopped at
   epoch 7 once h's numbers were in: the blender gives the VAE score a weight of about zero,

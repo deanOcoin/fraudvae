@@ -37,7 +37,9 @@ fraudvae = "fraudvae.cli:main"
 include = ["fraudvae*"]
 
 [tool.setuptools.package-data]
-fraudvae = ["web/**/*", "data/taxonomy/*.json"]
+# everything the installed package needs at run time: the ui, the training configs, the
+# pretrained-bundle manifest, the corpus statistics and the raw-file checksums
+fraudvae = ["web/**/*", "configs/*.yaml", "*.json", "data/*.json", "data/taxonomy/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
