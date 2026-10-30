@@ -843,8 +843,10 @@ def get_model(name: str, device="cpu") -> ActiveModel:
             victim = min(extras, key=lambda n: getattr(_loaded[n], "last_used", 0.0))
             if _active is not None and victim == _active.name:
                 break
-            _loaded.pop(victim, None)
+            gone = _loaded.pop(victim, None)
             extras.remove(victim)
+            if gone is not None and gone.store is not None:
+                gone.store.close()
     return m
 
 
