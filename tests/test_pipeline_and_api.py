@@ -575,6 +575,21 @@ def test_model_timeline_and_comparison(client, trained_run):
     assert set(meta["loaded_runs"]) >= {"test-run", "test-run-twin"} and meta["public"]["public"] is False
 
 
+def test_same_request_same_receipt(client):
+    """the novelty score is a monte-carlo estimate; its draws are seeded per request, so a
+    transaction scored twice gets the same numbers, and a different seed moves the raw score"""
+    ex = client.get("/api/examples?source=fdh&fraud=0").json()[0]
+    body = {"source": "fdh", "features": ex["features"], "wide": ex["wide"]}
+    a = client.post("/api/score", json=body).json()
+    b = client.post("/api/score", json=body).json()
+    assert a["novelty"]["score_raw"] == b["novelty"]["score_raw"] and a["p_fraud"] == b["p_fraud"]
+    assert a["contributions"] == b["contributions"]
+    assert client.post("/api/score", json={**body, "seed": 0}).json()["novelty"]["score_raw"] == a["novelty"]["score_raw"]
+    assert a["n_samples"] > 1
+    c = client.post("/api/score", json={**body, "seed": 7}).json()
+    assert c["novelty"]["score_raw"] != a["novelty"]["score_raw"]
+
+
 def test_workbench_api_guards(client, monkeypatch):
     """a workbench has no login: the browser's own site markers keep other pages out, and the
     remote api (root on a rented box) answers only to this machine unless a token is set"""

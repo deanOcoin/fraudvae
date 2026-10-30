@@ -99,6 +99,7 @@ class ScoreRequest(BaseModel):
                                             # one-week fraud-history block is blanked before the booster sees it
     run: str | None = None                  # which generation scores it (default: the active model)
     compare: list[str] | None = None        # other runs to score the same transaction on, for the comparison strip
+    seed: int | None = None                 # the latent draws' seed (default 0): the same request gives the same receipt
 
     @field_validator("features")
     @classmethod
@@ -208,6 +209,10 @@ def post_score(req: ScoreRequest, request: Request):
     they need), `blend` (the final combination with every threshold) - plus `compare`, one
     summary per generation, when other generations were asked for.
 
+    The novelty score averages `n_samples` draws of the model's latent; the draws are seeded
+    (`seed`, default 0), so the same request returns the same receipt, and another seed shows
+    how much of a borderline score is sampling noise.
+
     Optional context: `wide` (the source's raw columns as they are), `history` (previous
     transactions of the same customer, oldest first, each `{features, ts}`), `device`
     (telemetry: os, browser, screen), `entities` (customer, device, card, email codes for the
@@ -234,7 +239,8 @@ def _score(req: ScoreRequest, m: inference.ActiveModel):
     # a public site keeps no visitor state: histories must come with the request
     remember, customer_id = (False, None) if public.PUBLIC else (req.remember, req.customer_id)
     kw = dict(wide=req.wide, history=req.history, customer_id=customer_id, ts=req.ts, remember=remember,
-              device=req.device, entities=req.entities, text=req.text, session=req.session, label_delay_days=req.label_delay_days)
+              device=req.device, entities=req.entities, text=req.text, session=req.session, label_delay_days=req.label_delay_days,
+              seed=req.seed)
     try:
         out = m.score(req.features, req.source, req.fpr_target, **kw)
         if req.compare:
