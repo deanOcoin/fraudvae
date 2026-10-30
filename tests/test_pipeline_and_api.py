@@ -590,6 +590,20 @@ def test_same_request_same_receipt(client):
     assert c["novelty"]["score_raw"] != a["novelty"]["score_raw"]
 
 
+def test_concurrent_scoring(client):
+    """several transactions in flight at once: every one answers, and each gets the receipt it
+    would have got alone"""
+    from concurrent.futures import ThreadPoolExecutor
+
+    ex = client.get("/api/examples?source=fdh&fraud=0").json()[0]
+    body = {"source": "fdh", "features": ex["features"], "wide": ex["wide"]}
+    alone = client.post("/api/score", json=body).json()
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        results = list(pool.map(lambda _: client.post("/api/score", json=body), range(12)))
+    assert all(r.status_code == 200 for r in results)
+    assert all(r.json()["p_fraud"] == alone["p_fraud"] and r.json()["novelty"]["score_raw"] == alone["novelty"]["score_raw"] for r in results)
+
+
 def test_workbench_api_guards(client, monkeypatch):
     """a workbench has no login: the browser's own site markers keep other pages out, and the
     remote api (root on a rented box) answers only to this machine unless a token is set"""

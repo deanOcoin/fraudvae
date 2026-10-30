@@ -37,8 +37,6 @@ from ..paths import APP_HOME, RUNS_DIR
 from .entity_store import EntityStore
 from .payloads import merge_payloads
 
-_lock = threading.Lock()
-
 
 class IncompatibleRun(RuntimeError):
     pass
@@ -91,6 +89,10 @@ class ActiveModel:
         self.run_dir = Path(run_dir)
         self.name = self.run_dir.name
         self.device = torch.device(device)
+        # one forward pass through this generation at a time: torch's intra-op threads are
+        # already using the cores, and two batches interleaved only make both slower. Per model,
+        # so a comparison across generations is not serialised behind one lock
+        self._infer_lock = threading.Lock()
         self.model, ck = load_checkpoint(self.run_dir / "model.pt", device=self.device)
         self.meta = ck["prepared_meta"]
         self.train_config = ck.get("train_config", {})
@@ -339,7 +341,7 @@ class ActiveModel:
                 if past:
                     hist, n_hist = self.history_tensors(past, source, cur_ts)
                 hist_from = "entity store"
-        with _lock:
+        with self._infer_lock:
             r = score_batch(self.model, num, mask, cat, src, n_samples=self.n_samples, hist=hist, generator=self._generator(seed))
             if self.seqhead is not None:
                 r["seq"] = self.seqhead.logit(self.model, num, mask, cat, src, torch.from_numpy(r["h"]).to(self.device))
@@ -662,7 +664,7 @@ class ActiveModel:
                     v = pd.to_numeric(df[kind], errors="coerce").to_numpy()
                     ent[:, k] = np.where(np.isfinite(v), np.nan_to_num(v, nan=-1).astype(np.int64), -1)
         blend = np.full(n, np.nan, dtype=np.float32)
-        with _lock:
+        with self._infer_lock:
             for s in range(0, n, batch_size):
                 sl = slice(s, min(s + batch_size, n))
                 num_t, mask_t = torch.from_numpy(num[sl]).to(self.device), torch.from_numpy(mask[sl]).to(self.device)
@@ -757,7 +759,7 @@ _active: ActiveModel | None = None
 # default (active) model never gets evicted; the others go least-recently-used first
 _loaded: dict[str, ActiveModel] = {}
 _MAX_LOADED = int(os.environ.get("FRAUDVAE_MAX_LOADED", "8"))
-_lock = threading.Lock()
+_registry_lock = threading.Lock()   # guards _loaded only; never held while a model scores
 
 
 def list_runs() -> list[dict]:
@@ -824,7 +826,7 @@ def load_run(name: str, device="cpu") -> ActiveModel:
 def get_model(name: str, device="cpu") -> ActiveModel:
     """a loaded run by name, loading it on first use and evicting the least recently used
     extra model past the cap; the default model is never evicted"""
-    with _lock:
+    with _registry_lock:
         m = _loaded.get(name)
         if m is not None:
             m.last_used = time.time()
@@ -834,7 +836,7 @@ def get_model(name: str, device="cpu") -> ActiveModel:
         raise FileNotFoundError(f"run {name} has no model.pt")
     m = ActiveModel(d, device=device)
     m.last_used = time.time()
-    with _lock:
+    with _registry_lock:
         _loaded[name] = m
         extras = [n for n in _loaded if _active is None or n != _active.name]
         while len(_loaded) > _MAX_LOADED and extras:
