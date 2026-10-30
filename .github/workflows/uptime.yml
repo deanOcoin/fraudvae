@@ -18,4 +18,7 @@ jobs:
             code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$u")
             echo "$code $u"; [ "$code" = 200 ]
           done
-          curl -sf --max-time 20 -H 'content-type: application/json' --data '{"features": {"amount": 12.5}}' https://www.finfraud.dev/api/score > /dev/null && echo "score ok"
+          # the runner shares its address with other github jobs: a 429 from the rate limit is the
+          # site working as designed, not an outage, so it passes; anything else fails
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 -H 'content-type: application/json' --data '{"features": {"amount": 12.5}}' https://www.finfraud.dev/api/score)
+          echo "$code POST /api/score"; [ "$code" = 200 ] || [ "$code" = 429 ]
