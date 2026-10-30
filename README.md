@@ -328,6 +328,12 @@ knowing what each one does before putting the server anywhere else:
   UI will ask for the token once per browser session; programs send it as `X-Fraudvae-Token`.
   Without the token the rest of the workbench works over a LAN; the remote routes give a 403.
 
+One more thing a workbench does that the public site does not: when a request names a
+`customer_id`, the scored transaction's model-space encoding is kept in
+`~/.fraudvae/entity_store.sqlite` (the newest 1,000 per customer, `FRAUDVAE_HISTORY_MAX_ROWS`)
+so the next request for that customer is scored with history. `remember: false` reads without
+writing, and `DELETE /api/history/{source}/{customer_id}` forgets a customer.
+
 The public site runs with `FRAUDVAE_PUBLIC=1`, which removes the remote routes and every
 other mutating endpoint altogether (`SECURITY.md`).
 
@@ -355,9 +361,10 @@ in one command), `scripts/bootstrap_remote.sh`. See `docs/REMOTE_TRAINING.md`.
 
 ```
 fraudvae/
-  data/        registry (sources, licenses), schema, taxonomy, velocity features,
-               entities.py (graph block), adapters/<source>.py, fetch / build / prepare,
-               examples.py (the redistributable example rows)
+  data/        registry (sources, licenses), aux_registry (the text / behaviour / graph sets), schema,
+               taxonomy, velocity features, entities.py (graph block), adapters/<source>.py,
+               fetch / build / prepare, examples.py (the redistributable example rows),
+               expected.json (the raw files' checksums), corpus_stats.json
   models.py    pretrained bundles: pack / pull against pretrained.json (github releases)
   model/       vae.py (model + history encoder), scoring.py, booster.py,
                seqhead.py (sequence head), heads.py (device head), dataset.py (+ the sequence index)
@@ -373,7 +380,8 @@ fraudvae/
   configs/     base, cpu_small, gpu_full, gpu_hist, gpu_long, smoke (yaml; `train --config NAME`)
 data/examples/ labelled example rows for the six sources whose licences allow it
 deploy/        install.sh, update.sh, the systemd unit, nginx, env.example, relay_bootstrap.sh
-tests/         pytest, no real data needed
+scripts/       kaggle_manual_download.md, macos_openmp.sh, make_data_docs.py, story_pdf.py, bootstrap_remote.sh, relay_agent.sh
+tests/         pytest, no real data needed; `make test-fast` skips the ones that train (CONTRIBUTING.md)
 docs/
 ```
 

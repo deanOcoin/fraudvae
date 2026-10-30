@@ -410,7 +410,8 @@ def get_metrics(name: str):
     """The training curve (`metrics`: one row per epoch), the run's settings and status, the
     evaluation on the test split (`eval`, and `eval_delay` under delayed labels), and the
     report of each side model: calibration, booster, sequence head, specialists, entity graph,
-    text heads, behaviour verifiers. A few hundred kilobytes; cached for ten minutes."""
+    text heads, behaviour verifiers. A few hundred kilobytes; on the public site nginx keeps the
+    answer for ten minutes, a workbench reads the files on every call."""
     d = _run_dir(name)
     out = {"metrics": [], "status": None, "run": None, "eval": None, "eval_delay": None, "calibration": None, "booster": None,
            "seqhead": None, "specialists": None, "graph": None, "text": None, "behaviour": None, "graph_bench": None,
@@ -485,7 +486,7 @@ def get_latent(name: str):
     """A two-dimensional projection of the test split through the autoencoder: `xy` the
     coordinates, `y` the fraud label, `src` the source index, `score` the novelty and `blend`
     the final probability of each point. About three megabytes, what the scatter plot on the
-    Score tab draws; cached for ten minutes."""
+    Score tab draws; kept in memory once read, and on the public site cached by nginx for ten minutes."""
     p = _run_dir(name) / "latent_map.npz"
     if not p.exists():
         raise HTTPException(404, "no latent map for this run")
