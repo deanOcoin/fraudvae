@@ -1,6 +1,10 @@
 """IBM AMLworld (kaggle ealtman2019/ibm-transactions-for-anti-money-laundering-aml), HI-Small.
 
-Account-to-account transfers between banks, 5M rows over 18 days in sept 2022.
+Account-to-account transfers between banks, 5M rows over 18 days in sept 2022. The kaggle
+zip holds six variants of the same generator (HI / LI = higher / lower illicit share, Small /
+Medium / Large); this module reads HI-Small and the five `amlworld_*` adapters next to it
+reuse `load_variant` for the others (v6: the sequence encoder wants every row it can get;
+each variant is its own source, since the generator shares no accounts between files).
 The label is "is laundering", which is a different animal from card fraud: the
 flagged rows are the legs of fan-in / fan-out / cycle patterns and mostly look
 ordinary on their own. It's in the corpus for diversity (another kind of bank,
@@ -25,7 +29,7 @@ import pyarrow.csv as pacsv
 
 from .. import entities, velocity
 from ..schema import cat_code, time_split_codes
-from .base import chunked_frames, release_memory, require, source_dir
+from .base import MissingData, _candidate_archives, chunked_frames, extract, release_memory, require, source_dir
 
 KEY = "amlworld"
 CHUNK = 1_000_000
@@ -71,11 +75,11 @@ def _lut(col: pa.ChunkedArray, mapping: dict, default, dtype):
     return lut[idx]
 
 
-def _scenarios(raw_dir: Path, keys: np.ndarray) -> np.ndarray:
-    """laundering pattern per row from HI-Small_Patterns.txt, 0 where none / file missing.
+def _scenarios(raw_dir: Path, keys: np.ndarray, key: str = KEY, prefix: str = "HI-Small") -> np.ndarray:
+    """laundering pattern per row from <prefix>_Patterns.txt, 0 where none / file missing.
     keys = the csv line minus the label, which is how the patterns file identifies rows"""
-    root = source_dir(raw_dir, KEY)
-    p = next(iter(root.rglob("HI-Small_Patterns.txt")), None)
+    root = source_dir(raw_dir, key)
+    p = next(iter(root.rglob(f"{prefix}_Patterns.txt")), None)
     out = np.zeros(len(keys), dtype=np.int8)
     if p is None:
         return out
@@ -99,8 +103,27 @@ def _scenarios(raw_dir: Path, keys: np.ndarray) -> np.ndarray:
     return hit.fillna(0).to_numpy().astype(np.int8)
 
 
+def _locate(raw_dir: Path, key: str, prefix: str) -> Path:
+    """the variant's csv: in its own raw folder, or pulled out of the shared amlworld zip
+    (data/raw/amlworld/) into its own folder, so one 8 GB download serves all six variants"""
+    try:
+        return require(raw_dir, key, f"{prefix}_Trans.csv|{prefix}_Trans.csv.gz")
+    except MissingData:
+        if key == KEY:
+            raise
+    for archive in _candidate_archives(raw_dir, KEY):
+        extract(archive, source_dir(raw_dir, key), members=(f"{prefix}_Trans.csv", f"{prefix}_Patterns.txt"))
+        if (source_dir(raw_dir, key) / f"{prefix}_Trans.csv").exists():
+            return require(raw_dir, key, f"{prefix}_Trans.csv")
+    raise MissingData(f"{key}: {prefix}_Trans.csv not found under {source_dir(raw_dir, key)} or inside the amlworld zip")
+
+
 def load(raw_dir: Path, max_rows: int | None = None) -> Iterator[pd.DataFrame]:
-    path = require(raw_dir, KEY, "HI-Small_Trans.csv|HI-Small_Trans.csv.gz")
+    yield from load_variant(raw_dir, KEY, "HI-Small", max_rows)
+
+
+def load_variant(raw_dir: Path, key: str, prefix: str, max_rows: int | None = None) -> Iterator[pd.DataFrame]:
+    path = _locate(raw_dir, key, prefix)
     tbl = _read(path)
     if max_rows:
         tbl = tbl.slice(0, max_rows)
@@ -141,7 +164,7 @@ def load(raw_dir: Path, max_rows: int | None = None) -> Iterator[pd.DataFrame]:
         flagged_lines = lines["line"].take(pa.array(flagged)).to_pylist()
         del lines
         keys = np.array([ln.rsplit(",", 1)[0] for ln in flagged_lines], dtype=object)
-        scen[flagged] = _scenarios(raw_dir, keys)
+        scen[flagged] = _scenarios(raw_dir, keys, key, prefix)
         del flagged_lines, keys
     del tbl
     release_memory()
@@ -156,4 +179,4 @@ def load(raw_dir: Path, max_rows: int | None = None) -> Iterator[pd.DataFrame]:
     del payer_codes, payee_codes
     cols.update(vel)
     cols.update(graph)
-    yield from chunked_frames(KEY, n, cols, chunk=CHUNK)
+    yield from chunked_frames(key, n, cols, chunk=CHUNK)

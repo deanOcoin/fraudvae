@@ -99,6 +99,41 @@
     "bytes": 4894783,
     "sha256": "720d44848a2b965d17cf4d69e597fb5dbdcef65b78249a29a2f644a9a260594d"
    }
+  ],
+  "amlworld_li_small": [
+   {
+    "path": "amlworld_li_small/LI-Small_Trans.csv",
+    "bytes": 650422357,
+    "sha256": "f7a9940339c78b5d1476071505b5867c0f5319640b9c4279d13f531bf965319d"
+   }
+  ],
+  "amlworld_hi_medium": [
+   {
+    "path": "amlworld_hi_medium/HI-Medium_Trans.csv",
+    "bytes": 3031783420,
+    "sha256": "3126afb8155e7c8815d62bc5370549a7b5ae6bf7dfe872b3cd7813e66a3d7ff5"
+   }
+  ],
+  "amlworld_li_medium": [
+   {
+    "path": "amlworld_li_medium/LI-Medium_Trans.csv",
+    "bytes": 2976436978,
+    "sha256": "0fc89584453c97472b1bfde7ca746e21d7167140c22a6c4875272b197a4a3910"
+   }
+  ],
+  "amlworld_hi_large": [
+   {
+    "path": "amlworld_hi_large/HI-Large_Trans.csv",
+    "bytes": 17052760651,
+    "sha256": "d13635e297c64673826217631fb88d635c4f506052e1bde833895eda2a65c3f2"
+   }
+  ],
+  "amlworld_li_large": [
+   {
+    "path": "amlworld_li_large/LI-Large_Trans.csv",
+    "bytes": 16742513790,
+    "sha256": "9240e875e7522400c0bd4db1049108b18bb43bbba0a96ff221b62cdef3f7a094"
+   }
   ]
  },
  "repos": {

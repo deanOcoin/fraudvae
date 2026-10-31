@@ -92,6 +92,10 @@ def get_datasets():
         lock = {"sources": {k: {"files": v} for k, v in exp.get("sources", {}).items()}}
     out = []
     for k in ORDER:
+        if public.PUBLIC and k not in stats["sources"]:
+            # the site describes the corpus the shipped generations were trained on; a source
+            # registered since (the v6 amlworld variants) is a workbench matter until it ships
+            continue
         s = SOURCES[k]
         entry = {"key": k, "name": s.name, "access": s.access, "url": s.url, "license": s.license, "citation": s.citation,
                  "license_url": s.license_url, "redistributable": s.redistributable,

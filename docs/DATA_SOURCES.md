@@ -311,3 +311,69 @@ Raw excerpt:
 ## Unified schema
 
 Schema version 5. See `docs/SCHEMA.md` for the full field list and the per-source mapping decisions.
+
+## amlworld_li_small: IBM AMLworld synthetic bank transfers (LI-Small)
+
+the LI-Small variant of AMLworld: the lower-illicit twin of HI-Small; same generator and columns as HI-Small, no accounts in common with it. v6: part of the transaction encoder's pretraining corpus; not in any shipped generation.
+
+- source: <https://www.kaggle.com/datasets/ealtman2019/ibm-transactions-for-anti-money-laundering-aml>
+- citation: Altman, Blanuša, von Niederhäusern, Egressy, Anghel, Atasu. Realistic Synthetic Financial Transactions for Anti-Money Laundering Models, NeurIPS 2023
+- license: CDLA-Sharing-1.0 (kaggle listing)
+- files: `LI-Small_Trans.csv|LI-Small_Trans.csv.gz` (inside the amlworld zip; extracted on build)
+- kaggle: `datasets/ealtman2019/ibm-transactions-for-anti-money-laundering-aml`
+- approx rows: 6,924,049; laundering share about 0.05%
+
+Not built yet; `python scripts/make_data_docs.py` fills in the build figures and the raw excerpt after `fraudvae build`.
+
+## amlworld_hi_medium: IBM AMLworld synthetic bank transfers (HI-Medium)
+
+the HI-Medium variant of AMLworld: six times HI-Small; same generator and columns as HI-Small, no accounts in common with it. v6: part of the transaction encoder's pretraining corpus; not in any shipped generation.
+
+- source: <https://www.kaggle.com/datasets/ealtman2019/ibm-transactions-for-anti-money-laundering-aml>
+- citation: Altman, Blanuša, von Niederhäusern, Egressy, Anghel, Atasu. Realistic Synthetic Financial Transactions for Anti-Money Laundering Models, NeurIPS 2023
+- license: CDLA-Sharing-1.0 (kaggle listing)
+- files: `HI-Medium_Trans.csv|HI-Medium_Trans.csv.gz` (inside the amlworld zip; extracted on build)
+- kaggle: `datasets/ealtman2019/ibm-transactions-for-anti-money-laundering-aml`
+- approx rows: 31,898,238; laundering share about 0.11%
+
+Not built yet; `python scripts/make_data_docs.py` fills in the build figures and the raw excerpt after `fraudvae build`.
+
+## amlworld_li_medium: IBM AMLworld synthetic bank transfers (LI-Medium)
+
+the LI-Medium variant of AMLworld: the lower-illicit medium file; same generator and columns as HI-Small, no accounts in common with it. v6: part of the transaction encoder's pretraining corpus; not in any shipped generation.
+
+- source: <https://www.kaggle.com/datasets/ealtman2019/ibm-transactions-for-anti-money-laundering-aml>
+- citation: Altman, Blanuša, von Niederhäusern, Egressy, Anghel, Atasu. Realistic Synthetic Financial Transactions for Anti-Money Laundering Models, NeurIPS 2023
+- license: CDLA-Sharing-1.0 (kaggle listing)
+- files: `LI-Medium_Trans.csv|LI-Medium_Trans.csv.gz` (inside the amlworld zip; extracted on build)
+- kaggle: `datasets/ealtman2019/ibm-transactions-for-anti-money-laundering-aml`
+- approx rows: 31,251,483; laundering share about 0.05%
+
+Not built yet; `python scripts/make_data_docs.py` fills in the build figures and the raw excerpt after `fraudvae build`.
+
+## amlworld_hi_large: IBM AMLworld synthetic bank transfers (HI-Large)
+
+the HI-Large variant of AMLworld: the largest higher-illicit file: 17 GB of csv; same generator and columns as HI-Small, no accounts in common with it. v6: part of the transaction encoder's pretraining corpus; not in any shipped generation.
+
+- source: <https://www.kaggle.com/datasets/ealtman2019/ibm-transactions-for-anti-money-laundering-aml>
+- citation: Altman, Blanuša, von Niederhäusern, Egressy, Anghel, Atasu. Realistic Synthetic Financial Transactions for Anti-Money Laundering Models, NeurIPS 2023
+- license: CDLA-Sharing-1.0 (kaggle listing)
+- files: `HI-Large_Trans.csv|HI-Large_Trans.csv.gz` (inside the amlworld zip; extracted on build)
+- kaggle: `datasets/ealtman2019/ibm-transactions-for-anti-money-laundering-aml`
+- approx rows: 179,702,229; laundering share about 0.12%
+
+Not built yet; `python scripts/make_data_docs.py` fills in the build figures and the raw excerpt after `fraudvae build`.
+
+## amlworld_li_large: IBM AMLworld synthetic bank transfers (LI-Large)
+
+the LI-Large variant of AMLworld: the largest file of all: 16.7 GB of csv; same generator and columns as HI-Small, no accounts in common with it. v6: part of the transaction encoder's pretraining corpus; not in any shipped generation.
+
+- source: <https://www.kaggle.com/datasets/ealtman2019/ibm-transactions-for-anti-money-laundering-aml>
+- citation: Altman, Blanuša, von Niederhäusern, Egressy, Anghel, Atasu. Realistic Synthetic Financial Transactions for Anti-Money Laundering Models, NeurIPS 2023
+- license: CDLA-Sharing-1.0 (kaggle listing)
+- files: `LI-Large_Trans.csv|LI-Large_Trans.csv.gz` (inside the amlworld zip; extracted on build)
+- kaggle: `datasets/ealtman2019/ibm-transactions-for-anti-money-laundering-aml`
+- approx rows: 176,066,557; laundering share about 0.05%
+
+Not built yet; `python scripts/make_data_docs.py` fills in the build figures and the raw excerpt after `fraudvae build`.
+

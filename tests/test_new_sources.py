@@ -134,7 +134,7 @@ def test_build_registers_the_new_sources(raw_baf, raw_fraudecom):
     from fraudvae.data.registry import ORDER, SOURCES
     from fraudvae.data.adapters import get_adapter
 
-    assert ORDER[-2:] == ["baf", "fraudecom"] and schema.SOURCES[-2:] == ["baf", "fraudecom"]
+    assert ORDER[9:11] == ["baf", "fraudecom"] and schema.SOURCES[9:11] == ["baf", "fraudecom"]   # v6 appended five more
     assert schema.SOURCE_INDEX["baf"] == 10 and schema.SOURCE_INDEX["fraudecom"] == 11
     for key in ("baf", "fraudecom"):
         assert SOURCES[key].access == "kaggle" and get_adapter(key).KEY == key

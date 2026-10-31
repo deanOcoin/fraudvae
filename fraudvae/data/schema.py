@@ -23,7 +23,9 @@ from dataclasses import dataclass
 
 SCHEMA_VERSION = 5
 
-SOURCES = ["fdh", "capone", "tabformer", "ulb", "paysim", "sparkov", "banksim", "ieee", "amlworld", "baf", "fraudecom"]
+SOURCES = ["fdh", "capone", "tabformer", "ulb", "paysim", "sparkov", "banksim", "ieee", "amlworld", "baf", "fraudecom",
+           # v6: the other five AMLworld variants (indices 12-16; appended, so every older index stands)
+           "amlworld_li_small", "amlworld_hi_medium", "amlworld_li_medium", "amlworld_hi_large", "amlworld_li_large"]
 # index 0 is reserved for "generic" (unknown bank/domain) at inference time
 SOURCE_INDEX = {s: i + 1 for i, s in enumerate(SOURCES)}
 GENERIC_SOURCE = 0

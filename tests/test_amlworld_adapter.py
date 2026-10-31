@@ -50,3 +50,35 @@ def test_amlworld_adapter(tmp_path):
     # velocity: second row of the 03208 payer sees one prior txn, 44 min earlier
     assert df.loc[2, "cust_txn_count_prior"] == 1 and np.isclose(df.loc[2, "secs_since_prev_txn"], 44 * 60)
     assert df.loc[2, "cust_new_merchant"] == 1 and df.loc[1, "cust_new_merchant"] == 2
+
+
+def test_amlworld_variant_reads_from_the_shared_zip(tmp_path):
+    """v6: a variant adapter finds its csv inside the zip under data/raw/amlworld/ and reads it
+    as its own source; a file already in its own folder is used as is"""
+    import shutil
+    import zipfile
+
+    from fraudvae.data import schema
+    from fraudvae.data.adapters import amlworld_hi_medium, get_adapter
+
+    raw = _write(tmp_path)
+    d = raw / "amlworld"
+    # the zip the kaggle download leaves: the medium files are the small ones renamed
+    with zipfile.ZipFile(d / "archive.zip", "w") as z:
+        z.write(d / "HI-Small_Trans.csv", "HI-Medium_Trans.csv")
+        z.write(d / "HI-Small_Patterns.txt", "HI-Medium_Patterns.txt")
+    df = pd.concat(list(amlworld_hi_medium.load(raw)), ignore_index=True)
+    assert len(df) == 7 and df["is_fraud"].sum() == 3 and (df["source"] == "amlworld_hi_medium").all()
+    assert df.loc[[3, 4], "fraud_scenario"].tolist() == [1, 1]
+    assert (raw / "amlworld_hi_medium" / "HI-Medium_Trans.csv").exists()
+    assert get_adapter("amlworld_li_large").KEY == "amlworld_li_large"
+    assert schema.SOURCE_INDEX["amlworld_li_small"] == 12 and schema.SOURCE_INDEX["amlworld_li_large"] == 16
+    # a variant placed in its own folder needs no zip
+    shutil.rmtree(raw / "amlworld_hi_medium")
+    (d / "archive.zip").unlink()
+    (raw / "amlworld_li_small").mkdir()
+    shutil.copy(d / "HI-Small_Trans.csv", raw / "amlworld_li_small" / "LI-Small_Trans.csv")
+    from fraudvae.data.adapters import amlworld_li_small
+
+    df2 = pd.concat(list(amlworld_li_small.load(raw)), ignore_index=True)
+    assert len(df2) == 7 and (df2["fraud_scenario"] == 0).all()     # no patterns file: scenario unknown

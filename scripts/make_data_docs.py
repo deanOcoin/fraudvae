@@ -34,6 +34,11 @@ EXCERPT = {
     "amlworld": ("HI-Small_Trans.csv", "lines"),
     "baf": ("Base.csv", "lines"),
     "fraudecom": ("Fraud_Data.csv", "lines"),
+    "amlworld_li_small": ("LI-Small_Trans.csv", "lines"),
+    "amlworld_hi_medium": ("HI-Medium_Trans.csv", "lines"),
+    "amlworld_li_medium": ("LI-Medium_Trans.csv", "lines"),
+    "amlworld_hi_large": ("HI-Large_Trans.csv", "lines"),
+    "amlworld_li_large": ("LI-Large_Trans.csv", "lines"),
 }
 
 

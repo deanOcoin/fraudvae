@@ -18,7 +18,8 @@ or re-cut edition is caught before an hour of building.
 | banksim | https://www.kaggle.com/datasets/ealaxi/banksim1 | the zip | `data/raw/banksim/` |
 | ieee | https://www.kaggle.com/competitions/ieee-fraud-detection/data | join the competition, then the zip | `data/raw/ieee/` |
 | tabformer (optional) | https://www.kaggle.com/datasets/ealtman2019/credit-card-transactions | the zip, for the users/cards tables | `data/raw/tabformer/` |
-| amlworld (optional) | https://www.kaggle.com/datasets/ealtman2019/ibm-transactions-for-anti-money-laundering-aml | the zip (8 GB, six variants; only `HI-Small_Trans.csv` + `HI-Small_Patterns.txt` get extracted) | `data/raw/amlworld/` |
+| amlworld (optional) | https://www.kaggle.com/datasets/ealtman2019/ibm-transactions-for-anti-money-laundering-aml | the zip (8 GB, six variants; `HI-Small_Trans.csv` + `HI-Small_Patterns.txt` get extracted) | `data/raw/amlworld/` |
+| amlworld_* (v6, optional) | the same zip | the other five variants (`LI-Small`, `HI-Medium`, `LI-Medium`, `HI-Large`, `LI-Large`; 41 GB unpacked) are pulled out of the zip in `data/raw/amlworld/` on build | nothing to place |
 | baf (v5) | https://www.kaggle.com/datasets/sgpjesus/bank-account-fraud-dataset-neurips-2022 | the zip (only `Base.csv` is used) | `data/raw/baf/` |
 | fraudecom (v5) | https://www.kaggle.com/datasets/vbinh002/fraud-ecommerce | the zip (`Fraud_Data.csv` + `IpAddress_to_Country.csv`) | `data/raw/fraudecom/` |
 
