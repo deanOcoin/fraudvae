@@ -197,6 +197,79 @@ unsupervised history summary meets the fraud labels, kept separate from the
 booster so the receipt can say "the history says". It is calibrated and
 evaluated like the booster (per bank and generic).
 
+## v6: the transaction encoder
+
+`fraudvae/model/txfm.py` (Tokeniser, TransactionEncoder, TxfmScorer),
+`fraudvae/pretrain.py`, `fraudvae/configs/txfm_small.yaml`, `txfm_base.yaml`, `v6_full.yaml`
+
+The v5 history encoder is 0.1M parameters trained as a side effect of the ELBO on
+legit rows, and the blender gives the novelty score it feeds almost no weight. v6
+adds the thing every published payments foundation model has converged on
+(Revolut's PRAGMA, Visa's TransactionGPT, Sardine's issuer model): a
+self-supervised **transaction-sequence encoder**, pretrained on every row of every
+source with no label in sight, whose output is read by the booster.
+
+**Tokens.** A row becomes a bag of (field, value) tokens. Each numeric field owns
+`n_bins` quantile buckets (edges fitted on a sample of train rows, standardised
+units) plus an "unobserved" id; each categorical its own value index (0 =
+unobserved); then the source and the time since the customer's previous event in
+log buckets (0 = no previous event). Every field owns a slice of one vocabulary
+(~3-4k ids for the v5 schema), so one embedding table and one output layer serve
+all of them, and a prediction is always a softmax *restricted to the field's own
+slice*. A field embedding is added so a masked token still knows which field it
+is.
+
+**Model.** An event encoder (a small bidirectional transformer over a row's
+tokens with an [EVT] read-out; `event_layers: 0` swaps in a mean-pool + MLP)
+turns each event into one vector; a causal history encoder reads a customer's
+events oldest to newest with a learned position and a log-time term, after a
+learned BOS, so `states[:, t]` has seen events strictly before t and
+`states[:, t + 1]` has seen event t. Two heads train it:
+
+- *next-event*: from `states[:, t]`, the token of every observed field of event t
+  (cross-entropy within the field's slice). Its per-field negative log likelihood
+  is the **surprise** - how unexpected this amount / hour / merchant category is
+  for this customer, given their past alone.
+- *masked-field*: PRAGMA's three masking levels (15% of tokens, 10% of whole
+  events, 10% of whole fields across the window; source and dt are never masked)
+  and the hidden tokens are predicted from their token output plus the state
+  after the event.
+
+**Pretraining** (`fraudvae pretrain`, or `torchrun --nproc_per_node N -m
+fraudvae.pretrain`) is step-based: a sample is a window of `window` consecutive
+events of one customer ending on a train-split row, and every position in it is
+a target. The rows a process needs are read from the prepared memmaps once,
+tokenised to int16 ids and kept on the device; a window is then an on-device
+gather through the sequence index, which is what removes the cpu gather that
+made the v5 history model data-bound. Under torchrun each process takes a
+disjoint share of the customer blocks (so its windows never leave its own rows)
+and gradients are averaged once per step. Validation is the next-event nll of
+the last event of windows ending on val rows; the best checkpoint is `txfm.pt`
+(weights + tokeniser + prepared meta, read with the weights-only loader).
+
+**Where it reaches the score.** `boost.txfm_features: true` with `txfm.run:
+<pretraining run>` makes the post stage copy `txfm.pt` into the run and append
+one block to the booster's (and each specialist's) features, after the v5
+`hist_*` block: the state after the current event (`txfm_h*`, d_model columns),
+the per-field surprise (`txfm_s_<field>`, NaN where the field is unobserved) and
+the mean surprise (`txfm_surprise`). The block is computed with the bank blanked
+for the generic slice like everything else; a caller without the encoder sends
+NaN, which the trees treat as "no summary". `score_split`, calibration,
+evaluation and the server compute the block from the same sequence index /
+entity store at the encoder's own window (`v6_full` uses 128 against the VAE's
+32), so a `v6_full` run is scored the same way everywhere. The receipt carries
+one `transaction_encoder` line in the booster's pushes and a `sequence_model`
+block with the mean surprise and the most surprising fields - the explanation
+Sardine's write-up says embeddings lack.
+
+Why features into the trees and not a fine-tuned head first: it is the lowest-risk
+of the three routes the literature reports (Sardine: +68% AUC-PR from exactly
+this), it keeps the booster's SHAP receipt, and the v5 result that the history
+read-out was "a wash" as booster input was for a 0.1M-parameter encoder trained
+on another objective; whether a 100M-parameter next-event model changes that is
+the first v6 experiment (`docs/TRAINING_NOTES.md`, v6). A fine-tuned head as a
+blend signal and a TabICLv2 in-context signal per bank are the next two.
+
 ## v5: device telemetry - the two new sources and the field heads
 
 `fraudvae/data/adapters/baf.py`, `fraudvae/data/adapters/fraudecom.py`,

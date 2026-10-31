@@ -24,6 +24,7 @@ from .model.booster import Booster, Specialists
 from .graph.scorer import GraphScorer
 from .model.heads import load_heads
 from .model.seqhead import load_seqhead
+from .model.txfm import TxfmScorer
 from .model.dataset import PreparedSet
 from .model.scoring import Scorer, auprc, auroc, extra_signals, recall_at_fpr, score_split
 from .model.vae import load_checkpoint
@@ -85,6 +86,7 @@ def evaluate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, l
     heads = load_heads(run_dir, device=device)
     graph = GraphScorer.load(run_dir, device=device)
     specialists = Specialists.load(run_dir)
+    txfm = TxfmScorer.load(run_dir, device=device)   # v6: the transaction encoder, None for a run without one
     data = PreparedSet(prepared, splits=("test",))
     te = data["test"]
     names = data.source_names
@@ -93,7 +95,7 @@ def evaluate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, l
     score_type = cal["score_type"]
     t0 = time.time()
     r = score_split(model, te, batch_size=batch_size, n_samples=n_samples, device=device, keep_features=False,
-                    keep_mu=False, scorer=scorer, booster=booster,
+                    keep_mu=False, scorer=scorer, booster=booster, txfm=txfm,
                     progress=lambda n: log(f"  evaluate{tag}: scored {n:,}/{len(te):,}"), seq=data.seq, split_name="test",
                     seqhead=seqhead, heads=heads, graph=graph, specialists=specialists, label_delay_days=label_delay_days)
     y, src = te.y[:], te.src[:]
@@ -137,7 +139,7 @@ def evaluate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, l
     rng = np.random.default_rng(1)
     gen_idx = _subsample(src, y, rng, GENERIC_ROWS, with_fraud=True)
     rg = score_split(model, te, batch_size=batch_size, n_samples=n_samples, device=device, idx=gen_idx, keep_features=False,
-                     keep_mu=False, scorer=scorer, booster=booster, src_override=0, seq=data.seq, split_name="test",
+                     keep_mu=False, scorer=scorer, booster=booster, txfm=txfm, src_override=0, seq=data.seq, split_name="test",
                      seqhead=seqhead, heads=heads, graph=graph, specialists=specialists, label_delay_days=label_delay_days)
     gy = y[gen_idx]
     gen = {"n": int(len(gen_idx)), "fraud": int(gy.sum()),

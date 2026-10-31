@@ -247,7 +247,7 @@ def label_delay_wide(wide, wide_names, label_delay_days) -> "np.ndarray | None":
 def score_split(model, split, batch_size=8192, n_samples=8, device="cpu", idx=None, keep_features=True,
                 progress=None, scorer: Scorer | None = None, src_override=None, booster=None, keep_mu=True,
                 seq=None, split_name=None, keep_h=False, seqhead=None, heads=None, graph=None, specialists=None,
-                label_delay_days=None):
+                label_delay_days=None, txfm=None):
     """score every row of a PreparedSplit (or the given idx). results come back in the order
     of idx (or row order). src_override=0 scores everything in the 'generic' context. with a
     booster the per-row booster logit comes back as 'booster', and if the scorer has a blender,
@@ -255,7 +255,9 @@ def score_split(model, split, batch_size=8192, n_samples=8, device="cpu", idx=No
     (rows are then visited in customer order and the results re-sorted into idx order).
     heads: {name: FieldHead}; each adds its logit under its name, NaN where its block is absent.
     graph: a GraphScorer; adds 'graph' from the row's entity codes (split.ent), snapshot by split_name.
-    specialists: the per-source boosters; adds 'local', NaN for rows of a source without one."""
+    specialists: the per-source boosters; adds 'local', NaN for rows of a source without one.
+    txfm: a TxfmScorer (v6); its feature block is computed per row from the same sequence index
+    (at its own window) and handed to the booster and the specialists that were trained with it."""
     model.eval()
     chunks = {"raw": [], "kl": []}
     if keep_mu:
@@ -283,6 +285,8 @@ def score_split(model, split, batch_size=8192, n_samples=8, device="cpu", idx=No
         chunks["graph"] = []
     if specialists is not None:
         chunks["local"] = []
+    if txfm is not None:
+        chunks["txfm_surprise"] = []
     n_done = 0
     seen = []
     for b, (num, mask, cat, src), hist in batches(split, batch_size, idx=idx, device=device, seq=seq,
@@ -292,6 +296,13 @@ def score_split(model, split, batch_size=8192, n_samples=8, device="cpu", idx=No
             src = torch.full_like(src, int(src_override))
         r = score_batch(model, num, mask, cat, src, n_samples, hist=hist)
         s_np = src.cpu().numpy()
+        if txfm is not None:
+            if seq is not None and split_name and txfm.window != window:
+                hist_t = seq.history(split_name, np.asarray(b), txfm.window, device)
+            else:
+                hist_t = hist
+            r["txfm"] = txfm.features(num, mask, cat, src, hist_t)
+            r["txfm_surprise"] = r["txfm"][:, -1]
         if seqhead is not None and window:
             r["seq"] = seqhead.logit(model, num, mask, cat, src, torch.from_numpy(r["h"]).to(num.device))
         for name, head in heads.items():
@@ -304,12 +315,13 @@ def score_split(model, split, batch_size=8192, n_samples=8, device="cpu", idx=No
             wide = split.wide(b) if (booster.wide_names and getattr(split, "n_wide", 0)) else None
             wide = label_delay_wide(wide, booster.wide_names, label_delay_days)
             r["booster"] = booster.logit(num.cpu().numpy(), mask.cpu().numpy(), cat.cpu().numpy(), s_np, wide=wide,
-                                         hist=r.get("h") if booster.hist_dim else None)
+                                         hist=r.get("h") if booster.hist_dim else None,
+                                         txfm=r.get("txfm") if booster.txfm_dim else None)
         if specialists is not None:
             wide_l = split.wide(b) if getattr(split, "n_wide", 0) else None
             wide_l = label_delay_wide(wide_l, getattr(split, "wide_names", []), label_delay_days)
             r["local"] = specialists.logit(num.cpu().numpy(), mask.cpu().numpy(), cat.cpu().numpy(), s_np, wide=wide_l,
-                                           hist=r.get("h"))
+                                           hist=r.get("h"), txfm=r.get("txfm"))
         if scorer is not None and scorer.blend:
             r["blend"] = scorer.blend_prob(r, s_np, r.get("booster"))
         for k in chunks:

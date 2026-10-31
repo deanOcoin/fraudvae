@@ -32,6 +32,7 @@ from ..model.heads import load_heads
 from ..behaviour.scorer import BehaviourScorer, merge_enrolment
 from ..text.scorer import TextScorer
 from ..model.seqhead import load_seqhead
+from ..model.txfm import TxfmScorer
 from ..model.vae import load_checkpoint
 from ..paths import APP_HOME, RUNS_DIR
 from .entity_store import EntityStore
@@ -136,10 +137,13 @@ class ActiveModel:
             self.specialists = Specialists.load(self.run_dir) if self.booster is not None else None
         except BoosterUnavailable:
             self.specialists = None
+        # v6: the transaction encoder whose block the booster reads; None for a run without one
+        self.txfm = TxfmScorer.load(self.run_dir, device=self.device) if (self.booster is not None and self.booster.txfm_dim) else None
+        self.txfm_labels = self.txfm.field_labels(self.categorical) if self.txfm is not None else []
         # v5: the customer-history side. window 0 = a model without a history encoder
         self.window = history_window(self.model)
         self.seqhead = load_seqhead(self.run_dir, device=self.device) if self.window else None
-        self.store = EntityStore(APP_HOME / "entity_store.sqlite", self.name) if self.window else None
+        self.store = EntityStore(APP_HOME / "entity_store.sqlite", self.name) if (self.window or self.txfm is not None) else None
         # v5: the field heads (device ...), each a blend signal with a receipt block of its own
         self.heads = load_heads(self.run_dir, device=self.device)
         self.head_info = {}
@@ -295,12 +299,12 @@ class ActiveModel:
                 continue
         return row
 
-    def history_tensors(self, rows: list, source: str | None, cur_ts: float):
+    def history_tensors(self, rows: list, source: str | None, cur_ts: float, window: int | None = None):
         """v5: past transactions -> the window tensors the history encoder wants (oldest first,
         padded at the front). rows: [(ts, num, mask, cat)] in model space, as the entity store
         hands them out, or dicts {"features": {...}, "ts": epoch_seconds | "secs_before": s}
-        in raw units, as the API accepts them."""
-        L = self.window
+        in raw units, as the API accepts them. window: the v6 encoder asks for its own."""
+        L = int(window or self.window)
         D, C = len(self.numeric), len(self.categorical)
         h_num = np.zeros((1, L, D), dtype=np.float32)
         h_mask = np.zeros((1, L, D), dtype=np.float32)
@@ -361,12 +365,24 @@ class ActiveModel:
                 if past:
                     hist, n_hist = self.history_tensors(past, source, cur_ts)
                 hist_from = "entity store"
+        # v6: the transaction encoder reads the customer's past at its own window
+        txfm_np, n_hist2 = None, 0
+        if self.txfm is not None:
+            hist2 = None
+            if history:
+                hist2, n_hist2 = self.history_tensors(list(history), source, cur_ts, window=self.txfm.window - 1)
+            elif customer_id is not None and self.store is not None:
+                past2 = self.store.last(source or "", customer_id, cur_ts, self.txfm.window - 1)
+                if past2:
+                    hist2, n_hist2 = self.history_tensors(past2, source, cur_ts, window=self.txfm.window - 1)
         with self._infer_lock:
             r = score_batch(self.model, num, mask, cat, src, n_samples=self.n_samples, hist=hist, generator=self._generator(seed))
             if self.seqhead is not None:
                 r["seq"] = self.seqhead.logit(self.model, num, mask, cat, src, torch.from_numpy(r["h"]).to(self.device))
             for name, head in self.heads.items():
                 r[name] = head.logit(num, mask, cat, src)
+            if self.txfm is not None:
+                txfm_np = self.txfm.features(num, mask, cat, src, hist2)
         ent = self._entity_row(entities)
         if self.graph is not None and src_idx:
             r["graph"] = self.graph.logit_rows(np.array([src_idx]), ent, which="test")
@@ -417,21 +433,21 @@ class ActiveModel:
                              "note": f"the one-week-delay fraud history (wide *_fast columns) counts only for labels known within "
                                      f"{FAST_DELAY_DAYS:g} days; the schema's delayed block assumes {SLOW_DELAY_DAYS:g}"}
             hist_np = r["h"] if (self.booster.hist_dim and r.get("h") is not None) else None
-            b_logit = self.booster.logit(num_np, mask_np, cat_np, np.array([src_idx]), threads=1, wide=wide_np, hist=hist_np)
+            b_logit = self.booster.logit(num_np, mask_np, cat_np, np.array([src_idx]), threads=1, wide=wide_np, hist=hist_np, txfm=txfm_np)
             p_sup = float(1.0 / (1.0 + math.exp(-max(min(float(b_logit[0]), 30), -30))))
             sup = {"prob": p_sup, "logit": float(b_logit[0])}
             bcal, bkind = self._calibration_for(ctx, name="booster")
             sup["calibration"] = bkind
             if bcal:
                 sup.update(self._operating(bcal, p_sup, fpr_target, bkind, "booster"))
-            contrib = self.booster.contributions(num_np, mask_np, cat_np, np.array([src_idx]), wide=wide_np, hist=hist_np)[0]
+            contrib = self.booster.contributions(num_np, mask_np, cat_np, np.array([src_idx]), wide=wide_np, hist=hist_np, txfm=txfm_np)[0]
             sup["bias"] = float(contrib[-1])
             sup["pushes"] = self._booster_pushes(contrib[:-1], num, mask, cat, features, wide=wide_np)
             out["supervised"] = sup
             # v5: this bank's own specialist, when it has one
             if self.specialists is not None:
                 r["local"] = self.specialists.logit(num_np, mask_np, cat_np, np.array([src_idx]), wide=wide_np, threads=1,
-                                                    hist=r.get("h"))
+                                                    hist=r.get("h"), txfm=txfm_np)
                 lb = {"present": bool(np.isfinite(r["local"][0])), "label": "Bank specialist", "fields": []}
                 if lb["present"]:
                     lg = float(r["local"][0])
@@ -441,6 +457,14 @@ class ActiveModel:
                     if lcal:
                         lb.update(self._operating(lcal, lb["prob"], fpr_target, lkind, "local"))
                 out["local"] = lb
+
+        # -- v6: the transaction encoder's view of this row for this customer --------------
+        if self.txfm is not None and txfm_np is not None:
+            sm = self.txfm.explain(txfm_np[0], self.txfm_labels)
+            sm.update({"n_history": int(n_hist2), "window": int(self.txfm.window), "d_model": int(self.txfm.d_model),
+                       "note": "next-event negative log likelihood per observed field, from the customer's past alone; "
+                               "the block (state + surprises) is read by the booster, not blended on its own"})
+            out["sequence_model"] = sm
 
         # -- v5 sequence: the history read-out through the sequence head -------------------
         if self.window:
@@ -608,6 +632,13 @@ class ActiveModel:
             block = contrib[start : start + hd]
             items.append({"feature": "history_readout", "label": f"customer history summary ({hd} dims, {int((block != 0).sum())} used)",
                           "kind": "history", "contribution": float(block.sum()), "observed": None, "is_observed": True})
+        # v6: the transaction encoder's block, one line as well
+        td = self.booster.txfm_dim if self.booster is not None else 0
+        if td:
+            start = D + C + 1 + len(self.booster.wide_names) + hd
+            block = contrib[start : start + td]
+            items.append({"feature": "transaction_encoder", "label": f"customer sequence model ({td} columns, {int((block != 0).sum())} used)",
+                          "kind": "sequence_model", "contribution": float(block.sum()), "observed": None, "is_observed": True})
         items.sort(key=lambda d: -abs(d["contribution"]))
         total = float(np.abs(contrib).sum()) or 1.0
         for it in items:
@@ -676,6 +707,7 @@ class ActiveModel:
         headp = {name: np.full(n, np.nan, dtype=np.float32) for name in self.heads}
         graphp = np.full(n, np.nan, dtype=np.float32)
         localp = np.full(n, np.nan, dtype=np.float32)
+        surprise = np.full(n, np.nan, dtype=np.float32)
         ent = None
         if self.graph is not None and any(k in df for k in ENTITY_KINDS):
             ent = np.full((n, len(ENTITY_KINDS)), -1, dtype=np.int64)
@@ -705,13 +737,16 @@ class ActiveModel:
                 if self.scorer:
                     norm[sl] = self.scorer.norm(r, src[sl])
                     r["norm"] = norm[sl]
+                txfm_np = self.txfm.features(num_t, mask_t, cat_t, src_t, None) if self.txfm is not None else None
+                if txfm_np is not None:
+                    surprise[sl] = txfm_np[:, -1]
                 if self.booster is not None:
                     b = self.booster.logit(num[sl], mask[sl], cat[sl], src[sl], wide=(wide[sl] if wide is not None else None),
-                                           hist=(r.get("h") if self.booster.hist_dim else None))
+                                           hist=(r.get("h") if self.booster.hist_dim else None), txfm=txfm_np)
                     boost[sl] = 1.0 / (1.0 + np.exp(-np.clip(b, -30, 30)))
                     if self.specialists is not None:
                         r["local"] = self.specialists.logit(num[sl], mask[sl], cat[sl], src[sl], wide=(wide[sl] if wide is not None else None),
-                                                            hist=r.get("h"))
+                                                            hist=r.get("h"), txfm=txfm_np)
                         localp[sl] = 1.0 / (1.0 + np.exp(-np.clip(r["local"], -30, 30)))
                 if self.has_blend:
                     blend[sl] = self.scorer.blend_prob(r, src[sl], b)
@@ -719,6 +754,8 @@ class ActiveModel:
         out = pd.DataFrame({"p_fraud": blend, "booster_prob": boost, "novelty_score": nov, "novelty_raw": raw})
         if self.seqhead is not None:
             out["sequence_prob"] = seqp
+        if self.txfm is not None:
+            out["sequence_surprise"] = surprise
         for name in self.heads:
             out[f"{name}_prob"] = headp[name]
         if ent is not None:

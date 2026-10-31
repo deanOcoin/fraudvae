@@ -625,3 +625,31 @@ one-week block blanked; the last two columns are the v4 release):
   epoch 7 once h's numbers were in: the blender gives the VAE score a weight of about zero,
   so a better novelty model would have changed the receipt and nothing the app flags on.
   The config is kept for whoever wants the novelty score itself to be better.
+
+## v6: the transaction encoder (in progress)
+
+The plan and the reading behind it are in the owner's notes; the shape is in
+`docs/ARCHITECTURE.md` (v6). Code landed first, numbers follow as the runs come in.
+
+What exists: `fraudvae pretrain` (`fraudvae/pretrain.py`, `model/txfm.py`), the
+`txfm_small` / `txfm_base` / `v6_full` configs, `boost.txfm_features` and the
+`txfm_*` booster block, the server's `sequence_model` receipt block, and tests
+that pretrain a tiny encoder on the synthetic set and fit a booster on its block.
+
+The experiment that decides v6, on the same test rows as `v5-h200-h`:
+
+1. `txfm_base` pretrained on the prepared set (the eleven sources, then the five
+   other AMLworld variants once built); the number to watch in `train.log` is the
+   validation next-event nll per observed token and, per field, which ones the
+   model finds hard (`metrics.jsonl`, `val_fields`).
+2. `v6_full` = `gpu_full` + the encoder's block: booster-only on the `v5-h200-e`
+   VAE (`fraudvae post v5-h200-e --config v6_full`), so the comparison with run h
+   isolates the block. The rows to move: fdh at one-month labels (0.679), capone
+   (0.841), baf (0.893), fraudecom (0.641).
+3. The ablation that is already a negative result at v5 size - `boost.history_features`
+   - stays off; if the `txfm_*` block is also a wash at 100M parameters, the next
+   step is the fine-tuned head (the encoder meets the labels), not a bigger encoder.
+
+Smoke numbers from the laptop are recorded here as they are measured; nothing
+above is a result yet.
+

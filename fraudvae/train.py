@@ -327,17 +327,23 @@ def post_train(run_dir: Path, cfg: Config, prepared="default", device=None, log=
     t_start = t_start or time.time()
     from .model.vae import load_checkpoint
     model, _ = load_checkpoint(run_dir / "model.pt", device=device)
+    # v6: the pretrained transaction encoder, copied into the run so that calibration, evaluation
+    # and the server find it next to the booster that reads its features
+    txfm = None
+    if cfg.boost.enabled and cfg.boost.txfm_features:
+        txfm = _load_txfm(run_dir, cfg.txfm.run, device, log)
     if cfg.boost.enabled:
         log("fitting the supervised booster on the labelled train split ..."
-            + (" (with the history encoder's read-out as features)" if cfg.boost.history_features and history_window(model) else ""))
+            + (" (with the history encoder's read-out as features)" if cfg.boost.history_features and history_window(model) else "")
+            + (f" (with the transaction encoder's {txfm.dim}-column block as features)" if txfm is not None else ""))
         write_status(run_dir, state="boosting")
         from .model.booster import train_booster, train_specialists
-        train_booster(run_dir, prepared, cfg.boost, log=log, seed=cfg.train.seed, model=model, device=device)
+        train_booster(run_dir, prepared, cfg.boost, log=log, seed=cfg.train.seed, model=model, device=device, txfm=txfm)
         if cfg.boost.specialists:
             log("fitting the per-source specialist boosters ...")
             write_status(run_dir, state="specialists")
             train_specialists(run_dir, prepared, cfg.boost, log=log, seed=cfg.train.seed, min_fraud=cfg.boost.specialist_min_fraud,
-                              model=model, device=device)
+                              model=model, device=device, txfm=txfm)
     # v5: the sequence head, on the frozen history encoder's read-out
     if history_window(model):
         log("fitting the sequence head on the history read-out ...")
@@ -394,6 +400,33 @@ def post_train(run_dir: Path, cfg: Config, prepared="default", device=None, log=
                      label_delay_days=ENTITY_LABEL_DELAY_DAYS)
     kw = {"best": best} if best is not None else {}
     write_status(run_dir, state="finished", elapsed=time.time() - t_start, **kw)
+
+
+def _load_txfm(run_dir: Path, run, device, log):
+    """v6: resolve txfm.run (a run name under runs/, a directory or a txfm.pt path), copy the
+    checkpoint into this run as txfm.pt (unless it is already there) and load it"""
+    import shutil
+
+    from .model.txfm import TxfmScorer
+
+    dest = Path(run_dir) / "txfm.pt"
+    if run:
+        p = Path(run).expanduser()
+        if not p.exists():
+            p = RUNS_DIR / run
+        if p.is_dir():
+            p = p / "txfm.pt"
+        if not p.exists():
+            raise SystemExit(f"boost.txfm_features is on but txfm.run {run!r} has no txfm.pt (run `fraudvae pretrain` first)")
+        if p.resolve() != dest.resolve():
+            shutil.copy2(p, dest)
+    elif not dest.exists():
+        raise SystemExit("boost.txfm_features is on but txfm.run is not set and the run has no txfm.pt")
+    scorer = TxfmScorer.load(dest, device=device)
+    extra = scorer.info.get("extra", {})
+    log(f"transaction encoder: {dest} ({scorer.d_model} d, window {scorer.window}, {scorer.dim} feature columns, "
+        f"val next-event nll {extra.get('best_val_next_nll', float('nan')):.4f} at step {extra.get('step', '?')})")
+    return scorer
 
 
 def post_main(argv=None):

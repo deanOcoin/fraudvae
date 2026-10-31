@@ -1,0 +1,40 @@
+# v6: gpu_full (the v5 VAE, booster, specialists, heads, graph, text, behaviour) plus the pretrained
+# transaction encoder's state and per-field surprise as booster input. Two commands:
+#   torchrun --nproc_per_node 8 -m fraudvae.pretrain --config txfm_base --prepared v6 --name txfm-base-a
+#   fraudvae train --config v6_full --prepared v6 --name v6-a          (set txfm.run below first)
+# or, on an existing v5 checkpoint, only the supervised side: fraudvae post RUN --config v6_full
+name: v6_full
+device: cuda
+model:
+  latent_dim: 24
+  hidden: [768, 768, 384]
+  cat_embed_dim: 10
+  source_embed_dim: 8
+  dropout: 0.05
+  history:
+    enabled: true
+    window: 32
+    d_model: 128
+    layers: 2
+    heads: 4
+train:
+  epochs: 30
+  batch_size: 8192
+  lr: 0.0015
+  beta_warmup_epochs: 5
+  patience: 8
+  select_by: elbo
+  score_samples: 16
+  amp: false
+boost:
+  max_legit_per_source: 200000
+  val_legit_per_source: 100000
+  legit_weight_cap: 3.0
+  learning_rate: 0.03
+  max_rounds: 3000
+  early_stopping: 200
+  txfm_features: true
+txfm:
+  run: txfm-base-a      # the pretraining run (runs/<run>/txfm.pt) or a path to a txfm.pt
+  window: 128
+notes: the v6 base configuration; see docs/TRAINING_NOTES.md (v6) for what each piece bought

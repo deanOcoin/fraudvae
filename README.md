@@ -125,9 +125,10 @@ still starts, novelty-only, and the sidebar tells you why.
 | amlworld | IBM AMLworld synthetic inter-bank transfers (HI-Small), label = laundering | 5.08M | 0.10% | kaggle |
 | baf | Bank Account Fraud (Feedzai) account applications with device telemetry (v5) | 1.0M | 1.10% | kaggle |
 | fraudecom | e-commerce first purchases with shared device ids (v5) | 151k | 9.4% | kaggle |
+| amlworld_li_small, _hi_medium, _li_medium, _hi_large, _li_large | the other five AMLworld variants (v6, pretraining corpus; not in a shipped generation) | 6.9M / 31.9M / 31.3M / 180M / 176M | 0.05-0.12% | the same kaggle zip |
 
 No dataset is redistributed here: each keeps its own licence (`docs/DATA_SOURCES.md`
-has the links). All eleven are public. The GitHub-hosted ones need nothing; the Kaggle
+has the links). All sixteen are public (the five v6 variants come out of the zip the ninth already needs). The GitHub-hosted ones need nothing; the Kaggle
 ones need a free Kaggle account (IEEE-CIS additionally means joining its competition
 and accepting the rules, and is non-commercial), and Kaggle refuses some VPN exit
 addresses. `fraudvae fetch` downloads what it can, says what to fetch by hand and where
@@ -180,6 +181,20 @@ trained for first transactions and callers that send none. A sequence head
 same read-out into a fourth supervised signal. The server keeps a per-customer
 store of what it has scored, so the API needs only a `customer_id` (or an
 explicit `history` list) to score with context.
+
+**Transaction encoder (v6, in progress).** A self-supervised
+transaction-sequence model in the shape of the published payments foundation
+models: each row becomes (field, value) tokens with learned quantile buckets, an
+event encoder turns a row into a vector, a causal history encoder reads the
+customer's last 64-128 events, and two label-free objectives train it - predict
+every field of the next event from the past (its per-field negative log
+likelihood is the *surprise*), and reconstruct masked tokens, events and fields.
+`fraudvae pretrain` runs it on every row of the corpus, on one process or under
+`torchrun` across a node, keeping each process's rows on its GPU as token ids.
+The booster can read its block (state, per-field surprise, mean surprise) as
+features; the receipt shows the most surprising fields for this customer.
+`docs/ARCHITECTURE.md` (v6) has the design and `docs/TRAINING_NOTES.md` the
+experiment plan; no v6 generation ships yet.
 
 **Supervised (booster).** A LightGBM classifier on the same fields (NaN where
 unobserved) plus the source token and the source's wide block, trained on the
@@ -367,17 +382,19 @@ fraudvae/
                expected.json (the raw files' checksums), corpus_stats.json
   models.py    pretrained bundles: pack / pull against pretrained.json (github releases)
   model/       vae.py (model + history encoder), scoring.py, booster.py,
-               seqhead.py (sequence head), heads.py (device head), dataset.py (+ the sequence index)
+               seqhead.py (sequence head), heads.py (device head), dataset.py (+ the sequence index),
+               txfm.py (v6 transaction encoder: tokeniser, model, scorer)
   graph/       entity-graph snapshots, GraphSAGE, per-source training, scorer, public benchmarks
   text/        hashed-bag text heads (url / free text / profile), training, scorer
   behaviour/   mouse / keystroke / touch / motion features, verifiers, training, scorer
-  train.py  calibrate.py  evaluate.py  config.py
+  train.py  pretrain.py (v6)  calibrate.py  evaluate.py  config.py
   remote/      keys, ssh (paramiko), provision (incl. raw-data push + box-side pipeline),
                jobs, advisor, relay (a git repo as the laptop-off control channel)
   server/      fastapi app + api modules, inference (the loaded generations + fusion), timeline,
                public (the demonstration-site mode), entity_store, payloads
   web/         the ui: index.html, css/, js/, explain.html, story.html + story_plain.html, vendored libs
-  configs/     base, cpu_small, gpu_full, gpu_hist, gpu_long, smoke (yaml; `train --config NAME`)
+  configs/     base, cpu_small, gpu_full, gpu_hist, gpu_long, smoke (yaml; `train --config NAME`);
+               v6: txfm_small, txfm_base (`pretrain --config NAME`), v6_full
 data/examples/ labelled example rows for the six sources whose licences allow it
 deploy/        install.sh, update.sh, the systemd unit, nginx, env.example, relay_bootstrap.sh
 scripts/       kaggle_manual_download.md, macos_openmp.sh, make_data_docs.py, story_pdf.py, bootstrap_remote.sh, relay_agent.sh

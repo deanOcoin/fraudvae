@@ -26,6 +26,7 @@ from .model.booster import Booster, Specialists
 from .graph.scorer import GraphScorer
 from .model.heads import load_heads
 from .model.seqhead import load_seqhead
+from .model.txfm import TxfmScorer
 from .model.dataset import PreparedSet
 from .model.scoring import Scorer, auprc, auroc, extra_signals, score_split
 from .model.vae import load_checkpoint
@@ -153,7 +154,8 @@ def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, 
     seqhead = load_seqhead(run_dir, device=device)   # v5: None without a history encoder / before the post stage
     heads = load_heads(run_dir, device=device)        # v5: the field heads (device ...), {} before the post stage
     graph = GraphScorer.load(run_dir, device=device)  # v5: the entity-graph models, None without any
-    specialists = Specialists.load(run_dir)            # v5: per-source boosters, None without any
+    specialists = Specialists.load(run_dir)
+    txfm = TxfmScorer.load(run_dir, device=device)   # v6: the transaction encoder, None for a run without one            # v5: per-source boosters, None without any
     data = PreparedSet(prepared, splits=("val",))
     va = data["val"]
     names = data.source_names
@@ -185,7 +187,7 @@ def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, 
     # ---- pass 2: score type + blender on a labelled subsample --------------------------------
     fit_idx = _subsample(src, y, rng, FIT_ROWS, with_fraud=True)
     rf = score_split(model, va, batch_size=batch_size, n_samples=n_samples, device=device, idx=fit_idx, scorer=scorer,
-                     booster=booster, keep_features=False, keep_mu=False, seq=data.seq, split_name="val", seqhead=seqhead, heads=heads, graph=graph, specialists=specialists)
+                     booster=booster, txfm=txfm, keep_features=False, keep_mu=False, seq=data.seq, split_name="val", seqhead=seqhead, heads=heads, graph=graph, specialists=specialists)
     yf, sf = y[fit_idx], src[fit_idx]
     cands = {}
     for kind in ("raw", "norm"):
@@ -203,7 +205,7 @@ def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, 
         score_std[s] = max(float(rf[score_type][m].std()), 1e-6)
     gen_fit = np.sort(rng.choice(gen_idx, min(len(gen_idx), 200_000), replace=False))
     rfg = score_split(model, va, batch_size=batch_size, n_samples=n_samples, device=device, idx=gen_fit, scorer=scorer,
-                      booster=booster, src_override=0, keep_features=False, keep_mu=False, seq=data.seq, split_name="val", seqhead=seqhead, heads=heads, graph=graph, specialists=specialists)
+                      booster=booster, txfm=txfm, src_override=0, keep_features=False, keep_mu=False, seq=data.seq, split_name="val", seqhead=seqhead, heads=heads, graph=graph, specialists=specialists)
     yg = y[gen_fit]
     score_mean[0] = rfg[score_type][yg == 0].mean()
     score_std[0] = max(float(rfg[score_type][yg == 0].std()), 1e-6)
@@ -244,10 +246,10 @@ def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, 
 
     # ---- pass 3: everything, once ---------------------------------------------------------------
     r = score_split(model, va, batch_size=batch_size, n_samples=n_samples, device=device, keep_features=False,
-                    scorer=scorer, booster=booster, progress=lambda n: log(f"  calibrate: scored {n:,}/{len(va):,}"), seq=data.seq, split_name="val", seqhead=seqhead, heads=heads, graph=graph, specialists=specialists)
+                    scorer=scorer, booster=booster, txfm=txfm, progress=lambda n: log(f"  calibrate: scored {n:,}/{len(va):,}"), seq=data.seq, split_name="val", seqhead=seqhead, heads=heads, graph=graph, specialists=specialists)
     log(f"  pass 3: scored {len(va):,} val rows ({time.time() - t0:.0f}s)")
     rgen = score_split(model, va, batch_size=batch_size, n_samples=n_samples, device=device, idx=gen_idx,
-                       keep_features=False, scorer=scorer, booster=booster, src_override=0, keep_mu=False, seq=data.seq, split_name="val", seqhead=seqhead, heads=heads, graph=graph, specialists=specialists)
+                       keep_features=False, scorer=scorer, booster=booster, txfm=txfm, src_override=0, keep_mu=False, seq=data.seq, split_name="val", seqhead=seqhead, heads=heads, graph=graph, specialists=specialists)
     gy = y[gen_idx]
     score = r[score_type]
 

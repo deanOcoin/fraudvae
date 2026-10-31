@@ -132,3 +132,36 @@ def test_pretrain_writes_a_loadable_encoder(pretrained_txfm, prepared_set):
     ex = sc.explain(f[0], labels)
     assert ex["surprise"] is not None and len(ex["most_surprising"]) <= 5 and all(e["field"] in labels for e in ex["most_surprising"])
 
+
+def test_booster_reads_the_encoder_block(pretrained_txfm, prepared_set, tmp_path):
+    from fraudvae.config import load_config
+    from fraudvae.model.booster import Booster, train_booster
+    from fraudvae.model.dataset import PreparedSet
+    from fraudvae.model.scoring import score_split
+    from fraudvae.model.txfm import TxfmScorer
+
+    cfg = load_config("smoke")
+    cfg.boost.txfm_features = True
+    cfg.boost.max_rounds = 30
+    cfg.boost.early_stopping = 10
+    sc = TxfmScorer.load(pretrained_txfm, device="cpu")
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    info = train_booster(run_dir, prepared_set, cfg.boost, log=lambda m: None, seed=1, model=None, device="cpu", txfm=sc)
+    assert info["txfm_dim"] == sc.dim and info["features"][-sc.dim:] == sc.names
+    bst = Booster.load(run_dir)
+    assert bst.txfm_dim == sc.dim and bst.txfm_names == sc.names
+    data = PreparedSet(prepared_set, splits=("val",))
+    va = data["val"]
+    b = np.arange(50)
+    # without the block the booster still answers (NaN = "no encoder here"), with it the logits differ
+    z0 = bst.logit(va.num[b], va.mask[b], va.cat[b], va.src[b])
+    feats = sc.features_split(va, b, data.seq, "val", device="cpu")
+    z1 = bst.logit(va.num[b], va.mask[b], va.cat[b], va.src[b], txfm=feats)
+    assert z0.shape == z1.shape == (50,) and np.isfinite(z0).all() and np.isfinite(z1).all()
+    # score_split threads the block through when given the scorer, and reports the surprise
+    from fraudvae.model.vae import TabularVAE
+
+    vae = TabularVAE(va.num.shape[1], [c["size"] for c in data.meta["categorical"]], 11, latent_dim=4, hidden=(16,)).eval()
+    r = score_split(vae, va, batch_size=32, n_samples=1, idx=b, booster=bst, txfm=sc, seq=data.seq, split_name="val", keep_features=False)
+    assert r["booster"].shape == (50,) and np.allclose(r["booster"], z1, atol=1e-4) and np.isfinite(r["txfm_surprise"]).all()
