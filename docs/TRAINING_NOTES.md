@@ -650,6 +650,17 @@ The experiment that decides v6, on the same test rows as `v5-h200-h`:
    - stays off; if the `txfm_*` block is also a wash at 100M parameters, the next
    step is the fine-tuned head (the encoder meets the labels), not a bigger encoder.
 
-Smoke numbers from the laptop are recorded here as they are measured; nothing
-above is a result yet.
+**Smoke run, the laptop cpu** (`txfm_small`, d 128, 1 event layer + 2 history layers, window
+32, 1.9M params; prepared set capped at 60k train rows per source, 660k train targets; 200
+steps of 16 windows, batch 16 because the Mac turns a 64-window step over in ~10 s): the rows
+the loop needs (train + val, 4.9M of the set's 13.5M) tokenised to 1.1 GB of int16 ids in
+10 s; 2.4-3.0k tokens/s; training next-event nll 3.18 at step 50, 2.94 at 100, 2.75 at 150,
+2.63 at 200, masked-field loss 2.93 to 1.53 over the same steps; validation next-event nll
+**2.18 per observed token** at step 200 (a uniform guess over a numeric field's 33 buckets
+is 3.50). Hardest fields: the ULB PCA components (`ulb_v25` 4.04, `ulb_v5` 3.85, `ulb_v6`
+3.84, `ulb_v17` 3.76 - noise-like by construction) and `email_fraud_share_delayed` 3.90 /
+`email_age_days` 3.85; easiest: near-constant categoricals and `device_fraud_count_delayed`
+(0.01-0.05). Six and a half minutes end to end, `txfm.pt` written and loadable. This proves
+the loop and the data path, not the model: the numbers to care about come from `txfm_base`
+on a node.
 
