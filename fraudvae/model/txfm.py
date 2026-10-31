@@ -35,8 +35,9 @@ import torch.nn.functional as F
 
 from .loading import load_checkpoint as read_checkpoint
 
-DT_SCALE = 2.0
-EVENT_CHUNK = 32768   # events per event-encoder call: a cuda attention kernel refuses 65,536 sequences in one launch          # dt bucket = ceil(log1p(seconds) * DT_SCALE); 40 buckets reach past a year
+DT_SCALE = 2.0       # dt bucket = ceil(log1p(seconds) * DT_SCALE); 40 buckets reach past a year
+EVENT_CHUNK = 8192   # sequences per event-encoder launch: a cuda attention kernel refuses 65,536 in one go, and the
+                     # feed-forward activation of a chunk is ~6 GB at 121 fields (23 GB at 32768, too much next to a training rank)
 
 
 class Tokeniser:

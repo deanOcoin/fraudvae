@@ -389,7 +389,7 @@ def pretrain(cfg, prepared="default", name=None, run_dir: Path | None = None, re
             write_status(run_dir, state="running", epoch=0, epochs=1, step=step, steps=tc.steps, progress=step / tc.steps,
                          loss=sums["loss"] / seen_steps, elapsed=time.time() - t_start)
         if step % tc.eval_every == 0 or step == tc.steps:
-            val_nll, fields, by_src = _evaluate(model, tok, shard, val_targets, tc.window, max(16, tc.batch_size // 2)) if val_targets else (float("nan"), {}, {})
+            val_nll, fields, by_src = _evaluate(model, tok, shard, val_targets, tc.window, max(16, tc.batch_size * 4)) if val_targets else (float("nan"), {}, {})
             if dist:
                 v = torch.tensor([val_nll if val_nll == val_nll else 0.0, 1.0 if val_nll == val_nll else 0.0], device=device)
                 dist.all_reduce(v)
