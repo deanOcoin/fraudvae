@@ -664,3 +664,22 @@ is 3.50). Hardest fields: the ULB PCA components (`ulb_v25` 4.04, `ulb_v5` 3.85,
 the loop and the data path, not the model: the numbers to care about come from `txfm_base`
 on a node.
 
+
+**The node run, 8x B200** (2026-10-31; a rented Vast.ai node, 192 cpus, 2 TB ram, python 3.12,
+torch 2.14.1+cu132). The sixteen sources, 468,684,435 rows, built from the raw archives in
+parallel, one process per source; the prepared sets with the parallel prepare: `full` (the
+eleven v5 sources) in 39 s, `v6` (all sixteen) in 456.6 s - train 328,079,104, val 46,868,443,
+test 93,736,888 rows. `v5-h200-h` re-evaluated on the node's `full` set gives the published
+numbers back (mean blend AUROC 0.9277, per source to 1e-4), so the node's rows are the
+laptop's. `txfm_base` is 128.34M parameters (d 768, 4 event + 12 history layers, window 128);
+packing leaves it 18-57 fields per source (baf 18, fraudecom 23, fdh 29, amlworld 29, banksim
+30, paysim 31, ulb 33, sparkov 43, capone 44, tabformer 50, ieee 57). One B200, batch 128
+eager: 0.48-0.50 s/step at 164 of 183 GB and about 12% of peak flops - the model is
+memory-bound at this width; batch 64: 0.239 s eager (71 GB) against 0.188 s compiled (83 GB),
+hence `txfm_base`'s batch 64 with compile. The gate run (`txfm-gate-full`: the `full` set,
+7 gpus, batch 128, 10k steps, packing on) moves 6.1-6.5M observed tokens/s (8.2M encoded,
+counting a row's own missing values inside its source's fields); validation next-event nll per
+observed token 1.6790 at step 2000 and 1.5462 at 4000, against the smoke run's 2.18 at step 200
+on the tiny model. The block pass scores 21k rows/s per gpu at batch 256 (39 GB); the `full`
+validation split, 4,284,187 rows, cached in 260 s on one gpu. The gate's booster comparison
+and the full pretrain on `v6` follow as they land.

@@ -13,7 +13,7 @@ txfm:
   dropout: 0.1
   n_bins: 64
   steps: 60000
-  batch_size: 128        # windows per gpu per step: 8 x 128 x 128 events = 131k events / step
+  batch_size: 64         # windows per gpu per step: 8 x 64 x 128 events = 65k events / step
   lr: 0.0003
   weight_decay: 0.05
   warmup: 2000
@@ -22,6 +22,11 @@ txfm:
   eval_windows: 32768
   patience: 6
   amp: true              # bf16; every input is an embedding lookup, so the v5 overflow does not apply. fp32 is one flag away
+  pack: true             # the event encoder reads a source's own fields only (a third of the schema on average)
+  source_alpha: 0.5      # a step's source drawn with p ~ sqrt(rows): the 425M amlworld rows do not set the whole curriculum
+  compile: true          # torch.compile, dynamic shapes; measured on a B200: 0.188 s/step at batch 64 against 0.239 eager
 notes: >
-  60k steps x 131k events = 7.9B event visits (~16 full passes over 500M rows); the plan's estimate
-  is ~10 h on 8x H200. Watch tok/s in train.log for the first 200 steps before leaving it.
+  60k steps x 65k events = 3.9B event visits (~8 passes over 470M rows). Measured on 8x B200
+  (docs/TRAINING_NOTES.md, v6): batch 64 with compile moves more windows per second than
+  batch 128 without (which also fills 164 of 183 GB). Watch tok/s in train.log for the
+  first 200 steps before leaving it.

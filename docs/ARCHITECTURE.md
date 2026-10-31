@@ -247,6 +247,33 @@ and gradients are averaged once per step. Validation is the next-event nll of
 the last event of windows ending on val rows; the best checkpoint is `txfm.pt`
 (weights + tokeniser + prepared meta, read with the weights-only loader).
 
+Four things about the loop that the first node run taught (`docs/TRAINING_NOTES.md`, v6):
+
+- *Packing.* A source carries 18-57 of the schema's 121 fields; the rest would be
+  "unobserved" tokens on every row, three quarters of the event encoder's work for
+  nothing, and a trivial target for the masked-field loss. The tokeniser keeps the
+  fields each source ever observes (`source_fields`, scanned from the train split
+  at fit time and saved in `txfm.pt`) and the event encoder reads only those
+  (`Tokeniser.fields_for`); the losses index the same packed layout. A row's own
+  missing values inside that list stay as tokens - a blank e-mail on a source that
+  usually has one is signal. A batch that mixes sources reads the union; a blanked
+  source reads every field.
+- *One source per step.* A step's windows come from one source, drawn with
+  probability proportional to its rows to the power `source_alpha` (1 = by size, as
+  drawing rows at random would; 0.5 = square root, what `txfm_base` uses so 425M
+  rows of one synthetic generator do not set the whole curriculum). The batch then
+  runs at that source's packed width. Validation windows are the same number from
+  every source, and `metrics.jsonl` keeps the next-event nll per source.
+- *The state before a first event.* `states[:, t]` for a customer's first event is
+  read off the slot before it, which in a training window holds another customer's
+  row, at serving time a padding row and in the block pass (below) the previous
+  customer's last event: three different inputs for one quantity. The history
+  encoder therefore replaces every invalid slot's state with the start token's, so
+  the prior for a first transaction is one trained vector, the same everywhere.
+- *Resume.* `state.pt` (weights, optimiser, step, best) is written at every eval;
+  `--resume` with the same `--name` carries on, so a run can be gated at 10k steps,
+  judged with the booster, and continued rather than restarted.
+
 **Where it reaches the score.** `boost.txfm_features: true` with `txfm.run:
 <pretraining run>` makes the post stage copy `txfm.pt` into the run and append
 one block to the booster's (and each specialist's) features, after the v5
@@ -254,10 +281,21 @@ one block to the booster's (and each specialist's) features, after the v5
 the per-field surprise (`txfm_s_<field>`, NaN where the field is unobserved) and
 the mean surprise (`txfm_surprise`). The block is computed with the bank blanked
 for the generic slice like everything else; a caller without the encoder sends
-NaN, which the trees treat as "no summary". `score_split`, calibration,
-evaluation and the server compute the block from the same sequence index /
-entity store at the encoder's own window (`v6_full` uses 128 against the VAE's
-32), so a `v6_full` run is scored the same way everywhere. The receipt carries
+NaN, which the trees treat as "no summary". The server computes the block for
+one transaction from the entity store at the encoder's own window (`v6_full`
+uses 128 against the VAE's 32). A whole split goes through the **block pass**
+instead (`TxfmScorer.features_split`): consecutive events of the sequence index
+in segments of `window` events, several customers per segment behind a block
+mask (an event attends to earlier events of its own customer and to the start
+token), every row read off the position it sits at. A segment starts
+`window - stride` events before the first row it serves, so a row has at least
+three quarters of a window of history (all of it when the customer has less),
+and each event is encoded about four times instead of once per row. With stride
+1 it is the server's window path to the last decimal; `tests/test_txfm.py` checks
+that. `fraudvae txfm-cache` writes that pass once per (prepared set, encoder)
+under `data/prepared/<set>/txfm_cache/<sha of txfm.pt>/`, one part per gpu if
+wanted, and the booster, calibration and evaluation read it; the post stage
+writes it itself when nothing has. The receipt carries
 one `transaction_encoder` line in the booster's pushes and a `sequence_model`
 block with the mean surprise and the most surprising fields - the explanation
 Sardine's write-up says embeddings lack.

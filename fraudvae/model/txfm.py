@@ -25,6 +25,7 @@ meta it was built on, read back with the project's weights-only loader.
 from __future__ import annotations
 
 import math
+import time
 from pathlib import Path
 
 import numpy as np
@@ -34,7 +35,8 @@ import torch.nn.functional as F
 
 from .loading import load_checkpoint as read_checkpoint
 
-DT_SCALE = 2.0          # dt bucket = ceil(log1p(seconds) * DT_SCALE); 40 buckets reach past a year
+DT_SCALE = 2.0
+EVENT_CHUNK = 32768   # events per event-encoder call: a cuda attention kernel refuses 65,536 sequences in one launch          # dt bucket = ceil(log1p(seconds) * DT_SCALE); 40 buckets reach past a year
 
 
 class Tokeniser:
@@ -43,7 +45,8 @@ class Tokeniser:
     event (0 = no previous event). every field owns a slice of one vocabulary, so one embedding
     table and one output layer serve them all; MASK is the last id."""
 
-    def __init__(self, num_names, cat_sizes, edges: np.ndarray, n_sources: int, n_bins: int = 32, dt_bins: int = 40):
+    def __init__(self, num_names, cat_sizes, edges: np.ndarray, n_sources: int, n_bins: int = 32, dt_bins: int = 40,
+                 source_fields: dict | None = None):
         self.num_names = list(num_names)
         self.cat_sizes = [int(k) for k in cat_sizes]
         self.edges = np.asarray(edges, dtype=np.float32)            # [D, n_bins - 1], sorted per row
@@ -60,15 +63,61 @@ class Tokeniser:
         self.field_names = self.num_names + [f"cat_{j}" for j in range(C)] + ["source", "dt"]
         self.D, self.C = D, C
         self._dev = {}
+        # packing: the fields a source ever observes (plus source and dt), by source index. the
+        # event encoder reads only those for a batch of that source, a third of the schema for
+        # most sources; a source without a list, or the blanked source, gets every field
+        self.source_fields = {int(k): sorted(set(int(f) for f in v) | {self.n_fields - 2, self.n_fields - 1})
+                              for k, v in (source_fields or {}).items()}
+        self._fields_cache = {}
 
     def config(self) -> dict:
         return {"num_names": self.num_names, "cat_sizes": self.cat_sizes, "edges": self.edges, "n_sources": self.n_sources,
-                "n_bins": self.n_bins, "dt_bins": self.dt_bins}
+                "n_bins": self.n_bins, "dt_bins": self.dt_bins, "source_fields": self.source_fields}
+
+    def fields_for_source(self, src: int, device=None):
+        """the sorted field index of one source, None for every field (no lists, no list for
+        this source, or the blanked source 0)"""
+        if not self.source_fields:
+            return None
+        lst = self.source_fields.get(int(src))
+        if lst is None or len(lst) >= self.n_fields:
+            return None
+        key = ("src", int(src), str(device))
+        if key not in self._fields_cache:
+            self._fields_cache[key] = torch.tensor(lst, dtype=torch.long, device=device)
+        return self._fields_cache[key]
+
+    def fields_for(self, tokens: torch.Tensor, valid: torch.Tensor | None = None):
+        """the fields the event encoder reads for a batch of windows [B, L, F]: the union of the
+        lists of the sources present (among the valid events), as a sorted index tensor; None
+        when that is every field (no lists, a source without one, or the blanked source)"""
+        if not self.source_fields:
+            return None
+        src_f = self.n_fields - 2
+        off = int(self.offsets[src_f])
+        st = tokens[..., src_f] if valid is None else tokens[..., src_f][valid]
+        ids = tuple(int(t) - off for t in torch.unique(st).tolist())
+        key = (ids, str(tokens.device))
+        if key not in self._fields_cache:
+            fields: set | None = set()
+            for i in ids:
+                lst = self.source_fields.get(i)
+                if lst is None:
+                    fields = None
+                    break
+                fields |= set(lst)
+            if fields is None or len(fields) >= self.n_fields:
+                self._fields_cache[key] = None
+            else:
+                self._fields_cache[key] = torch.tensor(sorted(fields), dtype=torch.long, device=tokens.device)
+        return self._fields_cache[key]
 
     @classmethod
-    def fit(cls, num: np.ndarray, mask: np.ndarray, num_names, cat_sizes, n_sources: int, n_bins: int = 32, dt_bins: int = 40):
+    def fit(cls, num: np.ndarray, mask: np.ndarray, num_names, cat_sizes, n_sources: int, n_bins: int = 32, dt_bins: int = 40,
+            source_fields: dict | None = None):
         """quantile edges per numeric field from a sample of (standardised) rows, observed cells
-        only; a field with fewer distinct values than buckets gets its distinct values as edges"""
+        only; a field with fewer distinct values than buckets gets its distinct values as edges.
+        source_fields: {source index: [field indices it observes]} for packing, None = no packing"""
         D = num.shape[1]
         edges = np.zeros((D, n_bins - 1), dtype=np.float32)
         qs = np.linspace(0, 1, n_bins + 1)[1:-1]
@@ -82,7 +131,7 @@ class Tokeniser:
             e = np.maximum.accumulate(e)
             bump = np.arange(n_bins - 1) * 1e-6
             edges[j] = (e + bump).astype(np.float32)
-        return cls(num_names, cat_sizes, edges, n_sources, n_bins, dt_bins)
+        return cls(num_names, cat_sizes, edges, n_sources, n_bins, dt_bins, source_fields=source_fields)
 
     def _tensors(self, device):
         d = str(device)
@@ -162,42 +211,62 @@ class TransactionEncoder(nn.Module):
 
     # -- pieces ------------------------------------------------------------------------------
 
-    def encode_events(self, tokens):
-        """tokens [B, L, F] -> event vectors [B, L, d], token outputs [B, L, F, d]"""
+    def encode_events(self, tokens, fields=None):
+        """tokens [B, L, F] -> event vectors [B, L, d], token outputs [B, L, F', d]. fields: a
+        sorted index of the F' fields to read (Tokeniser.fields_for), None = all of them"""
+        if fields is not None:
+            tokens = tokens[..., fields]
         B, L, Fn = tokens.shape
-        x = self.tok(tokens) + self.field.weight[None, None, :Fn]
+        fld = self.field.weight[:Fn] if fields is None else self.field.weight[fields]
+        x = self.tok(tokens) + fld[None, None]
         x = self.in_norm(x).reshape(B * L, Fn, -1)
         if self.event is not None:
             x = torch.cat([self.evt_token.expand(B * L, 1, -1), x], dim=1)
-            x = self.event(x)
+            if x.shape[0] > EVENT_CHUNK:
+                x = torch.cat([self.event(x[s : s + EVENT_CHUNK]) for s in range(0, x.shape[0], EVENT_CHUNK)], dim=0)
+            else:
+                x = self.event(x)
             evt, tok_out = x[:, 0], x[:, 1:]
         else:
             evt = self.event_mlp(x.mean(1))
             tok_out = x
         return self.event_norm(evt).reshape(B, L, -1), tok_out.reshape(B, L, Fn, -1)
 
-    def encode_history(self, events, dt_log, valid):
+    def encode_history(self, events, dt_log, valid, block=None):
         """events [B, L, d] oldest first, dt_log [B, L] (log1p seconds since the previous event,
-        0 for none), valid [B, L] -> states [B, L + 1, d]: states[:, t] has seen events < t"""
+        0 for none), valid [B, L] -> states [B, L + 1, d]: states[:, t] has seen events < t.
+        block [B, L] ids: a window that holds several customers in a row (the block pass over
+        the sequence index); an event then sees only earlier events of its own block"""
         B, L, _ = events.shape
-        pos = torch.arange(L, device=events.device)
+        dev = events.device
+        pos = torch.arange(L, device=dev)
         x = events + self.pos(pos + 1)[None] + self.time(dt_log.unsqueeze(-1).float())
         x = torch.cat([self.bos.expand(B, 1, -1) + self.pos.weight[0][None, None], x], dim=1)
-        pad = torch.cat([torch.zeros(B, 1, dtype=torch.bool, device=events.device), ~valid], dim=1)
-        x = self.history(x, mask=causal_mask(L + 1, events.device), src_key_padding_mask=pad)
-        return self.hist_norm(x)
+        pad = torch.cat([torch.zeros(B, 1, dtype=torch.bool, device=dev), ~valid], dim=1)
+        mask = causal_mask(L + 1, dev)
+        if block is not None:
+            blocked = torch.ones(B, L + 1, L + 1, dtype=torch.bool, device=dev)
+            blocked[:, 1:, 1:] = mask[1:, 1:][None] | (block[:, :, None] != block[:, None, :])
+            blocked[:, :, 0] = False                                   # every event sees the start token
+            mask = blocked.repeat_interleave(self.heads, dim=0)
+        x = self.hist_norm(self.history(x, mask=mask, src_key_padding_mask=pad))
+        # the state before a customer's first event is the start token's state, whatever sits in
+        # the slots before it (padding at serving time, another customer's rows in a training
+        # window): one trained prior for first transactions, the same in every path
+        return torch.cat([x[:, :1], torch.where(valid.unsqueeze(-1), x[:, 1:], x[:, :1])], dim=1)
 
-    def forward(self, tokens, dt_log, valid):
-        events, tok_out = self.encode_events(tokens)
-        states = self.encode_history(events, dt_log, valid)
+    def forward(self, tokens, dt_log, valid, fields=None, block=None):
+        events, tok_out = self.encode_events(tokens, fields)
+        states = self.encode_history(events, dt_log, valid, block)
         return states, tok_out
 
     # -- losses --------------------------------------------------------------------------------
 
-    def _grouped_nll(self, head: nn.Linear, x, tokens, mask):
+    def _grouped_nll(self, head: nn.Linear, x, tokens, mask, fields=None):
         """nll of each token under the softmax restricted to its field's slice of the vocabulary.
-        x [N, F, d] (an input per field) or [N, d] (one input for every field), tokens [N, F]
-        full-vocab ids, mask [N, F] bool -> nll [N, F] float32, 0 where mask is false.
+        x [N, F', d] (an input per field) or [N, d] (one input for every field), tokens [N, F']
+        full-vocab ids, mask [N, F'] bool -> nll [N, F'] float32, 0 where mask is false. fields:
+        which F' of the F fields these are (a sorted index), None = all of them in order.
         the numeric fields share one slice width, so they go through a single batched matmul
         against the head's first n_num * k rows; the other fields are scored one slice each. no
         [N, F, vocab] tensor is ever formed (that was gigabytes per step)."""
@@ -206,21 +275,34 @@ class TransactionEncoder(nn.Module):
         W, b = head.weight, head.bias
         out = torch.zeros(N, Fn, dtype=torch.float32, device=tokens.device)
         per_field = x.dim() == 3
-        if D:
-            xn = x[:, :D] if per_field else x.unsqueeze(1).expand(N, D, -1)
+        if fields is None:
+            nd = min(D, Fn)
+            num_ids = None
+            ids = list(range(Fn))
+        else:
+            ids = [int(f) for f in fields.tolist()]
+            nd = sum(1 for f in ids if f < D)
+            num_ids = fields[:nd]
+        if nd:
+            xn = x[:, :nd] if per_field else x.unsqueeze(1).expand(N, nd, -1)
             Wn = W[: D * k].reshape(D, k, -1)
-            logits = torch.einsum("nfd,fkd->nfk", xn, Wn) + b[: D * k].reshape(1, D, k)
-            tgt = (tokens[:, :D] - self.offsets[:D]).clamp(0, k - 1)
-            nll = F.cross_entropy(logits.reshape(-1, k).float(), tgt.reshape(-1), reduction="none").reshape(N, D)
-            out[:, :D] = nll * mask[:, :D]
-        for f in range(D, Fn):
-            m = mask[:, f]
+            bn = b[: D * k].reshape(D, k)
+            offs = self.offsets[:nd]
+            if num_ids is not None:
+                Wn, bn, offs = Wn[num_ids], bn[num_ids], self.offsets[num_ids]
+            logits = torch.einsum("nfd,fkd->nfk", xn, Wn) + bn.unsqueeze(0)
+            tgt = (tokens[:, :nd] - offs).clamp(0, k - 1)
+            nll = F.cross_entropy(logits.reshape(-1, k).float(), tgt.reshape(-1), reduction="none").reshape(N, nd)
+            out[:, :nd] = nll * mask[:, :nd]
+        for j in range(nd, Fn):
+            m = mask[:, j]
             if not bool(m.any()):
                 continue
+            f = ids[j]
             o, sz = int(self.offsets[f]), self.sizes[f]
-            xf = (x[:, f] if per_field else x)[m]
+            xf = (x[:, j] if per_field else x)[m]
             lg = xf @ W[o : o + sz].T + b[o : o + sz]
-            out[m, f] = F.cross_entropy(lg.float(), (tokens[m, f] - o).clamp(0, sz - 1), reduction="none")
+            out[m, j] = F.cross_entropy(lg.float(), (tokens[m, j] - o).clamp(0, sz - 1), reduction="none")
         return out
 
     def next_event_nll(self, states, tokens, target_mask):
@@ -230,14 +312,17 @@ class TransactionEncoder(nn.Module):
         x = states[:, :L].reshape(B * L, -1)
         return self._grouped_nll(self.next_head, x, tokens.reshape(B * L, Fn), target_mask.reshape(B * L, Fn)).reshape(B, L, Fn)
 
-    def masked_nll(self, states, tok_out, targets, masked):
+    def masked_nll(self, states, tok_out, targets, masked, fields=None):
         """tokens hidden from the event encoder, predicted from their token output plus the
-        state after the event. targets [B, L, F] the true ids, masked [B, L, F] bool -> mean nll"""
+        state after the event. targets [B, L, F] the true ids, masked [B, L, F] bool, fields the
+        index the event encoder was packed with (tok_out is [B, L, F', d]) -> mean nll"""
+        if fields is not None:
+            targets, masked = targets[..., fields], masked[..., fields]
         B, L, Fn = targets.shape
         if not bool(masked.any()):
             return targets.new_zeros((), dtype=torch.float32)
         x = (tok_out + states[:, 1 : L + 1].unsqueeze(2)).reshape(B * L, Fn, -1)
-        nll = self._grouped_nll(self.mlm_head, x, targets.reshape(B * L, Fn), masked.reshape(B * L, Fn))
+        nll = self._grouped_nll(self.mlm_head, x, targets.reshape(B * L, Fn), masked.reshape(B * L, Fn), fields)
         return nll.sum() / masked.sum()
 
 
@@ -292,7 +377,7 @@ def readout(model: TransactionEncoder, tok: Tokeniser, tokens, dt_log, valid):
     """for the last event of each window: the state after it [B, d] and the per-field surprise
     [B, F - 2] (nll of each observed content field from the state before it; NaN unobserved)
     and the mean surprise [B]. the booster's and the receipt's view of the encoder."""
-    states, _ = model(tokens, dt_log, valid)
+    states, _ = model(tokens, dt_log, valid, fields=tok.fields_for(tokens))
     L = tokens.shape[1]
     obs = tok.observed(tokens) & valid.unsqueeze(-1)
     tgt = torch.zeros_like(obs)
@@ -337,15 +422,33 @@ def lr_cosine(step, lr, warmup, total, floor=0.05):
     return lr * (floor + (1 - floor) * 0.5 * (1 + math.cos(math.pi * min(1.0, p))))
 
 
+def cache_dir_for(prepared: str, txfm_pt) -> Path:
+    """the cache of a (prepared set, encoder) pair lives with the set, keyed by the checkpoint's
+    sha256 (a different encoder never reads another's features)"""
+    import hashlib
+
+    from ..paths import PREPARED_DIR
+
+    h = hashlib.sha256()
+    with open(txfm_pt, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 24), b""):
+            h.update(chunk)
+    return PREPARED_DIR / prepared / "txfm_cache" / h.hexdigest()[:16]
+
+
 class TxfmScorer:
     """the pretrained encoder as the booster, the post stage and the server use it: one
     feature block per row - the state after the row (d_model), the per-field surprise and the
     mean surprise - computed from the row and its customer history. loads runs/<run>/txfm.pt."""
 
-    def __init__(self, model: TransactionEncoder, tok: Tokeniser, device="cpu", info: dict | None = None):
+    def __init__(self, model: TransactionEncoder, tok: Tokeniser, device="cpu", info: dict | None = None, cache_dir=None):
         self.model, self.tok, self.device, self.info = model, tok, torch.device(device), info or {}
         self.window = int(model.window)
         self.d_model = int(model.d_model)
+        # a directory holding txfm_<split>.npy, the block pass over every row of a split, written by
+        # `fraudvae txfm-cache` (or cache_split + merge_cache): features_split reads it instead of
+        # encoding again, so the booster, calibration and evaluation share one pass per split
+        self.cache_dir = Path(cache_dir) if cache_dir else None
         self.names = feature_names(tok, self.d_model)
         self.dim = len(self.names)
 
@@ -356,7 +459,17 @@ class TxfmScorer:
         if not p.exists():
             return None
         model, tok, ck = load_txfm(p, device)
-        return cls(model, tok, device, info={"extra": ck.get("extra", {}), "train_config": ck.get("train_config", {})})
+        sc = cls(model, tok, device, info={"extra": ck.get("extra", {}), "train_config": ck.get("train_config", {})})
+        sc.path = p
+        return sc
+
+    def with_cache(self, prepared: str):
+        """read the block pass of this encoder over the named prepared set from its cache
+        (cache_dir_for) where `fraudvae txfm-cache` has written it; a split without a cache
+        file is encoded on the fly as before"""
+        if getattr(self, "path", None) is not None:
+            self.cache_dir = cache_dir_for(prepared, self.path)
+        return self
 
     def field_labels(self, categorical_meta=None) -> list[str]:
         """the content fields the surprise block is indexed by, with the categoricals named
@@ -376,12 +489,18 @@ class TxfmScorer:
         toks, dt, valid = windows_from_history(self.tok, num, mask, cat, src, hist)
         if toks.shape[1] > self.window:
             toks, dt, valid = toks[:, -self.window :], dt[:, -self.window :], valid[:, -self.window :]
-        h, per_field, total = readout(self.model, self.tok, toks, dt, valid)
-        return np.concatenate([h.cpu().numpy(), per_field.cpu().numpy(), total.cpu().numpy()[:, None]], axis=1).astype(np.float32)
+        out = np.empty((toks.shape[0], self.dim), dtype=np.float32)
+        # one source per readout, so a row's packed fields never depend on the rows beside it
+        for s_ in torch.unique(src).tolist():
+            m = src == s_
+            h, per_field, total = readout(self.model, self.tok, toks[m], dt[m], valid[m])
+            out[m.cpu().numpy()] = np.concatenate([h.cpu().numpy(), per_field.cpu().numpy(), total.cpu().numpy()[:, None]], axis=1)
+        return out
 
-    def features_split(self, split, idx, seq, split_name, device=None, src_override=None, batch_size=8192) -> np.ndarray:
-        """[len(idx), dim] in the order of idx, histories from the sequence index (rows are
-        visited in customer order, like score_split, and put back)"""
+    def features_windows(self, split, idx, seq, split_name, device=None, src_override=None, batch_size=8192) -> np.ndarray:
+        """[len(idx), dim] in the order of idx, one history window per row (what the server
+        does for one transaction); the block pass below is the same model at a fraction of the
+        work for a whole split"""
         from .scoring import batches
 
         device = device or self.device
@@ -395,6 +514,151 @@ class TxfmScorer:
             f = self.features(num, mask, cat, src, hist)
             out[[pos[int(i)] for i in b]] = f
         return out
+
+    @torch.no_grad()
+    def features_split(self, split, idx, seq, split_name, device=None, src_override=None, batch_size=256, stride=None) -> np.ndarray:
+        """[len(idx), dim] in the order of idx: the block pass. consecutive events of the sequence
+        index go through the causal encoder in segments of `window` events, several customers
+        per segment behind a block mask, and every row reads its state and surprise off the
+        position it sits at. a segment starts `window - stride` events before the first row it
+        serves, so a row sees at least that much of its history (all of it when the customer's
+        block is shorter); with stride window // 4 each event is encoded about four times
+        instead of once per row. rows without a sequence index fall back to one window each."""
+        if seq is None or not split_name:
+            return self.features_windows(split, idx, seq, split_name, device=device, src_override=src_override)
+        if src_override is None and self.cache_dir is not None and (self.cache_dir / f"txfm_{split_name}.npy").exists():
+            cached = np.load(self.cache_dir / f"txfm_{split_name}.npy", mmap_mode="r")
+            if cached.shape == (len(split), self.dim):
+                idx = np.asarray(idx)
+                order = np.argsort(idx, kind="stable")
+                out = np.empty((len(idx), self.dim), dtype=np.float32)
+                out[order] = cached[idx[order]]
+                return out
+        device = torch.device(device or self.device)
+        L = self.window
+        S = int(stride or max(1, L // 4))
+        idx = np.asarray(idx)
+        n_all = len(seq.order)
+        p = seq.positions(split_name, idx).astype(np.int64)
+        order = np.argsort(p, kind="stable")
+        ps = p[order]
+        row_src = np.asarray(split.src)[idx[order]].astype(np.int64)
+        # segments serve rows of one source each, and a batch holds segments of one source, so
+        # the packed field set is the rows' own source's whatever sits around them
+        seg_start, seg_src = [], []
+        seg_of, t_of = np.empty(len(ps), dtype=np.int64), np.empty(len(ps), dtype=np.int64)
+        a, cur, cur_src = 0, -1, -1
+        for i in range(len(ps)):
+            q = int(ps[i])
+            if cur < 0 or q >= a + L or row_src[i] != cur_src:
+                a = max(0, q - (L - S))
+                cur, cur_src = cur + 1, int(row_src[i])
+                seg_start.append(a)
+                seg_src.append(cur_src)
+            seg_of[i] = cur
+            t_of[i] = q - a
+        seg_start = np.asarray(seg_start, dtype=np.int64)
+        seg_src = np.asarray(seg_src, dtype=np.int64)
+        batches_ = []
+        s0 = 0
+        while s0 < len(seg_start):
+            s1 = min(s0 + batch_size, len(seg_start))
+            change = np.flatnonzero(seg_src[s0 + 1 : s1] != seg_src[s0])
+            if len(change):
+                s1 = s0 + 1 + int(change[0])
+            batches_.append((s0, s1))
+            s0 = s1
+        out = np.empty((len(idx), self.dim), dtype=np.float32)
+        Fn = self.tok.n_fields
+        start_of = np.asarray(seq.start)
+        order_arr = np.asarray(seq.order)
+        row_lo = 0
+        use_amp = device.type == "cuda"
+        for s0, s1 in batches_:
+            starts = seg_start[s0:s1]
+            B = len(starts)
+            fields = None if src_override is not None else self.tok.fields_for_source(int(seg_src[s0]), device)
+            pos = starts[:, None] + np.arange(-1, L, dtype=np.int64)[None, :]        # the previous event first
+            inside = (pos >= 0) & (pos < n_all)
+            gids = np.where(inside, order_arr[np.clip(pos, 0, n_all - 1)], -1)
+            num, mask, cat, ts = seq.gather_rows(gids.ravel())
+            src = seq.gather_src(gids.ravel()) if src_override is None else np.full(gids.size, int(src_override), dtype=np.int64)
+            bstart = np.where(inside, start_of[np.clip(gids, 0, None)], -2).astype(np.int64)
+            ts = ts.reshape(B, L + 1)
+            same_prev = (bstart[:, 1:] == bstart[:, :-1]) & inside[:, 1:] & inside[:, :-1]
+            dt = np.where(same_prev, ts[:, 1:] - ts[:, :-1], -1.0).astype(np.float32)
+            t = lambda x: torch.from_numpy(np.ascontiguousarray(x)).to(device)  # noqa: E731
+            toks = self.tok.encode(t(num.reshape(B, L + 1, -1)[:, 1:]), t(mask.reshape(B, L + 1, -1)[:, 1:]),
+                                   t(cat.reshape(B, L + 1, -1)[:, 1:]), t(src.reshape(B, L + 1)[:, 1:]), t(dt))
+            dt_t = t(dt)
+            dt_log = torch.where(dt_t >= 0, torch.log1p(dt_t.clamp(min=0)), torch.zeros_like(dt_t))
+            valid = t(inside[:, 1:])
+            block = t(bstart[:, 1:])
+            with torch.autocast("cuda", dtype=torch.bfloat16, enabled=use_amp):
+                states, _ = self.model(toks, dt_log, valid, fields, block=block)
+                obs = self.tok.observed(toks) & valid.unsqueeze(-1)
+                # a block's first event is predicted from the start token's state, as in training
+                # and at serving time, not from the previous customer's last event
+                first = t(bstart[:, 1:] != bstart[:, :-1])
+                before = torch.where(first.unsqueeze(-1), states[:, :1], states[:, :L])
+                nll = self.model.next_event_nll(torch.cat([before, states[:, L:]], dim=1), toks, obs)
+            row_hi = int(np.searchsorted(seg_of, s0 + B))
+            rows = np.arange(row_lo, row_hi)
+            row_lo = row_hi
+            b_i = torch.from_numpy(seg_of[rows] - s0).to(device)
+            t_i = torch.from_numpy(t_of[rows]).to(device)
+            h = states[b_i, t_i + 1].float()
+            nf = nll[b_i, t_i, : Fn - 2].float()
+            o = obs[b_i, t_i, : Fn - 2]
+            per_field = torch.where(o, nf, torch.full_like(nf, float("nan")))
+            total = (nf * o).sum(1) / o.sum(1).clamp(min=1)
+            out[order[rows]] = np.concatenate([h.cpu().numpy(), per_field.cpu().numpy(), total.cpu().numpy()[:, None]], axis=1)
+        assert row_lo == len(ps)
+        return out
+
+    def cache_split(self, split, seq, split_name: str, cache_dir, part: int = 0, parts: int = 1, device=None, batch_size=256,
+                    stride=None, log=print) -> Path:
+        """the block pass over every row of a split, or over the part-th of `parts` slices of
+        its rows in sequence order (one gpu each), to cache_dir/txfm_<split>.<part>of<parts>.npy
+        as (row ids, features); merge_cache assembles the parts"""
+        cache_dir = Path(cache_dir)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        idx = np.arange(len(split))
+        idx = idx[np.argsort(seq.positions(split_name, idx), kind="stable")]
+        lo, hi = len(idx) * part // parts, len(idx) * (part + 1) // parts
+        mine = idx[lo:hi]
+        t0 = time.time()
+        feats = self.features_split(split, mine, seq, split_name, device=device, batch_size=batch_size, stride=stride)
+        path = cache_dir / f"txfm_{split_name}.{part}of{parts}.npy"
+        np.save(path, np.concatenate([mine[:, None].astype(np.float32), feats], axis=1))
+        log(f"  txfm cache: {split_name} part {part + 1}/{parts}, {len(mine):,} rows in {time.time() - t0:.0f}s -> {path.name}")
+        return path
+
+    @staticmethod
+    def merge_cache(cache_dir, split_name: str, n_rows: int) -> Path:
+        """assemble txfm_<split>.npy [n_rows, dim] from every part present; every row must be
+        covered exactly once"""
+        cache_dir = Path(cache_dir)
+        parts = sorted(cache_dir.glob(f"txfm_{split_name}.*of*.npy"))
+        if not parts:
+            raise SystemExit(f"no cache parts for {split_name} under {cache_dir}")
+        first = np.load(parts[0], mmap_mode="r")
+        out = np.lib.format.open_memmap(cache_dir / f"txfm_{split_name}.tmp.npy", "w+", np.float32, (n_rows, first.shape[1] - 1))
+        seen = np.zeros(n_rows, dtype=bool)
+        for p_ in parts:
+            a = np.load(p_, mmap_mode="r")
+            rows = a[:, 0].astype(np.int64)
+            out[rows] = a[:, 1:]
+            seen[rows] = True
+        if not seen.all():
+            raise SystemExit(f"cache parts for {split_name} cover {int(seen.sum()):,} of {n_rows:,} rows")
+        out.flush()
+        del out
+        dest = cache_dir / f"txfm_{split_name}.npy"
+        (cache_dir / f"txfm_{split_name}.tmp.npy").rename(dest)
+        for p_ in parts:
+            p_.unlink()
+        return dest
 
     def explain(self, feats_row: np.ndarray, labels: list[str], top: int = 5) -> dict:
         """the receipt's view of one feature row: mean surprise and the most surprising fields"""

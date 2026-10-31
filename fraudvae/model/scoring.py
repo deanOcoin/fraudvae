@@ -285,8 +285,15 @@ def score_split(model, split, batch_size=8192, n_samples=8, device="cpu", idx=No
         chunks["graph"] = []
     if specialists is not None:
         chunks["local"] = []
+    txfm_all, txfm_at = None, None
     if txfm is not None:
         chunks["txfm_surprise"] = []
+        if seq is not None and split_name:
+            # the v6 block: one causal pass over the split's rows in sequence order (TxfmScorer.features_split)
+            idx_all = np.arange(len(split)) if idx is None else np.asarray(idx)
+            txfm_all = txfm.features_split(split, idx_all, seq, split_name, device=device, src_override=src_override)
+            txfm_at = np.empty(len(split), dtype=np.int64)
+            txfm_at[idx_all] = np.arange(len(idx_all))
     n_done = 0
     seen = []
     for b, (num, mask, cat, src), hist in batches(split, batch_size, idx=idx, device=device, seq=seq,
@@ -297,11 +304,10 @@ def score_split(model, split, batch_size=8192, n_samples=8, device="cpu", idx=No
         r = score_batch(model, num, mask, cat, src, n_samples, hist=hist)
         s_np = src.cpu().numpy()
         if txfm is not None:
-            if seq is not None and split_name and txfm.window != window:
-                hist_t = seq.history(split_name, np.asarray(b), txfm.window, device)
+            if txfm_all is not None:
+                r["txfm"] = txfm_all[txfm_at[np.asarray(b)]]
             else:
-                hist_t = hist
-            r["txfm"] = txfm.features(num, mask, cat, src, hist_t)
+                r["txfm"] = txfm.features(num, mask, cat, src, hist)
             r["txfm_surprise"] = r["txfm"][:, -1]
         if seqhead is not None and window:
             r["seq"] = seqhead.logit(model, num, mask, cat, src, torch.from_numpy(r["h"]).to(num.device))

@@ -155,7 +155,9 @@ def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, 
     heads = load_heads(run_dir, device=device)        # v5: the field heads (device ...), {} before the post stage
     graph = GraphScorer.load(run_dir, device=device)  # v5: the entity-graph models, None without any
     specialists = Specialists.load(run_dir)
-    txfm = TxfmScorer.load(run_dir, device=device)   # v6: the transaction encoder, None for a run without one            # v5: per-source boosters, None without any
+    txfm = TxfmScorer.load(run_dir, device=device)   # v6: the transaction encoder, None for a run without one
+    if txfm is not None:
+        txfm.with_cache(prepared)                    # its block pass over the set, when `fraudvae txfm-cache` has run            # v5: per-source boosters, None without any
     data = PreparedSet(prepared, splits=("val",))
     va = data["val"]
     names = data.source_names

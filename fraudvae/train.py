@@ -331,7 +331,7 @@ def post_train(run_dir: Path, cfg: Config, prepared="default", device=None, log=
     # and the server find it next to the booster that reads its features
     txfm = None
     if cfg.boost.enabled and cfg.boost.txfm_features:
-        txfm = _load_txfm(run_dir, cfg.txfm.run, device, log)
+        txfm = _load_txfm(run_dir, cfg.txfm.run, device, log, prepared=prepared)
     if cfg.boost.enabled:
         log("fitting the supervised booster on the labelled train split ..."
             + (" (with the history encoder's read-out as features)" if cfg.boost.history_features and history_window(model) else "")
@@ -402,9 +402,11 @@ def post_train(run_dir: Path, cfg: Config, prepared="default", device=None, log=
     write_status(run_dir, state="finished", elapsed=time.time() - t_start, **kw)
 
 
-def _load_txfm(run_dir: Path, run, device, log):
+def _load_txfm(run_dir: Path, run, device, log, prepared=None):
     """v6: resolve txfm.run (a run name under runs/, a directory or a txfm.pt path), copy the
-    checkpoint into this run as txfm.pt (unless it is already there) and load it"""
+    checkpoint into this run as txfm.pt (unless it is already there) and load it. with a
+    prepared set the block pass over each split is cached next to the set (see txfm_cache):
+    written here on first use when `fraudvae txfm-cache` has not run ahead on more gpus"""
     import shutil
 
     from .model.txfm import TxfmScorer
@@ -426,17 +428,23 @@ def _load_txfm(run_dir: Path, run, device, log):
     extra = scorer.info.get("extra", {})
     log(f"transaction encoder: {dest} ({scorer.d_model} d, window {scorer.window}, {scorer.dim} feature columns, "
         f"val next-event nll {extra.get('best_val_next_nll', float('nan')):.4f} at step {extra.get('step', '?')})")
+    if prepared:
+        from .txfm_cache import ensure_cache
+
+        scorer.with_cache(prepared)
+        ensure_cache(scorer, prepared, ("train", "val", "test"), device=device, log=log)
     return scorer
 
 
 def post_main(argv=None):
-    """fraudvae post RUN [--config NAME] [--prepared SET] [--device cuda]"""
+    """fraudvae post RUN [--config NAME] [--prepared SET] [--device cuda] [--txfm RUN]"""
     ap = argparse.ArgumentParser(prog="fraudvae post", description=post_train.__doc__)
     ap.add_argument("run")
     ap.add_argument("--config", default=None, help="config to take the booster / scoring settings from (default: the run's own)")
     ap.add_argument("--prepared", default=None)
     ap.add_argument("--device", default=None)
     ap.add_argument("--samples", type=int, default=None, help="posterior samples for scoring (default: the config's)")
+    ap.add_argument("--txfm", default=None, help="v6: the pretraining run (or txfm.pt) whose encoder the booster reads; overrides txfm.run")
     args = ap.parse_args(argv)
     run_dir = Path(args.run) if Path(args.run).exists() else RUNS_DIR / args.run
     run = json.loads((run_dir / "run.json").read_text())
@@ -451,6 +459,9 @@ def post_main(argv=None):
         cfg.device = args.device
     if args.samples:
         cfg.train.score_samples = args.samples
+    if args.txfm:
+        cfg.txfm.run = args.txfm
+        cfg.boost.txfm_features = True
     prepared = args.prepared or run.get("prepared", "default")
     log = Logger(run_dir)
     log(f"post-training pass for {run_dir.name}: booster config '{cfg.name}', prepared set '{prepared}'")

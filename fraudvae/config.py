@@ -117,6 +117,9 @@ class TxfmConfig:
     amp: bool = True               # bf16 autocast on cuda
     seed: int = 1337
     max_rows_per_source: int | None = None   # cap the rows loaded per source (laptop probes); None = all
+    pack: bool = True              # the event encoder reads only the fields a source observes (Tokeniser.source_fields)
+    source_alpha: float = 1.0      # a step's windows come from one source drawn with p ~ rows^alpha: 1 = by size, 0.5 = sqrt, 0 = equal
+    compile: bool = False          # torch.compile the encoder (dynamic shapes: the packed width changes with the source)
 
 
 @dataclass

@@ -87,6 +87,8 @@ def evaluate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, l
     graph = GraphScorer.load(run_dir, device=device)
     specialists = Specialists.load(run_dir)
     txfm = TxfmScorer.load(run_dir, device=device)   # v6: the transaction encoder, None for a run without one
+    if txfm is not None:
+        txfm.with_cache(prepared)                    # its block pass over the set, when `fraudvae txfm-cache` has run
     data = PreparedSet(prepared, splits=("test",))
     te = data["test"]
     names = data.source_names

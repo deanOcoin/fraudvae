@@ -192,7 +192,9 @@ likelihood is the *surprise*), and reconstruct masked tokens, events and fields.
 `fraudvae pretrain` runs it on every row of the corpus, on one process or under
 `torchrun` across a node, keeping each process's rows on its GPU as token ids.
 The booster can read its block (state, per-field surprise, mean surprise) as
-features; the receipt shows the most surprising fields for this customer.
+features; the post stage computes it for every row of a prepared set in one pass
+over whole sequences (`fraudvae txfm-cache`) and the receipt shows the most
+surprising fields for this customer.
 `docs/ARCHITECTURE.md` (v6) has the design and `docs/TRAINING_NOTES.md` the
 experiment plan; no v6 generation ships yet.
 
@@ -387,7 +389,7 @@ fraudvae/
   graph/       entity-graph snapshots, GraphSAGE, per-source training, scorer, public benchmarks
   text/        hashed-bag text heads (url / free text / profile), training, scorer
   behaviour/   mouse / keystroke / touch / motion features, verifiers, training, scorer
-  train.py  pretrain.py (v6)  calibrate.py  evaluate.py  config.py
+  train.py  pretrain.py (v6)  txfm_cache.py (v6: the encoder's features for a prepared set, once)  calibrate.py  evaluate.py  config.py
   remote/      keys, ssh (paramiko), provision (incl. raw-data push + box-side pipeline),
                jobs, advisor, relay (a git repo as the laptop-off control channel)
   server/      fastapi app + api modules, inference (the loaded generations + fusion), timeline,

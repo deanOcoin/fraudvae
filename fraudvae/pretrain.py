@@ -58,8 +58,31 @@ def _dist_init():
 
 
 def _sample_rows(split, n, rng):
-    idx = np.sort(rng.choice(len(split), min(n, len(split)), replace=False))
+    """up to n rows, the same number from every source, so the quantile edges of a field that
+    only a small source carries are fit on that source's values and not on a handful of them"""
+    src = np.asarray(split.src)
+    ids = np.unique(src)
+    per = max(1, n // max(1, len(ids)))
+    take = [rng.choice(np.flatnonzero(src == s_), min(per, int((src == s_).sum())), replace=False) for s_ in ids]
+    idx = np.sort(np.concatenate(take))
     return split.num[idx], split.mask[idx]
+
+
+def _field_presence(split, D: int, C: int, chunk: int = 4_000_000) -> dict:
+    """{source index: [field indices]}: the numerics observed and the categoricals ever set in
+    at least one row of that source (hour and dow are categoricals here and always set). the
+    tokeniser packs the event encoder's input with these lists"""
+    n = len(split)
+    seen = {}
+    for s0 in range(0, n, chunk):
+        src = np.asarray(split.src[s0 : s0 + chunk])
+        mask = np.asarray(split.mask[s0 : s0 + chunk])
+        cat = np.asarray(split.cat[s0 : s0 + chunk])
+        for s_ in np.unique(src):
+            rows = src == s_
+            have = np.concatenate([mask[rows].any(0), (cat[rows] != 0).any(0)])
+            seen[int(s_)] = have if int(s_) not in seen else (seen[int(s_)] | have)
+    return {s_: [int(f) for f in np.flatnonzero(v)] for s_, v in seen.items()}
 
 
 class ShardedSequences:
@@ -109,6 +132,7 @@ class ShardedSequences:
         dtype = torch.int16 if tok.vocab < TOKEN_DTYPE_LIMIT else torch.int32
         self.tokens = torch.empty((self.n, n_fields), dtype=dtype, device=device)
         self.dt_log = torch.empty(self.n, dtype=torch.float32, device=device)
+        src_all = np.zeros(self.n, dtype=np.int16)
         chunk = 1 << 18
         t0 = time.time()
         prev_ts = None
@@ -126,6 +150,7 @@ class ShardedSequences:
                     local = g[sel] - lo
                     u, inv = np.unique(local, return_inverse=True)
                     src[sel] = sp.src[u][inv].astype(np.int64)
+            src_all[s : s + len(g)] = src
             bs = start_sorted[self.positions[s : s + chunk]]
             # seconds since the previous event of the same block; the first event of a block has none
             ts_prev = np.concatenate([[prev_ts if prev_ts is not None else np.nan], ts[:-1]])
@@ -140,6 +165,11 @@ class ShardedSequences:
             self.dt_log[s : s + len(g)] = torch.where(dtt >= 0, torch.log1p(dtt.clamp(min=0)), torch.zeros_like(dtt))
         self.pos_t = torch.from_numpy(self.positions).to(device)
         self.device = device
+        # the targets by source: a training step draws its windows from one source, so the
+        # event encoder runs at that source's packed width (and the sampler can balance sources)
+        src_of = lambda targets: src_all[np.searchsorted(self.positions, targets)]  # noqa: E731
+        self.train_by_source = {int(k): self.train_targets[src_of(self.train_targets) == k] for k in np.unique(src_of(self.train_targets))}
+        self.val_by_source = {int(k): self.val_targets[src_of(self.val_targets) == k] for k in np.unique(src_of(self.val_targets))} if len(self.val_targets) else {}
         gb = (self.tokens.numel() * self.tokens.element_size() + self.dt_log.numel() * 4) / 2**30
         log(f"rank {rank}/{world}: {self.n:,} rows of {n_all:,} resident ({gb:.2f} GB as token ids), "
             f"{len(self.train_targets):,} train targets, {len(self.val_targets):,} val targets, tokenised in {time.time() - t0:.0f}s")
@@ -160,35 +190,50 @@ class ShardedSequences:
         return toks, dt, valid
 
 
-def _loss(model, tok, toks, dt, valid, cfg, gen=None):
+def _loss(model, tok, toks, dt, valid, cfg, gen=None, fields=None):
     obs = tok.observed(toks) & valid.unsqueeze(-1)
     corrupted, masked = mask_tokens(toks, valid, tok.mask_id, cfg.mask_token, cfg.mask_event, cfg.mask_field, generator=gen)
-    states, tok_out = model(corrupted, dt, valid)
+    states, tok_out = model(corrupted, dt, valid, fields)
     # the next-event targets are the true tokens; the states have seen only earlier events, which
     # were corrupted - that is a regulariser, not a leak
     nll = model.next_event_nll(states, toks, obs)
     next_loss = nll.sum() / obs.sum().clamp(min=1)
-    mlm = model.masked_nll(states, tok_out, toks, masked)
-    return next_loss + cfg.mlm_weight * mlm, next_loss.detach(), mlm.detach(), int(obs.sum())
+    mlm = model.masked_nll(states, tok_out, toks, masked, fields)
+    encoded = toks.shape[0] * toks.shape[1] * (toks.shape[2] if fields is None else len(fields))
+    return next_loss + cfg.mlm_weight * mlm, next_loss.detach(), mlm.detach(), int(obs.sum()), encoded
 
 
 @torch.no_grad()
-def _evaluate(model, tok, shard: ShardedSequences, targets: np.ndarray, L: int, batch: int):
+def _evaluate(model, tok, shard: ShardedSequences, targets: dict, L: int, batch: int):
+    """val next-event nll per observed token over the given windows ({source: end positions};
+    the last event of each window, like a deployment would), per field and per source. the
+    windows of one source go through together, at that source's packed width"""
     model.eval()
     tot, n = 0.0, 0
     per_field = None
-    for s in range(0, len(targets), batch):
-        toks, dt, valid = shard.windows(targets[s : s + batch], L)
-        obs = tok.observed(toks) & valid.unsqueeze(-1)
-        states, _ = model(toks, dt, valid)
-        nll = model.next_event_nll(states, toks, obs)
-        # the last position is the row the window was chosen for; score that one, like a deployment would
-        last = nll[:, L - 1]
-        o = obs[:, L - 1]
-        tot += float(last.sum())
-        n += int(o.sum())
-        pf = torch.stack([last.sum(0), o.sum(0).float()])
-        per_field = pf if per_field is None else per_field + pf
+    by_src = {}
+    src_f = tok.n_fields - 2
+    off = int(tok.offsets[src_f])
+    for src_k, tg in targets.items():
+        fields = tok.fields_for_source(src_k, shard.device)
+        for s in range(0, len(tg), batch):
+            toks, dt, valid = shard.windows(tg[s : s + batch], L)
+            obs = tok.observed(toks) & valid.unsqueeze(-1)
+            states, _ = model(toks, dt, valid, fields)
+            nll = model.next_event_nll(states, toks, obs)
+            # the last position is the row the window was chosen for; score that one, like a deployment would
+            last = nll[:, L - 1]
+            o = obs[:, L - 1]
+            tot += float(last.sum())
+            n += int(o.sum())
+            pf = torch.stack([last.sum(0), o.sum(0).float()])
+            per_field = pf if per_field is None else per_field + pf
+            srcs = toks[:, L - 1, src_f] - off
+            for k in torch.unique(srcs).tolist():
+                m = srcs == k
+                a = by_src.setdefault(int(k), [0.0, 0])
+                a[0] += float(last[m].sum())
+                a[1] += int(o[m].sum())
     model.train()
     fields = {}
     if per_field is not None:
@@ -196,10 +241,11 @@ def _evaluate(model, tok, shard: ShardedSequences, targets: np.ndarray, L: int, 
             c = float(per_field[1, j])
             if c > 0:
                 fields[name] = round(float(per_field[0, j]) / c, 4)
-    return (tot / max(n, 1)), fields
+    sources = {k: round(v[0] / v[1], 4) for k, v in sorted(by_src.items()) if v[1] > 0}
+    return (tot / max(n, 1)), fields, sources
 
 
-def pretrain(cfg, prepared="default", name=None, run_dir: Path | None = None):
+def pretrain(cfg, prepared="default", name=None, run_dir: Path | None = None, resume: bool = False):
     dist, rank, world, local = _dist_init()
     tc = cfg.txfm
     ensure_dirs()
@@ -224,13 +270,26 @@ def pretrain(cfg, prepared="default", name=None, run_dir: Path | None = None):
     from .data import schema
 
     n_sources = max(n_sources, len(schema.SOURCES))
-    # quantile edges from a sample of train rows; the same seed everywhere, so every rank builds the same tokeniser
-    num_s, mask_s = _sample_rows(tr, 500_000, np.random.default_rng(tc.seed))
-    tok = Tokeniser.fit(num_s, mask_s, data.numeric_names, [c["size"] for c in meta["categorical"]], n_sources,
-                        n_bins=tc.n_bins, dt_bins=tc.dt_bins)
-    del num_s, mask_s
+    state = None
+    if resume:
+        sp = run_dir / "state.pt"
+        if not sp.exists():
+            raise SystemExit(f"nothing to resume: {sp} is missing")
+        state = torch.load(sp, map_location="cpu", weights_only=False)
+        tok = Tokeniser(**state["tokeniser"])
+        log(f"resuming {run_dir.name} from step {state['step']} (best val next-event nll {state['best']:.4f})")
+    else:
+        # quantile edges from a sample of train rows; the same seed everywhere, so every rank builds the same tokeniser
+        num_s, mask_s = _sample_rows(tr, 500_000, np.random.default_rng(tc.seed))
+        presence = _field_presence(tr, len(data.numeric_names), len(meta["categorical"])) if tc.pack else None
+        tok = Tokeniser.fit(num_s, mask_s, data.numeric_names, [c["size"] for c in meta["categorical"]], n_sources,
+                            n_bins=tc.n_bins, dt_bins=tc.dt_bins, source_fields=presence)
+        del num_s, mask_s
+    src_names = {v: k for k, v in meta["source_index"].items()}
     log(f"tokeniser: {tok.n_fields} fields, vocabulary {tok.vocab} ({tok.D} numerics x {tc.n_bins} buckets, "
         f"{tok.C} categoricals, {n_sources} sources, {tc.dt_bins} dt buckets)")
+    if tok.source_fields:
+        log("packing: fields per source " + ", ".join(f"{src_names.get(k, k)} {len(v)}" for k, v in sorted(tok.source_fields.items())))
 
     shard = ShardedSequences(data, tok, rank, world, device, log=log, max_rows_per_source=tc.max_rows_per_source, seed=tc.seed)
     if len(shard.train_targets) == 0:
@@ -248,31 +307,53 @@ def pretrain(cfg, prepared="default", name=None, run_dir: Path | None = None):
         ddp = DistributedDataParallel(model, device_ids=[local] if device.type == "cuda" else None)
     opt = torch.optim.AdamW(ddp.parameters(), lr=tc.lr, weight_decay=tc.weight_decay, betas=(0.9, 0.95))
     use_amp = tc.amp and device.type == "cuda" and torch.cuda.is_bf16_supported()
+    fwd = torch.compile(model, dynamic=True) if tc.compile else model
+    # a step's windows come from one source: the event encoder then runs at that source's packed
+    # width, and sources are drawn with p ~ rows^alpha (alpha 1 reproduces drawing rows at random)
+    src_ids = np.array(sorted(shard.train_by_source))
+    src_w = np.array([len(shard.train_by_source[k]) for k in src_ids], dtype=np.float64) ** tc.source_alpha
+    src_p = src_w / src_w.sum()
+    log("source mix per step (alpha %.2f): " % tc.source_alpha + ", ".join(f"{src_names.get(int(k), k)} {p:.3f}" for k, p in zip(src_ids, src_p)))
+    first_step, best, bad = 1, float("inf"), 0
+    if state is not None:
+        model.load_state_dict(state["model"])
+        opt.load_state_dict(state["opt"])
+        first_step, best, bad = int(state["step"]) + 1, float(state["best"]), int(state["bad"])
+        rng = np.random.default_rng(tc.seed + rank + first_step)
+        del state
 
-    if rank == 0:
+    if rank == 0 and not resume:
         info = {"name": run_dir.name, "kind": "pretrain", "started": time.strftime("%Y-%m-%dT%H:%M:%S"), "config": to_dict(cfg),
                 "prepared": prepared, "prepared_meta": {k: meta[k] for k in ("name", "created", "counts", "sources", "max_rows_per_source")},
                 "device": str(device), "world_size": world, "device_name": torch.cuda.get_device_name(0) if device.type == "cuda" else platform.processor() or platform.machine(),
                 "host": socket.gethostname(), "torch": torch.__version__, "params": n_params, "pid": os.getpid(),
-                "schema_version": meta.get("schema_version"), "fraudvae": __version__, "vocab": tok.vocab, "n_fields": tok.n_fields}
+                "schema_version": meta.get("schema_version"), "fraudvae": __version__, "vocab": tok.vocab, "n_fields": tok.n_fields,
+                "packing": bool(tok.source_fields), "fields_per_source": {src_names.get(k, str(k)): len(v) for k, v in sorted(tok.source_fields.items())},
+                "source_alpha": tc.source_alpha, "source_mix": {src_names.get(int(k), str(k)): round(float(p), 4) for k, p in zip(src_ids, src_p)},
+                "compile": bool(tc.compile), "amp": bool(use_amp)}
         (run_dir / "run.json").write_text(json.dumps(info, indent=1))
-        write_status(run_dir, state="running", epoch=0, epochs=1, step=0, steps=tc.steps, pid=os.getpid())
+    if rank == 0:
+        write_status(run_dir, state="running", epoch=0, epochs=1, step=first_step - 1, steps=tc.steps, pid=os.getpid())
     metrics_f = open(run_dir / "metrics.jsonl", "a") if rank == 0 else None
 
-    val_targets = shard.val_targets
-    if len(val_targets) > tc.eval_windows:
-        val_targets = np.sort(np.random.default_rng(tc.seed).choice(val_targets, tc.eval_windows, replace=False))
-    best, bad, t_start, t0 = float("inf"), 0, time.time(), time.time()
-    sums = {"loss": 0.0, "next": 0.0, "mlm": 0.0, "tokens": 0}
+    # validation windows: the same number from every source, so the number that picks the
+    # checkpoint is not the biggest source's alone
+    vrng = np.random.default_rng(tc.seed)
+    per = max(1, tc.eval_windows // max(1, len(shard.val_by_source)))
+    val_targets = {k: np.sort(vrng.choice(v, min(per, len(v)), replace=False)) for k, v in shard.val_by_source.items()}
+    t_start, t0 = time.time(), time.time()
+    sums = {"loss": 0.0, "next": 0.0, "mlm": 0.0, "tokens": 0, "encoded": 0}
+    totals = {"tokens": 0, "encoded": 0, "events": 0}
     seen_steps = 0
     model.train()
-    for step in range(1, tc.steps + 1):
+    for step in range(first_step, tc.steps + 1):
         for g in opt.param_groups:
             g["lr"] = lr_cosine(step - 1, tc.lr, tc.warmup, tc.steps)
-        ends = rng.choice(shard.train_targets, tc.batch_size, replace=True)
+        src_k = int(src_ids[rng.choice(len(src_ids), p=src_p)])
+        ends = rng.choice(shard.train_by_source[src_k], tc.batch_size, replace=True)
         toks, dt, valid = shard.windows(ends, tc.window)
         with torch.autocast("cuda", dtype=torch.bfloat16, enabled=use_amp):
-            loss, next_l, mlm_l, n_tok = _loss(ddp, tok, toks, dt, valid, tc) if not dist else _loss(ddp.module, tok, toks, dt, valid, tc)
+            loss, next_l, mlm_l, n_tok, n_enc = _loss(fwd, tok, toks, dt, valid, tc, fields=tok.fields_for_source(src_k, device))
         if not torch.isfinite(loss):
             log(f"non-finite loss at step {step}; step skipped")
             opt.zero_grad(set_to_none=True)
@@ -295,22 +376,29 @@ def pretrain(cfg, prepared="default", name=None, run_dir: Path | None = None):
         sums["next"] += float(next_l)
         sums["mlm"] += float(mlm_l)
         sums["tokens"] += n_tok
+        sums["encoded"] += n_enc
+        totals["tokens"] += n_tok
+        totals["encoded"] += n_enc
+        totals["events"] += int(valid.sum())
         if step % 50 == 0 and rank == 0:
             el = time.time() - t0
             log(f"step {step}/{tc.steps} loss {sums['loss'] / seen_steps:.4f} next {sums['next'] / seen_steps:.4f} "
                 f"mlm {sums['mlm'] / seen_steps:.4f} lr {lr_cosine(step - 1, tc.lr, tc.warmup, tc.steps):.2e} "
-                f"{sums['tokens'] * world / el:,.0f} tok/s, {(tc.steps - step) * el / max(1, seen_steps) / 60:.1f} min left")
+                f"{sums['tokens'] * world / el:,.0f} tok/s ({sums['encoded'] * world / el:,.0f} encoded/s), "
+                f"{(tc.steps - step) * el / max(1, seen_steps) / 60:.1f} min left")
             write_status(run_dir, state="running", epoch=0, epochs=1, step=step, steps=tc.steps, progress=step / tc.steps,
                          loss=sums["loss"] / seen_steps, elapsed=time.time() - t_start)
         if step % tc.eval_every == 0 or step == tc.steps:
-            val_nll, fields = _evaluate(model, tok, shard, val_targets, tc.window, max(16, tc.batch_size // 2)) if len(val_targets) else (float("nan"), {})
+            val_nll, fields, by_src = _evaluate(model, tok, shard, val_targets, tc.window, max(16, tc.batch_size // 2)) if val_targets else (float("nan"), {}, {})
             if dist:
                 v = torch.tensor([val_nll if val_nll == val_nll else 0.0, 1.0 if val_nll == val_nll else 0.0], device=device)
                 dist.all_reduce(v)
                 val_nll = float(v[0] / v[1]) if v[1] > 0 else float("nan")
             rec = {"step": step, "train_loss": sums["loss"] / max(1, seen_steps), "train_next": sums["next"] / max(1, seen_steps),
                    "train_mlm": sums["mlm"] / max(1, seen_steps), "val_next_nll": val_nll, "val_fields": fields,
-                   "tokens_per_sec": sums["tokens"] * world / max(1e-6, time.time() - t0), "elapsed": time.time() - t_start}
+                   "val_sources": {src_names.get(k, str(k)): v for k, v in by_src.items()},
+                   "tokens_per_sec": sums["tokens"] * world / max(1e-6, time.time() - t0),
+                   "encoded_per_sec": sums["encoded"] * world / max(1e-6, time.time() - t0), "elapsed": time.time() - t_start}
             if rank == 0:
                 metrics_f.write(json.dumps(rec) + "\n")
                 metrics_f.flush()
@@ -323,23 +411,38 @@ def pretrain(cfg, prepared="default", name=None, run_dir: Path | None = None):
                 bad = 0
                 if rank == 0:
                     save_checkpoint(run_dir / "txfm.pt", model, tok, meta, to_dict(cfg),
-                                    extra={"step": step, "best_val_next_nll": best, "val_fields": fields})
+                                    extra={"step": step, "best_val_next_nll": best, "val_fields": fields,
+                                           "val_sources": rec["val_sources"]})
                     log("  new best, txfm.pt saved")
             else:
                 bad += 1
-                if bad >= tc.patience:
-                    log(f"  no improvement for {bad} evals, stopping")
-                    break
-            sums = {"loss": 0.0, "next": 0.0, "mlm": 0.0, "tokens": 0}
+            if rank == 0:
+                # everything a --resume needs to carry on from this eval
+                torch.save({"model": model.state_dict(), "opt": opt.state_dict(), "step": step, "best": best, "bad": bad,
+                            "tokeniser": tok.config()}, run_dir / "state.pt")
+            if bad >= tc.patience:
+                log(f"  no improvement for {bad} evals, stopping")
+                break
+            sums = {"loss": 0.0, "next": 0.0, "mlm": 0.0, "tokens": 0, "encoded": 0}
             seen_steps = 0
             t0 = time.time()
+    if dist:
+        tt = torch.tensor([totals["tokens"], totals["encoded"], totals["events"]], dtype=torch.float64, device=device)
+        dist.all_reduce(tt)
+        totals = {"tokens": int(tt[0]), "encoded": int(tt[1]), "events": int(tt[2])}
     if rank == 0:
         if not (run_dir / "txfm.pt").exists():
             save_checkpoint(run_dir / "txfm.pt", model, tok, meta, to_dict(cfg), extra={"step": tc.steps, "best_val_next_nll": best})
         summary = {"created": time.strftime("%Y-%m-%dT%H:%M:%S"), "prepared": prepared, "params": n_params, "vocab": tok.vocab,
                    "n_fields": tok.n_fields, "window": tc.window, "d_model": tc.d_model, "steps": tc.steps, "world_size": world,
                    "best_val_next_nll": best if best < float("inf") else None, "seconds": round(time.time() - t_start, 1),
-                   "rows_resident_rank0": int(shard.n)}
+                   "rows_resident_rank0": int(shard.n), "packing": bool(tok.source_fields), "source_alpha": tc.source_alpha,
+                   "first_step": first_step, "observed_tokens_seen": totals["tokens"], "encoded_tokens_seen": totals["encoded"],
+                   "event_visits": totals["events"]}
+        if (run_dir / "txfm.json").exists() and resume:
+            prev = json.loads((run_dir / "txfm.json").read_text())
+            for k in ("observed_tokens_seen", "encoded_tokens_seen", "event_visits", "seconds"):
+                summary[k] = round(summary[k] + prev.get(k, 0), 1)
         (run_dir / "txfm.json").write_text(json.dumps(summary, indent=1))
         write_status(run_dir, state="done", epoch=1, epochs=1, step=tc.steps, steps=tc.steps, best=best, elapsed=time.time() - t_start)
         metrics_f.close()
@@ -360,6 +463,7 @@ def main(argv=None):
     ap.add_argument("--batch-size", type=int)
     ap.add_argument("--lr", type=float)
     ap.add_argument("--device", default=None)
+    ap.add_argument("--resume", action="store_true", help="carry on from the run's state.pt (same --name / --run-dir)")
     args = ap.parse_args(argv)
     cfg = load_config(args.config)
     if args.steps:
@@ -370,7 +474,7 @@ def main(argv=None):
         cfg.txfm.lr = args.lr
     if args.device:
         cfg.device = args.device
-    pretrain(cfg, prepared=args.prepared, name=args.name, run_dir=args.run_dir)
+    pretrain(cfg, prepared=args.prepared, name=args.name, run_dir=args.run_dir, resume=args.resume)
     return 0
 
 

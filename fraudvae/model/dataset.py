@@ -214,6 +214,21 @@ class SequenceIndex:
                 ts[sel] = sp.ts[uniq][inv]
         return num, mask, cat, ts
 
+    def gather_src(self, gids: np.ndarray) -> np.ndarray:
+        """global ids (-1 = padding) -> source index [n] int64, 0 for padding"""
+        gids = np.asarray(gids, dtype=np.int64)
+        src = np.zeros(len(gids), dtype=np.int64)
+        for lo, hi, name in self.ranges:
+            sp = self.splits.get(name)
+            if sp is None:
+                continue
+            sel = np.flatnonzero((gids >= lo) & (gids < hi))
+            if len(sel) == 0:
+                continue
+            uniq, inv = np.unique(gids[sel] - lo, return_inverse=True)
+            src[sel] = sp.src[uniq][inv].astype(np.int64)
+        return src
+
     def history(self, split: str, local_idx, window: int, device="cpu"):
         """the `window` rows before each given row, oldest first:
         (h_num [n, L, D], h_mask [n, L, D], h_cat [n, L, C], h_dt [n, L], h_valid [n, L]) as tensors.
