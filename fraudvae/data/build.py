@@ -19,6 +19,11 @@ import sys
 import time
 from pathlib import Path
 
+try:
+    import fcntl
+except ImportError:  # windows
+    fcntl = None
+
 import numpy as np
 import pandas as pd
 import pyarrow as pa
@@ -270,6 +275,32 @@ def load_stats() -> dict:
     return {"sources": {}}
 
 
+def merge_source(key: str, s: dict, sample: pd.DataFrame) -> dict:
+    """add one built source to stats.json and samples.parquet. both are re-read under a lock
+    right before they are written, so builds running side by side (one process per source,
+    the way a big corpus is built on a wide box) keep each other's entries"""
+    lock = PROCESSED_DIR / ".build.lock"
+    with open(lock, "w") as fh:
+        if fcntl is not None:
+            fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            stats = load_stats()
+            stats["sources"][key] = s
+            stats["generated"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+            stats["schema_version"] = schema.SCHEMA_VERSION
+            STATS.write_text(json.dumps(stats, indent=1))
+            frames = []
+            if SAMPLES.exists():
+                old = pd.read_parquet(SAMPLES)
+                frames.append(old[old["source"] != key])
+            frames.append(sample)
+            pd.concat(frames, ignore_index=True).to_parquet(SAMPLES, index=False)
+        finally:
+            if fcntl is not None:
+                fcntl.flock(fh, fcntl.LOCK_UN)
+    return stats
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--source", action="append")
@@ -281,10 +312,6 @@ def main(argv=None):
     keys = args.source or ORDER
 
     stats = load_stats()
-    samples = []
-    if SAMPLES.exists():
-        old = pd.read_parquet(SAMPLES)
-        samples.append(old[~old["source"].isin(keys)])
     built = []
     for key in keys:
         if not available(raw_dir, key):
@@ -295,15 +322,9 @@ def main(argv=None):
         except MissingData as e:
             print(f"[{key}] {e}")
             continue
-        stats["sources"][key] = s
-        samples.append(sample)
+        # written after every source so a crash on tabformer doesn't lose the rest
+        stats = merge_source(key, s, sample)
         built.append(key)
-        # write after every source so a crash on tabformer doesn't lose the rest
-        stats["generated"] = time.strftime("%Y-%m-%dT%H:%M:%S")
-        stats["schema_version"] = schema.SCHEMA_VERSION
-        STATS.write_text(json.dumps(stats, indent=1))
-        if samples:
-            pd.concat(samples, ignore_index=True).to_parquet(SAMPLES, index=False)
 
     total = sum(s["rows"] for s in stats["sources"].values())
     fraud = sum(s["fraud"] for s in stats["sources"].values())

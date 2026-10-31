@@ -33,6 +33,9 @@ class Source:
     # whose listing names no licence is not redistributed, whatever everyone else does
     redistributable: bool = False
     license_url: str = ""
+    # the key of a source whose raw folder holds the same archive (the six amlworld variants
+    # ship in one 8 GB zip): its folder is searched too before a download is asked for
+    shares_archive_with: str = ""
 
 
 SOURCES: dict[str, Source] = {
@@ -241,6 +244,7 @@ SOURCES: dict[str, Source] = {
         notes="v6: one of the five other variants in the amlworld zip; the adapter pulls it out of the zip under "
               "data/raw/amlworld/ if its own folder is empty. not in any shipped generation yet",
         redistributable=True,
+        shares_archive_with="amlworld",
         license_url="https://cdla.dev/sharing-1-0/",
     ),
     "amlworld_hi_medium": Source(
@@ -260,6 +264,7 @@ SOURCES: dict[str, Source] = {
         notes="v6: one of the five other variants in the amlworld zip; the adapter pulls it out of the zip under "
               "data/raw/amlworld/ if its own folder is empty. not in any shipped generation yet",
         redistributable=True,
+        shares_archive_with="amlworld",
         license_url="https://cdla.dev/sharing-1-0/",
     ),
     "amlworld_li_medium": Source(
@@ -279,6 +284,7 @@ SOURCES: dict[str, Source] = {
         notes="v6: one of the five other variants in the amlworld zip; the adapter pulls it out of the zip under "
               "data/raw/amlworld/ if its own folder is empty. not in any shipped generation yet",
         redistributable=True,
+        shares_archive_with="amlworld",
         license_url="https://cdla.dev/sharing-1-0/",
     ),
     "amlworld_hi_large": Source(
@@ -298,6 +304,7 @@ SOURCES: dict[str, Source] = {
         notes="v6: one of the five other variants in the amlworld zip; the adapter pulls it out of the zip under "
               "data/raw/amlworld/ if its own folder is empty. not in any shipped generation yet",
         redistributable=True,
+        shares_archive_with="amlworld",
         license_url="https://cdla.dev/sharing-1-0/",
     ),
     "amlworld_li_large": Source(
@@ -317,6 +324,7 @@ SOURCES: dict[str, Source] = {
         notes="v6: one of the five other variants in the amlworld zip; the adapter pulls it out of the zip under "
               "data/raw/amlworld/ if its own folder is empty. not in any shipped generation yet",
         redistributable=True,
+        shares_archive_with="amlworld",
         license_url="https://cdla.dev/sharing-1-0/",
     ),
 }

@@ -29,7 +29,7 @@ import pyarrow.csv as pacsv
 
 from .. import entities, velocity
 from ..schema import cat_code, time_split_codes
-from .base import MissingData, _candidate_archives, chunked_frames, extract, release_memory, require, source_dir
+from .base import chunked_frames, release_memory, require, source_dir
 
 KEY = "amlworld"
 CHUNK = 1_000_000
@@ -105,17 +105,9 @@ def _scenarios(raw_dir: Path, keys: np.ndarray, key: str = KEY, prefix: str = "H
 
 def _locate(raw_dir: Path, key: str, prefix: str) -> Path:
     """the variant's csv: in its own raw folder, or pulled out of the shared amlworld zip
-    (data/raw/amlworld/) into its own folder, so one 8 GB download serves all six variants"""
-    try:
-        return require(raw_dir, key, f"{prefix}_Trans.csv|{prefix}_Trans.csv.gz")
-    except MissingData:
-        if key == KEY:
-            raise
-    for archive in _candidate_archives(raw_dir, KEY):
-        extract(archive, source_dir(raw_dir, key), members=(f"{prefix}_Trans.csv", f"{prefix}_Patterns.txt"))
-        if (source_dir(raw_dir, key) / f"{prefix}_Trans.csv").exists():
-            return require(raw_dir, key, f"{prefix}_Trans.csv")
-    raise MissingData(f"{key}: {prefix}_Trans.csv not found under {source_dir(raw_dir, key)} or inside the amlworld zip")
+    (data/raw/amlworld/, the registry's shares_archive_with) into its own folder, so one 8 GB
+    download serves all six variants"""
+    return require(raw_dir, key, f"{prefix}_Trans.csv|{prefix}_Trans.csv.gz")
 
 
 def load(raw_dir: Path, max_rows: int | None = None) -> Iterator[pd.DataFrame]:
@@ -157,12 +149,20 @@ def load_variant(raw_dir: Path, key: str, prefix: str, max_rows: int | None = No
     scen = np.zeros(n, dtype=np.int8)
     flagged = np.flatnonzero(is_fraud == 1)
     if len(flagged):
-        lines = pacsv.read_csv(path, read_options=pacsv.ReadOptions(column_names=["line"], skip_rows=1, block_size=64 << 20),
-                               parse_options=pacsv.ParseOptions(delimiter="\x01", quote_char=False))
-        if max_rows:
-            lines = lines.slice(0, max_rows)
-        flagged_lines = lines["line"].take(pa.array(flagged)).to_pylist()
-        del lines
+        # streamed: the file as one string column is 17 GB for the large variants, past the
+        # 2 GB offsets a single arrow string array can hold, and only the flagged lines matter
+        flagged_lines = []
+        reader = pacsv.open_csv(path, read_options=pacsv.ReadOptions(column_names=["line"], skip_rows=1, block_size=64 << 20),
+                                parse_options=pacsv.ParseOptions(delimiter="\x01", quote_char=False))
+        offset = 0
+        for batch in reader:
+            lo, hi = np.searchsorted(flagged, [offset, offset + len(batch)])
+            if hi > lo:
+                flagged_lines += batch.column(0).take(pa.array(flagged[lo:hi] - offset)).to_pylist()
+            offset += len(batch)
+            if offset > flagged[-1]:
+                break
+        del reader
         keys = np.array([ln.rsplit(",", 1)[0] for ln in flagged_lines], dtype=object)
         scen[flagged] = _scenarios(raw_dir, keys, key, prefix)
         del flagged_lines, keys

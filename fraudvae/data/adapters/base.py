@@ -58,6 +58,10 @@ def _candidate_archives(raw_dir: Path, key: str):
     candidates = []
     if sdir.exists():
         candidates += sorted(sdir.rglob("*"))   # clones nest their archives (DS/transactions.zip)
+    if src.shares_archive_with:
+        shared = source_dir(raw_dir, src.shares_archive_with)
+        if shared.exists():
+            candidates += sorted(shared.rglob("*"))
     if Path(raw_dir).exists():
         candidates += sorted(Path(raw_dir).glob("*"))
     for p in candidates:
