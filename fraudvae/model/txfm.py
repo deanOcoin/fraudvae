@@ -630,7 +630,10 @@ class TxfmScorer:
         t0 = time.time()
         feats = self.features_split(split, mine, seq, split_name, device=device, batch_size=batch_size, stride=stride)
         path = cache_dir / f"txfm_{split_name}.{part}of{parts}.npy"
-        np.save(path, np.concatenate([mine[:, None].astype(np.float32), feats], axis=1))
+        np.save(path, feats)
+        # the row ids beside the features, as integers: a float32 id is exact only below 2^24,
+        # and a 30M-row split rounded ids in a part file once
+        np.save(cache_dir / f"txfm_{split_name}.{part}of{parts}.rows.npy", mine.astype(np.int64))
         log(f"  txfm cache: {split_name} part {part + 1}/{parts}, {len(mine):,} rows in {time.time() - t0:.0f}s -> {path.name}")
         return path
 
@@ -639,16 +642,17 @@ class TxfmScorer:
         """assemble txfm_<split>.npy [n_rows, dim] from every part present; every row must be
         covered exactly once"""
         cache_dir = Path(cache_dir)
-        parts = sorted(cache_dir.glob(f"txfm_{split_name}.*of*.npy"))
+        parts = sorted(p for p in cache_dir.glob(f"txfm_{split_name}.*of*.npy") if not p.name.endswith(".rows.npy"))
         if not parts:
             raise SystemExit(f"no cache parts for {split_name} under {cache_dir}")
         first = np.load(parts[0], mmap_mode="r")
-        out = np.lib.format.open_memmap(cache_dir / f"txfm_{split_name}.tmp.npy", "w+", np.float32, (n_rows, first.shape[1] - 1))
+        out = np.lib.format.open_memmap(cache_dir / f"txfm_{split_name}.tmp.npy", "w+", np.float32, (n_rows, first.shape[1]))
         seen = np.zeros(n_rows, dtype=bool)
         for p_ in parts:
             a = np.load(p_, mmap_mode="r")
-            rows = a[:, 0].astype(np.int64)
-            out[rows] = a[:, 1:]
+            rows = np.load(p_.with_name(p_.name[:-4] + ".rows.npy"))
+            for s in range(0, len(rows), 1_000_000):
+                out[rows[s:s + 1_000_000]] = a[s:s + 1_000_000]
             seen[rows] = True
         if not seen.all():
             raise SystemExit(f"cache parts for {split_name} cover {int(seen.sum()):,} of {n_rows:,} rows")
@@ -658,6 +662,7 @@ class TxfmScorer:
         (cache_dir / f"txfm_{split_name}.tmp.npy").rename(dest)
         for p_ in parts:
             p_.unlink()
+            p_.with_name(p_.name[:-4] + ".rows.npy").unlink()
         return dest
 
     def explain(self, feats_row: np.ndarray, labels: list[str], top: int = 5) -> dict:

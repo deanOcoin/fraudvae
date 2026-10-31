@@ -312,3 +312,21 @@ def test_booster_reads_the_encoder_block(pretrained_txfm, prepared_set, tmp_path
     vae = TabularVAE(va.num.shape[1], [c["size"] for c in data.meta["categorical"]], 11, latent_dim=4, hidden=(16,)).eval()
     r = score_split(vae, va, batch_size=32, n_samples=1, idx=b, booster=bst, txfm=sc, seq=data.seq, split_name="val", keep_features=False)
     assert r["booster"].shape == (50,) and np.allclose(r["booster"], z1, atol=1e-4) and np.isfinite(r["txfm_surprise"]).all()
+
+
+def test_merge_cache_keeps_row_ids_above_two_to_the_24(tmp_path):
+    """the part files keep their row ids as integers: a 30M-row split once had its ids stored as
+    float32, which is exact only below 16,777,216, and the merge indexed past the end"""
+    from fraudvae.model.txfm import TxfmScorer
+
+    n = 2 ** 24 + 3
+    rows = np.arange(n, dtype=np.int64)
+    feats = (rows % 1000).astype(np.float32)[:, None]
+    np.save(tmp_path / "txfm_train.0of1.npy", feats)
+    np.save(tmp_path / "txfm_train.0of1.rows.npy", rows)
+    dest = TxfmScorer.merge_cache(tmp_path, "train", n)
+    out = np.load(dest, mmap_mode="r")
+    assert out.shape == (n, 1)
+    assert float(out[2 ** 24 + 1, 0]) == float((2 ** 24 + 1) % 1000)
+    assert float(out[n - 1, 0]) == float((n - 1) % 1000)
+    assert not list(tmp_path.glob("*of*.npy"))
