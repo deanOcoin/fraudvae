@@ -93,6 +93,7 @@ class TxfmConfig:
     prepared set without labels by `fraudvae pretrain`. `run` names the pretraining run whose
     txfm.pt the post stage reads when boost.txfm_features is on."""
     run: str | None = None         # runs/<run>/txfm.pt (or a path to a txfm.pt) to use in the post stage
+    gate_first: bool = False       # NaN the block for a customer's first event (no history = nothing to say); recorded in booster.json
     d_model: int = 256
     event_layers: int = 2          # 0 = mean of the field embeddings through an mlp instead of a transformer
     history_layers: int = 4

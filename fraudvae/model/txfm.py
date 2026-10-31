@@ -24,6 +24,7 @@ meta it was built on, read back with the project's weights-only loader.
 """
 from __future__ import annotations
 
+import json
 import math
 import time
 from pathlib import Path
@@ -452,6 +453,11 @@ class TxfmScorer:
         self.cache_dir = Path(cache_dir) if cache_dir else None
         self.names = feature_names(tok, self.d_model)
         self.dim = len(self.names)
+        # gate_first: the block is NaN for a customer's first event. without a history the state
+        # is the start token's and the surprise the marginal of the row's own values, an echo of
+        # fields the trees already see; the booster records the choice in booster.json so
+        # calibration, evaluation and the server apply the same one
+        self.gate_first = False
 
     @classmethod
     def load(cls, run_dir: str | Path, device="cpu"):
@@ -462,6 +468,12 @@ class TxfmScorer:
         model, tok, ck = load_txfm(p, device)
         sc = cls(model, tok, device, info={"extra": ck.get("extra", {}), "train_config": ck.get("train_config", {})})
         sc.path = p
+        booster_json = p.parent / "booster.json"
+        if booster_json.exists():
+            try:
+                sc.gate_first = bool(json.loads(booster_json.read_text()).get("txfm_gate_first", False))
+            except (OSError, ValueError):
+                pass
         return sc
 
     def with_cache(self, prepared: str):
@@ -484,6 +496,16 @@ class TxfmScorer:
         return names
 
     @torch.no_grad()
+    def _gated(self, out: np.ndarray, seq, split_name: str, idx) -> np.ndarray:
+        """apply gate_first to a block in the order of idx: NaN where the row is its customer's
+        first event in the sequence index"""
+        if not self.gate_first or seq is None or not split_name:
+            return out
+        idx = np.asarray(idx)
+        hist = seq.positions(split_name, idx).astype(np.int64) - np.asarray(seq.start)[seq.global_ids(split_name, idx)]
+        out[hist <= 0] = np.nan
+        return out
+
     def features(self, num, mask, cat, src, hist=None) -> np.ndarray:
         """[B, dim] float32 for a batch of current rows with their history tensors (any window;
         the last `window - 1` past events are used), or hist None for rows without a past"""
@@ -496,6 +518,8 @@ class TxfmScorer:
             m = src == s_
             h, per_field, total = readout(self.model, self.tok, toks[m], dt[m], valid[m])
             out[m.cpu().numpy()] = np.concatenate([h.cpu().numpy(), per_field.cpu().numpy(), total.cpu().numpy()[:, None]], axis=1)
+        if self.gate_first:
+            out[(~valid[:, :-1].any(dim=1)).cpu().numpy()] = np.nan
         return out
 
     def features_windows(self, split, idx, seq, split_name, device=None, src_override=None, batch_size=8192) -> np.ndarray:
@@ -534,7 +558,7 @@ class TxfmScorer:
                 order = np.argsort(idx, kind="stable")
                 out = np.empty((len(idx), self.dim), dtype=np.float32)
                 out[order] = cached[idx[order]]
-                return out
+                return self._gated(out, seq, split_name, idx)
         device = torch.device(device or self.device)
         L = self.window
         S = int(stride or max(1, L // 4))
@@ -615,7 +639,7 @@ class TxfmScorer:
             total = (nf * o).sum(1) / o.sum(1).clamp(min=1)
             out[order[rows]] = np.concatenate([h.cpu().numpy(), per_field.cpu().numpy(), total.cpu().numpy()[:, None]], axis=1)
         assert row_lo == len(ps)
-        return out
+        return self._gated(out, seq, split_name, idx)
 
     def cache_split(self, split, seq, split_name: str, cache_dir, part: int = 0, parts: int = 1, device=None, batch_size=256,
                     stride=None, log=print) -> Path:

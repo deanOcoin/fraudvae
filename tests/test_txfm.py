@@ -330,3 +330,27 @@ def test_merge_cache_keeps_row_ids_above_two_to_the_24(tmp_path):
     assert float(out[2 ** 24 + 1, 0]) == float((2 ** 24 + 1) % 1000)
     assert float(out[n - 1, 0]) == float((n - 1) % 1000)
     assert not list(tmp_path.glob("*of*.npy"))
+
+
+def test_gate_first_blanks_rows_without_history(pretrained_txfm, prepared_set):
+    """with gate_first the block is NaN for a customer's first event (the encoder has seen no
+    history, so its block only echoes the row's own fields) and unchanged for every other row,
+    through the block pass, the cache path's gather and the server's window path alike"""
+    from fraudvae.model.dataset import PreparedSet
+    from fraudvae.model.txfm import TxfmScorer
+
+    data = PreparedSet(prepared_set, splits=("train",), in_memory=True)
+    tr = data["train"]
+    idx = np.arange(min(300, len(tr)))
+    sc = TxfmScorer.load(pretrained_txfm, device="cpu")
+    plain = sc.features_split(tr, idx, data.seq, "train", batch_size=16)
+    sc.gate_first = True
+    gated = sc.features_split(tr, idx, data.seq, "train", batch_size=16)
+    hist = data.seq.positions("train", idx) - np.asarray(data.seq.start)[data.seq.global_ids("train", idx)]
+    first = hist == 0
+    assert first.any() and (~first).any()
+    assert np.isnan(gated[first]).all()
+    assert np.array_equal(gated[~first], plain[~first], equal_nan=True)   # NaN = a field the source never observes
+    one = sc.features_windows(tr, idx, data.seq, "train")
+    assert np.isnan(one[first]).all()
+    assert np.isfinite(one[~first, : sc.d_model]).all()   # the state is always finite; a surprise is NaN where the field is unobserved

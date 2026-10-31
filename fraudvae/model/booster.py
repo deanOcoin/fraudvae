@@ -430,6 +430,7 @@ def train_booster(run_dir: Path, prepared: str, cfg, log=print, seed=1337, model
         "created": time.strftime("%Y-%m-%dT%H:%M:%S"), "prepared": prepared, "features": names, "n_numeric": n_num,
         "wide_names": list(tr.wide_names), "hist_dim": hist_dim,
         "txfm_dim": txfm_dim, "txfm_names": list(txfm.names) if txfm is not None else [],
+        "txfm_gate_first": bool(getattr(txfm, "gate_first", False)),
         "categorical_index": cat_idx, "params": params, "best_iteration": best, "num_trees": int(model.num_trees()),
         "train_rows": int(len(tr_idx)), "train_fraud": int(tr.y[tr_idx].sum()), "val_rows": int(len(va_idx)),
         "generic_fraction": cfg.generic_fraction, "val_auc_curve": [float(v) for v in curve["val"]["auc"]],
@@ -592,7 +593,8 @@ def train_specialists(run_dir: Path, prepared: str, cfg, log=print, seed=1337, m
         info = {
             "created": time.strftime("%Y-%m-%dT%H:%M:%S"), "prepared": prepared, "source": key, "features": names, "n_numeric": n_num,
             "wide_names": list(tr.wide_names), "hist_dim": hist_dim, "txfm_dim": txfm_dim,
-            "txfm_names": list(txfm.names) if txfm is not None else [], "categorical_index": cat_idx, "params": params, "best_iteration": best,
+            "txfm_names": list(txfm.names) if txfm is not None else [], "txfm_gate_first": bool(getattr(txfm, "gate_first", False)),
+            "categorical_index": cat_idx, "params": params, "best_iteration": best,
             "num_trees": int(model.num_trees()), "train_rows": int(len(tr_idx)), "train_fraud": int(len(fraud)),
             "val_rows": int(len(va_idx)), "val_auroc": auroc(yv, pv), "val_auprc": auprc(yv, pv),
             "val_auc_curve": [float(v) for v in curve["val"]["auc"]],

@@ -260,8 +260,8 @@ Four things about the loop that the first node run taught (`docs/TRAINING_NOTES.
   source reads every field.
 - *One source per step.* A step's windows come from one source, drawn with
   probability proportional to its rows to the power `source_alpha` (1 = by size, as
-  drawing rows at random would; 0.5 = square root, what `txfm_base` uses so 425M
-  rows of one synthetic generator do not set the whole curriculum). The batch then
+  drawing rows at random would; 0.5 = square root, what `txfm_base` uses so the 431M
+  rows of one synthetic generator, 92% of the corpus, do not set the whole curriculum). The batch then
   runs at that source's packed width. Validation windows are the same number from
   every source, and `metrics.jsonl` keeps the next-event nll per source.
 - *The state before a first event.* `states[:, t]` for a customer's first event is
@@ -273,6 +273,12 @@ Four things about the loop that the first node run taught (`docs/TRAINING_NOTES.
 - *Resume.* `state.pt` (weights, optimiser, step, best) is written at every eval;
   `--resume` with the same `--name` carries on, so a run can be gated at 10k steps,
   judged with the booster, and continued rather than restarted.
+- *Only where there is a history.* With `txfm.gate_first` the block is NaN for a
+  customer's first event: there the state is the start token's and the surprise is the
+  marginal of the row's own values, an echo of fields the trees already see, and on a
+  source with no sequences at all (ulb) the gate round's booster overfitted that echo.
+  The booster records the choice in `booster.json` (`txfm_gate_first`) so calibration,
+  evaluation and the server blank the same rows; `v6_full_gated` turns it on.
 
 **Where it reaches the score.** `boost.txfm_features: true` with `txfm.run:
 <pretraining run>` makes the post stage copy `txfm.pt` into the run and append
