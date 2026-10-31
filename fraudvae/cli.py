@@ -5,6 +5,7 @@
   fraudvae examples         write the redistributable example rows (data/examples/) from a build
   fraudvae prepare          parquet -> model arrays
   fraudvae train            train the VAE (+ booster, calibration, evaluation)
+  fraudvae pretrain         v6: pretrain the transaction-sequence encoder (no labels; torchrun for many gpus)
   fraudvae boost RUN        (re)train the supervised booster for a run
   fraudvae post RUN         booster + calibration + evaluation for an existing run (new --config ok)
   fraudvae calibrate RUN    (re)compute thresholds for a run
@@ -85,6 +86,7 @@ COMMANDS = {
     "key": _key,
     "advise": _advise,
     "remote": lambda argv: __import__("fraudvae.remote.cli", fromlist=["main"]).main(argv),
+    "pretrain": lambda argv: __import__("fraudvae.pretrain", fromlist=["main"]).main(argv),
 }
 
 

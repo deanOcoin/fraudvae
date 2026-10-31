@@ -1,0 +1,27 @@
+# v6: the transaction-sequence encoder at the size the plan calls for, on a multi-gpu box:
+#   torchrun --nproc_per_node 8 -m fraudvae.pretrain --config txfm_base --prepared v6 --name txfm-base-a
+# each process keeps its share of the rows on its gpu as token ids (~1.5 GB per 50M rows) and
+# gathers windows there; the model is ~110M params (PRAGMA-M is 100M, TransactionGPT ~10M + embeddings).
+name: txfm_base
+device: cuda
+txfm:
+  d_model: 768
+  event_layers: 4
+  history_layers: 12
+  heads: 12
+  window: 128
+  dropout: 0.1
+  n_bins: 64
+  steps: 60000
+  batch_size: 128        # windows per gpu per step: 8 x 128 x 128 events = 131k events / step
+  lr: 0.0003
+  weight_decay: 0.05
+  warmup: 2000
+  grad_clip: 1.0
+  eval_every: 2000
+  eval_windows: 32768
+  patience: 6
+  amp: true              # bf16; every input is an embedding lookup, so the v5 overflow does not apply. fp32 is one flag away
+notes: >
+  60k steps x 131k events = 7.9B event visits (~16 full passes over 500M rows); the plan's estimate
+  is ~10 h on 8x H200. Watch tok/s in train.log for the first 200 steps before leaving it.

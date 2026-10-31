@@ -1,0 +1,18 @@
+# v6: the transaction-sequence encoder at laptop size, for probes and the ci smoke path.
+# `fraudvae pretrain --config txfm_small --prepared default --name txfm-small-a`
+name: txfm_small
+device: auto
+txfm:
+  d_model: 128
+  event_layers: 1
+  history_layers: 2
+  heads: 4
+  window: 32
+  steps: 3000
+  batch_size: 128
+  lr: 0.0005
+  warmup: 200
+  eval_every: 500
+  eval_windows: 2048
+  amp: false
+notes: ~2.5M params; a few minutes on a laptop cpu for a capped set

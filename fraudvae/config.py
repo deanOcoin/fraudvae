@@ -83,6 +83,40 @@ class BoostConfig:
                                           # is blanked, so a deployment whose labels take a month is a regime the
                                           # booster has seen rather than a NaN it never met. 0 = off
     history_features: bool = False        # v5: the frozen history encoder's read-out as booster features ("hist_*")
+    txfm_features: bool = False           # v6: the pretrained transaction encoder's state and per-field surprise as
+                                          # booster features ("txfm_*"); needs txfm.run (see TxfmConfig)
+
+
+@dataclass
+class TxfmConfig:
+    """v6: the transaction-sequence encoder (model/txfm.py), pretrained on every row of the
+    prepared set without labels by `fraudvae pretrain`. `run` names the pretraining run whose
+    txfm.pt the post stage reads when boost.txfm_features is on."""
+    run: str | None = None         # runs/<run>/txfm.pt (or a path to a txfm.pt) to use in the post stage
+    d_model: int = 256
+    event_layers: int = 2          # 0 = mean of the field embeddings through an mlp instead of a transformer
+    history_layers: int = 4
+    heads: int = 4
+    window: int = 64               # events per training window; also how far back a score looks
+    dropout: float = 0.1
+    n_bins: int = 32               # quantile buckets per numeric field
+    dt_bins: int = 40              # log buckets for the time since the previous event
+    steps: int = 20000             # optimiser steps (the loop is step-based: a window is a sample, not a row)
+    batch_size: int = 256          # windows per step per process
+    lr: float = 3e-4
+    weight_decay: float = 0.01
+    warmup: int = 500
+    grad_clip: float = 1.0
+    mask_token: float = 0.15       # the three masking levels (PRAGMA): single tokens, whole events, whole fields
+    mask_event: float = 0.10
+    mask_field: float = 0.10
+    mlm_weight: float = 1.0        # weight of the masked-field loss next to the next-event loss
+    eval_every: int = 1000
+    eval_windows: int = 4096       # validation windows (ending on val rows) scored at each eval
+    patience: int = 5              # evals without a better validation next-event nll before stopping
+    amp: bool = True               # bf16 autocast on cuda
+    seed: int = 1337
+    max_rows_per_source: int | None = None   # cap the rows loaded per source (laptop probes); None = all
 
 
 @dataclass
@@ -139,6 +173,7 @@ class Config:
     model: ModelConfig = field(default_factory=ModelConfig)
     train: TrainConfig = field(default_factory=TrainConfig)
     boost: BoostConfig = field(default_factory=BoostConfig)
+    txfm: TxfmConfig = field(default_factory=TxfmConfig)
     graph: GraphConfig = field(default_factory=GraphConfig)
     text: TextConfig = field(default_factory=TextConfig)
     behaviour: BehaviourConfig = field(default_factory=BehaviourConfig)
