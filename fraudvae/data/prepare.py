@@ -31,8 +31,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
@@ -46,6 +48,9 @@ DERIVED_CATS = {"hour": 24, "dow": 7}   # numeric column -> number of classes
 SPLITS = ("train", "val", "test")
 BATCH = 1_000_000
 BATCH_WIDE = 200_000   # a 431-column wide block at 1M rows is 1.7 GB per copy; keep the lockstep batches small
+ROWS_PER_TASK = 5_000_000   # a task streams about this many rows of one source (whole row groups)
+ARRAY_DTYPES = {"num": np.float32, "mask": np.uint8, "cat": np.int16, "src": np.int8, "y": np.int8, "row": np.int64,
+                "cust": np.int64, "ts": np.float64, "ent": np.int32}
 
 
 def model_numeric_features():
@@ -108,7 +113,123 @@ def _stats_from_run(run) -> dict:
     return {f["name"]: (float(f["mean"]), float(f["std"])) for f in ck["prepared_meta"]["numeric"]}
 
 
-def prepare(name="default", sources=None, max_rows_per_source=None, seed=1337, out_root=PREPARED_DIR, stats_from_run=None):
+def _default_workers() -> int:
+    return max(1, min(os.cpu_count() or 1, 64))
+
+
+def _source_base(sources, plan) -> dict:
+    """where each source's rows start within each split: sources are laid out one after the
+    other in registry order, each one's rows in the order of its parquet"""
+    base, pos = {}, {s: 0 for s in SPLITS}
+    for key in sources:
+        base[key] = dict(pos)
+        for s in SPLITS:
+            pos[s] += len(plan[key][s])
+    return base
+
+
+def _row_group_ranges(pf, rows_per_task) -> list[tuple[int, int, int]]:
+    """(rg_lo, rg_hi, row_offset) ranges of whole row groups, about rows_per_task rows each"""
+    n = pf.metadata.num_row_groups
+    sizes = [pf.metadata.row_group(i).num_rows for i in range(n)]
+    ranges, lo, acc, off = [], 0, 0, 0
+    for i, sz in enumerate(sizes):
+        acc += sz
+        if acc >= rows_per_task or i == n - 1:
+            ranges.append((lo, i + 1, off))
+            off += acc
+            lo, acc = i + 1, 0
+    return ranges
+
+
+def _stream_task(task):
+    """one task of prepare: the rows of row groups [rg_lo, rg_hi) of one source go to their
+    places in the split memmaps (opened read-write; tasks never share a row). returns
+    (key, rows written per split, rows read, seconds)"""
+    key, rg_lo, rg_hi, row_offset, out, base = task
+    out = Path(out)
+    t0 = time.time()
+    num_feats = model_numeric_features()
+    cat_feats = model_categorical_features()
+    num_names = [f.name for f in num_feats]
+    D, C = len(num_names), len(cat_feats)
+    cols = num_names + [c for c in schema.CATEGORICAL_NAMES] + list(DERIVED_CATS) + ["is_fraud", "ts"] + list(schema.ENTITY_COLUMNS)
+    cols = list(dict.fromkeys(cols))
+    pf = pq.ParquetFile(PROCESSED_DIR / f"{key}.parquet")
+    src_idx = schema.SOURCE_INDEX[key]
+    have = set(pf.schema_arrow.names)
+    missing = [c for c in cols if c not in have]
+    plan = {s: np.load(out / f"_plan_{key}_{s}.npy", mmap_mode="r") for s in SPLITS}
+    arrays = {s: {k: np.load(out / f"{s}_{k}.npy", mmap_mode="r+") for k in ARRAY_DTYPES} for s in SPLITS}
+    wp = PROCESSED_DIR / f"{key}.wide.parquet"
+    wide_iter, wide_arrays = None, None
+    row_groups = list(range(rg_lo, rg_hi))
+    if wp.exists():
+        wide_iter = pq.ParquetFile(wp).iter_batches(batch_size=BATCH_WIDE, row_groups=row_groups)
+        wide_arrays = {s: np.load(out / f"{s}_wide_{key}.npy", mmap_mode="r+") for s in SPLITS}
+    written = {s: 0 for s in SPLITS}
+    offset = row_offset
+    for batch in pf.iter_batches(batch_size=BATCH_WIDE if wide_iter is not None else BATCH, row_groups=row_groups,
+                                 columns=[c for c in cols if c in have]):
+        b = batch.to_pandas()
+        for c in missing:
+            b[c] = np.int8(0) if c in schema.CATEGORICAL_NAMES else (np.int64(-1) if c in schema.ENTITY_COLUMNS else np.float32(np.nan))
+        n_b = len(b)
+        wb = None
+        if wide_iter is not None:
+            wb = next(wide_iter)
+            assert len(wb) == n_b, (key, len(wb), n_b)
+            wb = np.column_stack([wb.column(i).to_numpy(zero_copy_only=False) for i in range(wb.num_columns)])
+            if wb.dtype != np.float32:
+                wb = wb.astype(np.float32)
+        rows = np.arange(offset, offset + n_b)
+        for s in SPLITS:
+            want = plan[s]
+            # rows in this batch that belong to split s (plan ids are sorted)
+            lo, hi = np.searchsorted(want, [offset, offset + n_b])
+            sel = want[lo:hi] - offset
+            if len(sel) == 0:
+                continue
+            sub = b.iloc[sel]
+            a = arrays[s]
+            p, q = base[s] + lo, base[s] + hi
+            if wb is not None:
+                wide_arrays[s][lo:hi] = wb[sel]
+            num = np.empty((len(sel), D), dtype=np.float32)
+            for j, f in enumerate(num_feats):
+                num[:, j] = transform_numeric(sub[f.name].to_numpy(), f.transform)
+            mask = np.isfinite(num)
+            num[~mask] = 0.0
+            a["num"][p:q] = num
+            a["mask"][p:q] = mask.astype(np.uint8)
+            cat = np.zeros((len(sel), C), dtype=np.int16)
+            for j, c in enumerate(cat_feats):
+                if c["name"] in DERIVED_CATS:
+                    v = sub[c["name"]].to_numpy()
+                    ok = np.isfinite(v)
+                    cat[:, j] = np.where(ok, np.nan_to_num(v).astype(np.int16) + 1, 0)
+                else:
+                    cat[:, j] = sub[c["name"]].to_numpy().astype(np.int16)
+            a["cat"][p:q] = cat
+            a["src"][p:q] = src_idx
+            a["y"][p:q] = sub["is_fraud"].to_numpy().astype(np.int8)
+            a["row"][p:q] = rows[sel]
+            cust = sub["customer"].to_numpy().astype(np.int64)
+            a["cust"][p:q] = np.where(cust >= 0, (np.int64(src_idx) << 40) | cust, -1)
+            a["ts"][p:q] = sub["ts"].to_numpy().astype(np.float64)
+            a["ent"][p:q] = np.column_stack([sub[c].to_numpy().astype(np.int64) for c in schema.ENTITY_COLUMNS]).astype(np.int32)
+            written[s] += len(sel)
+        offset += n_b
+    for s in SPLITS:
+        for a in arrays[s].values():
+            a.flush()
+        if wide_arrays is not None:
+            wide_arrays[s].flush()
+    return key, written, offset - row_offset, time.time() - t0
+
+
+def prepare(name="default", sources=None, max_rows_per_source=None, seed=1337, out_root=PREPARED_DIR, stats_from_run=None,
+            workers=None, rows_per_task=ROWS_PER_TASK):
     t0 = time.time()
     fixed_stats = _stats_from_run(stats_from_run) if stats_from_run else None
     sources = sources or _available_sources()
@@ -126,28 +247,22 @@ def prepare(name="default", sources=None, max_rows_per_source=None, seed=1337, o
     plan, counts = _plan(sources, max_rows_per_source, seed)
     print("rows per split:", counts, flush=True)
 
-    arrays = {}
+    base = _source_base(sources, plan)
     for s in SPLITS:
         n = counts[s]
-        arrays[s] = {
-            "num": np.lib.format.open_memmap(out / f"{s}_num.npy", "w+", np.float32, (n, D)),
-            "mask": np.lib.format.open_memmap(out / f"{s}_mask.npy", "w+", np.uint8, (n, D)),
-            "cat": np.lib.format.open_memmap(out / f"{s}_cat.npy", "w+", np.int16, (n, C)),
-            "src": np.lib.format.open_memmap(out / f"{s}_src.npy", "w+", np.int8, (n,)),
-            "y": np.lib.format.open_memmap(out / f"{s}_y.npy", "w+", np.int8, (n,)),
-            "row": np.lib.format.open_memmap(out / f"{s}_row.npy", "w+", np.int64, (n,)),
-            "cust": np.lib.format.open_memmap(out / f"{s}_cust.npy", "w+", np.int64, (n,)),
-            "ts": np.lib.format.open_memmap(out / f"{s}_ts.npy", "w+", np.float64, (n,)),
-            "ent": np.lib.format.open_memmap(out / f"{s}_ent.npy", "w+", np.int32, (n, len(schema.ENTITY_COLUMNS))),
-            "pos": 0,
-        }
+        shapes = {"num": (n, D), "mask": (n, D), "cat": (n, C), "src": (n,), "y": (n,), "row": (n,), "cust": (n,), "ts": (n,),
+                  "ent": (n, len(schema.ENTITY_COLUMNS))}
+        for k, shape in shapes.items():
+            np.lib.format.open_memmap(out / f"{s}_{k}.npy", "w+", ARRAY_DTYPES[k], shape).flush()
+        for key in sources:
+            np.save(out / f"_plan_{key}_{s}.npy", plan[key][s].astype(np.int64))
 
     cols = num_names + [c for c in schema.CATEGORICAL_NAMES] + list(DERIVED_CATS) + ["is_fraud", "ts"] + list(schema.ENTITY_COLUMNS)
     cols = list(dict.fromkeys(cols))
     wide_meta = {}
+    tasks = []
     for key in sources:
         pf = pq.ParquetFile(PROCESSED_DIR / f"{key}.parquet")
-        src_idx = schema.SOURCE_INDEX[key]
         have = set(pf.schema_arrow.names)
         missing = [c for c in cols if c not in have]
         if missing:
@@ -155,76 +270,45 @@ def prepare(name="default", sources=None, max_rows_per_source=None, seed=1337, o
             print(f"  {key}: parquet predates {len(missing)} schema field(s) ({', '.join(missing[:4])}...), treated as unobserved")
         # v5 wide block: the source's own raw columns, read in lockstep with the unified file
         wp = PROCESSED_DIR / f"{key}.wide.parquet"
-        wide_iter, wide_arrays = None, None
         if wp.exists():
             wdesc = json.loads(wp.with_suffix(".json").read_text())["columns"]
             wcols = [c["name"] for c in wdesc]
-            wide_iter = pq.ParquetFile(wp).iter_batches(batch_size=BATCH_WIDE)
-            wide_arrays = {s: np.lib.format.open_memmap(out / f"{s}_wide_{key}.npy", "w+", np.float32, (len(plan[key][s]), len(wcols)))
-                           for s in SPLITS}
+            for s in SPLITS:
+                np.lib.format.open_memmap(out / f"{s}_wide_{key}.npy", "w+", np.float32, (len(plan[key][s]), len(wcols))).flush()
             wide_meta[key] = {"columns": wcols, "kinds": [c["kind"] for c in wdesc],
                               "sizes": [len(c.get("values", [])) + 2 if c["kind"] == "cat" else 0 for c in wdesc],
-                              "offsets": {s: [int(arrays[s]["pos"]), int(arrays[s]["pos"]) + len(plan[key][s])] for s in SPLITS}}
-        offset = 0
-        for batch in pf.iter_batches(batch_size=BATCH_WIDE if wide_iter is not None else BATCH, columns=[c for c in cols if c in have]):
-            b = batch.to_pandas()
-            for c in missing:
-                b[c] = np.int8(0) if c in schema.CATEGORICAL_NAMES else (np.int64(-1) if c in schema.ENTITY_COLUMNS else np.float32(np.nan))
-            n_b = len(b)
-            wb = None
-            if wide_iter is not None:
-                wb = next(wide_iter)
-                assert len(wb) == n_b, (key, len(wb), n_b)
-                wb = np.column_stack([wb.column(i).to_numpy(zero_copy_only=False) for i in range(wb.num_columns)])
-                if wb.dtype != np.float32:
-                    wb = wb.astype(np.float32)
-            rows = np.arange(offset, offset + n_b)
-            for s in SPLITS:
-                want = plan[key][s]
-                # rows in this batch that belong to split s (plan ids are sorted)
-                lo, hi = np.searchsorted(want, [offset, offset + n_b])
-                sel = want[lo:hi] - offset
-                if len(sel) == 0:
-                    continue
-                sub = b.iloc[sel]
-                a = arrays[s]
-                p, q = a["pos"], a["pos"] + len(sel)
-                if wb is not None:
-                    w0 = p - wide_meta[key]["offsets"][s][0]
-                    wide_arrays[s][w0 : w0 + len(sel)] = wb[sel]
-                num = np.empty((len(sel), D), dtype=np.float32)
-                for j, f in enumerate(num_feats):
-                    num[:, j] = transform_numeric(sub[f.name].to_numpy(), f.transform)
-                mask = np.isfinite(num)
-                num[~mask] = 0.0
-                a["num"][p:q] = num
-                a["mask"][p:q] = mask.astype(np.uint8)
-                cat = np.zeros((len(sel), C), dtype=np.int16)
-                for j, c in enumerate(cat_feats):
-                    if c["name"] in DERIVED_CATS:
-                        v = sub[c["name"]].to_numpy()
-                        ok = np.isfinite(v)
-                        cat[:, j] = np.where(ok, np.nan_to_num(v).astype(np.int16) + 1, 0)
-                    else:
-                        cat[:, j] = sub[c["name"]].to_numpy().astype(np.int16)
-                a["cat"][p:q] = cat
-                a["src"][p:q] = src_idx
-                a["y"][p:q] = sub["is_fraud"].to_numpy().astype(np.int8)
-                a["row"][p:q] = rows[sel]
-                cust = sub["customer"].to_numpy().astype(np.int64)
-                a["cust"][p:q] = np.where(cust >= 0, (np.int64(src_idx) << 40) | cust, -1)
-                a["ts"][p:q] = sub["ts"].to_numpy().astype(np.float64)
-                a["ent"][p:q] = np.column_stack([sub[c].to_numpy().astype(np.int64) for c in schema.ENTITY_COLUMNS]).astype(np.int32)
-                a["pos"] = q
-            offset += n_b
-        if wide_arrays is not None:
-            for s in SPLITS:
-                wide_arrays[s].flush()
-            del wide_arrays
-        print(f"  {key}: streamed {offset:,} rows ({time.time() - t0:.0f}s)", flush=True)
+                              "offsets": {s: [int(base[key][s]), int(base[key][s]) + len(plan[key][s])] for s in SPLITS}}
+        for rg_lo, rg_hi, row_offset in _row_group_ranges(pf, rows_per_task):
+            tasks.append((key, rg_lo, rg_hi, row_offset, str(out), base[key]))
 
-    for s in SPLITS:
-        assert arrays[s]["pos"] == counts[s], (s, arrays[s]["pos"], counts[s])
+    # every task writes its own rows of the shared memmaps; the tasks of one source are its row
+    # groups in order, so each one knows its destination from the sorted plan alone
+    workers = max(1, int(workers or _default_workers()))
+    streamed = {key: {s: 0 for s in SPLITS} for key in sources}
+    done_t = time.time()
+    if workers == 1 or len(tasks) == 1:
+        results = [_stream_task(t) for t in tasks]
+    else:
+        results = []
+        with ProcessPoolExecutor(max_workers=min(workers, len(tasks))) as pool:
+            futs = {pool.submit(_stream_task, t): t for t in tasks}
+            for f in as_completed(futs):
+                results.append(f.result())
+    read = {key: 0 for key in sources}
+    for key, rows, n_rows, secs in results:
+        read[key] += n_rows
+        for s in SPLITS:
+            streamed[key][s] += rows[s]
+    for key in sources:
+        print(f"  {key}: streamed {read[key]:,} rows ({time.time() - t0:.0f}s)", flush=True)
+        for s in SPLITS:
+            assert streamed[key][s] == len(plan[key][s]), (key, s, streamed[key][s], len(plan[key][s]))
+        for s in SPLITS:
+            (out / f"_plan_{key}_{s}.npy").unlink()
+    print(f"  streamed {sum(counts.values()):,} rows in {len(tasks)} task(s) on {min(workers, len(tasks))} worker(s) "
+          f"({time.time() - done_t:.0f}s)", flush=True)
+
+    arrays = {s: {k: np.load(out / f"{s}_{k}.npy", mmap_mode="r+") for k in ARRAY_DTYPES} for s in SPLITS}
 
     # standardisation from train legit, observed values only
     # FIXME this is a column-at-a-time loop over a memmap, slow-ish for the full set (minutes). fine for now
@@ -249,7 +333,7 @@ def prepare(name="default", sources=None, max_rows_per_source=None, seed=1337, o
             chunk = (chunk - mean.astype(np.float32)) / std.astype(np.float32)
             chunk[a["mask"][sl] == 0] = 0.0
             a["num"][sl] = chunk
-        for k in ("num", "mask", "cat", "src", "y", "row", "cust", "ts"):
+        for k in ARRAY_DTYPES:
             a[k].flush()
 
     # v5 sequence index: every row of every split in (customer, time) order, so a row's history
@@ -323,9 +407,12 @@ def main(argv=None):
     ap.add_argument("--seed", type=int, default=1337)
     ap.add_argument("--stats-from-run", default=None,
                     help="standardise with the mean/std a trained run used, so its model can be calibrated / evaluated on this set")
+    ap.add_argument("--workers", type=int, default=None, help=f"processes streaming the parquet files (default: cpus, at most {_default_workers()})")
+    ap.add_argument("--rows-per-task", type=int, default=ROWS_PER_TASK, help="rows of one source per streaming task (whole row groups)")
     args = ap.parse_args(argv)
     ensure_dirs()
-    prepare(args.name, args.source, args.max_rows_per_source, args.seed, stats_from_run=args.stats_from_run)
+    prepare(args.name, args.source, args.max_rows_per_source, args.seed, stats_from_run=args.stats_from_run,
+            workers=args.workers, rows_per_task=args.rows_per_task)
     return 0
 
 

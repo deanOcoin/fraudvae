@@ -838,3 +838,22 @@ def test_models_pack_and_pull(trained_run, tmp_path, monkeypatch):
             models.pull("test-run", tmp_path / "runs3")
     finally:
         (trained_run / "remote.json").unlink(missing_ok=True)
+
+
+def test_prepare_parallel_matches_serial(processed_corpus):
+    """the streaming tasks of prepare write the same bytes whether they run in one process or
+    in a pool: every array of the set is identical, only the timing differs"""
+    from fraudvae.data.prepare import prepare
+
+    one = prepare(name="tp1", max_rows_per_source=3000, workers=1)
+    many = prepare(name="tp2", max_rows_per_source=3000, workers=2, rows_per_task=1)
+    files = sorted(p.name for p in one.glob("*.npy"))
+    assert files == sorted(p.name for p in many.glob("*.npy")) and any(f.startswith("train_wide_") for f in files)
+    for f in files:
+        a, b = np.load(one / f), np.load(many / f)
+        assert a.dtype == b.dtype and a.shape == b.shape, f
+        assert np.array_equal(a, b, equal_nan=True), f
+    ma, mb = json.loads((one / "meta.json").read_text()), json.loads((many / "meta.json").read_text())
+    for k in ("created", "seconds", "name"):
+        ma.pop(k), mb.pop(k)
+    assert ma == mb
