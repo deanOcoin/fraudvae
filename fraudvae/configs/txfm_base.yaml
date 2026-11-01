@@ -23,7 +23,7 @@ txfm:
   patience: 6
   amp: true              # bf16; every input is an embedding lookup, so the v5 overflow does not apply. fp32 is one flag away
   pack: true             # the event encoder reads a source's own fields only (a third of the schema on average)
-  source_alpha: 0.5      # a step's source drawn with p ~ sqrt(rows): the 425M amlworld rows do not set the whole curriculum
+  source_alpha: 0.5      # a step's source drawn with p ~ sqrt(rows): the 431M amlworld rows (92% of the corpus) do not set the whole curriculum
   compile: true          # torch.compile, dynamic shapes; measured on a B200: 0.188 s/step at batch 64 against 0.239 eager
 notes: >
   60k steps x 65k events = 3.9B event visits (~8 passes over 470M rows). Measured on 8x B200

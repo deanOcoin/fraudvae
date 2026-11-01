@@ -677,9 +677,64 @@ packing leaves it 18-57 fields per source (baf 18, fraudecom 23, fdh 29, amlworl
 eager: 0.48-0.50 s/step at 164 of 183 GB and about 12% of peak flops - the model is
 memory-bound at this width; batch 64: 0.239 s eager (71 GB) against 0.188 s compiled (83 GB),
 hence `txfm_base`'s batch 64 with compile. The gate run (`txfm-gate-full`: the `full` set,
-7 gpus, batch 128, 10k steps, packing on) moves 6.1-6.5M observed tokens/s (8.2M encoded,
-counting a row's own missing values inside its source's fields); validation next-event nll per
-observed token 1.6790 at step 2000 and 1.5462 at 4000, against the smoke run's 2.18 at step 200
-on the tiny model. The block pass scores 21k rows/s per gpu at batch 256 (39 GB); the `full`
-validation split, 4,284,187 rows, cached in 260 s on one gpu. The gate's booster comparison
-and the full pretrain on `v6` follow as they land.
+7 gpus, batch 128, 10k steps, packing on, sources drawn by size - `source_alpha` 1.0) moves
+6.1-6.5M observed tokens/s (8.2M encoded, counting a row's own missing values inside its
+source's fields) and finished its 10k steps in 113.2 min, 36,975,053,352 observed tokens seen;
+validation next-event nll per observed token **1.6790 at step 2000, 1.5462 at 4000, 1.5087 at
+6000, 1.4824 at 8000, 1.4812 at 10000** (train 1.0826 at the end; the smoke run's tiny model had
+2.18 at step 200). Still falling at the end, by less each time; the cosine schedule was at its
+floor for the last two thousand steps. Hardest fields at 10k: `email_new_cust_30d` 6.56,
+`email_txn_count_30d` 5.19, `ulb_v1` 4.49 - the delayed e-mail aggregates and a PCA component,
+as in the smoke run. The block pass scores 21k rows/s per gpu at batch 256 (39 GB); the `full`
+validation split, 4,284,187 rows, cached in 260 s on one gpu, and the whole set (train in four
+parts, test in two, val in one, seven gpus) in 446 s wall, the slowest part - 7.5M train rows -
+setting the pace; the booster then read the block for its 3,033,749 rows in 12 s.
+
+**The full run** `txfm-base-a` (`txfm_base` as committed - compile, `source_alpha` 0.5, 60k
+steps - on the `v6` set, all sixteen sources). Its first start used all eight gpus at batch 64
+while the gate's booster round shared gpu 7: each rank held 46,600,755 of the 468,684,435 rows as
+10.68 GB of token ids (tokenised in 92 s; 40,778,794 train and 5,821,961 val targets per rank)
+and the step took 0.22-0.24 s alone but 0.6 s whenever the booster round's own gpu work ran,
+since every rank waits for the slowest; the first validation pass, 32,768 windows per rank in
+batches of 32 at that contention, had not finished after seven minutes, and the booster round
+itself had already died once of memory next to a training rank (the event encoder's chunk,
+below). That start was abandoned at step 2000 and the run relaunched on gpus 0-6 at batch 72
+(7 x 72 = 504 windows a step against the config's 512; everything else the same), the eval in
+batches of four times the training batch, gpu 7 left to the booster round. The source mix per step at alpha 0.5: the six AMLworld variants together 0.746 (`_hi_large`
+0.233, `_li_large` 0.228, `_li_medium` 0.107, `_hi_medium` 0.095, `_li_small` 0.045, `amlworld`
+0.038), tabformer 0.085, paysim 0.044, sparkov 0.025, fdh 0.022, capone 0.018, baf 0.017, banksim
+0.013, ieee 0.013, ulb 0.009, fraudecom 0.007 - the square root tempers 430,920,901 synthetic AML
+rows (91.9% of the corpus) down to 75% of the steps, no further; whether that generator teaches anything the
+eleven other sources can use is what this run's per-source validation nll (`metrics.jsonl`) and
+its booster round will say. The gate's booster comparison and this run's follow as they land.
+
+**The gate's booster round** (`v6-gate-e` = the `v5-h200-e` VAE with the `v6_full` post stage
+reading `txfm-gate-full`; `gpu_full` + the 888-column block, 1627 features): stopped at 1248
+rounds, val auc 0.9762 / generic 0.9748, against `v5-h200-h`'s 1387 rounds, 0.9764 / 0.9761.
+Per source on validation (v6-gate / v5-h200-h): fdh 0.909 / 0.901, capone 0.830 / 0.838,
+tabformer 0.997 / 0.997, ulb 0.969 / 0.986, paysim 1.000 / 1.000, sparkov 0.999 / 1.000,
+banksim 0.999 / 0.999, ieee 0.969 / 0.970, amlworld 0.986 / 0.984, baf 0.896 / 0.897,
+fraudecom 0.624 / 0.615. A wash pooled, moving where it was hoped to (fdh, fraudecom) and
+losing on ulb and capone; ulb has no customer sequences at all, so there the block is a
+nonlinear echo of the row's own fields and the trees overfit it. The booster took 2061 s
+against 343 s, nearly all of it the blanked-source rows (the generic quarter of the training
+rows) going through the live block pass with every field read, 27 min under a shared gpu.
+The encoder's mean surprise alone as an anomaly score on the test rows (the last cache
+column): fdh 0.602, capone 0.463, tabformer 0.878, ulb 0.826, paysim 0.474, sparkov 0.538,
+banksim 0.969, ieee 0.437, amlworld 0.638, baf 0.487, fraudecom 0.640 AUROC - mean 0.632
+against the VAE's 0.799 - so at 10k steps it is a feature, not a detector.
+
+**The gate's test verdict**, the same test rows as `v5-h200-h` (booster / blend AUROC, v5 → gate):
+tabformer 0.9911 → 0.9965 / 0.9940 → 0.9974 (recall at 1% FPR 0.859 → 0.935), fdh 0.9027 → 0.9035
+/ 0.9054 → 0.9042, capone 0.8369 → 0.8307 / 0.8407 → 0.8364, ieee 0.9579 → 0.9563 / 0.9578 →
+0.9560, fraudecom 0.6448 → 0.6418 / 0.6410 → 0.6457, ulb 0.9857 → 0.9844 / 0.9841 → 0.9852, baf
+0.8926 → 0.8916 / 0.8931 → 0.8907, amlworld, paysim, sparkov and banksim within 0.001. **Mean
+blend AUROC 0.9277 → 0.9276.** A wash on the mean; one real gain where the hypothesis said it
+should appear (tabformer: card transactions with long customer histories), small losses on
+capone and ieee. **With 30-day label latency** (`eval_delay30.json`, the deployment condition
+the booster is trained for): mean blend 0.9045 → 0.9051; tabformer booster 0.9795 → 0.9917,
+blend 0.9863 → 0.9947, recall at 1% FPR 0.734 → 0.869; fdh blend 0.6793 → 0.6815; fraudecom
+blend 0.6414 → 0.6457; capone 0.8364 → 0.8337; ieee 0.9399 → 0.9366; the rest within 0.001.
+A history block owes nothing to labels, so it keeps its value when the labels are late - the
+one place the gate encoder is ahead on the mean. What the full encoder, the gated block and the
+30k-step checkpoint do follows below.
