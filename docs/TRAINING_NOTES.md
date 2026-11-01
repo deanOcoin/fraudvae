@@ -736,5 +736,24 @@ the booster is trained for): mean blend 0.9045 → 0.9051; tabformer booster 0.9
 blend 0.9863 → 0.9947, recall at 1% FPR 0.734 → 0.869; fdh blend 0.6793 → 0.6815; fraudecom
 blend 0.6414 → 0.6457; capone 0.8364 → 0.8337; ieee 0.9399 → 0.9366; the rest within 0.001.
 A history block owes nothing to labels, so it keeps its value when the labels are late - the
-one place the gate encoder is ahead on the mean. What the full encoder, the gated block and the
-30k-step checkpoint do follows below.
+one place the gate encoder is ahead on the mean.
+
+**The gated block** (`v6-gate-g`: the same round with `txfm.gate_first`, the block NaN for a
+customer's first event): booster stopped at 1398 rounds, val auc 0.9763 / generic 0.9751 (ungated
+0.9762 / 0.9748); per source on validation, gated / ungated: ulb 0.980 / 0.969, baf 0.899 / 0.896,
+fraudecom 0.626 / 0.624, fdh 0.907 / 0.909, amlworld 0.984 / 0.986, the others equal. The gate
+gives back most of what ulb lost, as designed, at a hair of fdh. **On test** (v5 → gated, booster /
+blend AUROC): tabformer 0.9911 → 0.9963 / 0.9940 → 0.9973 (recall at 1% FPR 0.859 → 0.934),
+capone 0.8369 → 0.8293 / 0.8407 → 0.8359, fraudecom 0.6448 → 0.6471 / 0.6410 → 0.6443, ulb 0.9857
+→ 0.9869 / 0.9841 → 0.9857, fdh 0.9027 → 0.9021 / 0.9054 → 0.9057, ieee 0.9579 → 0.9570 / 0.9578
+→ 0.9568, the rest within 0.001; **mean blend 0.9277 → 0.9280**. With 30-day label latency: mean
+blend 0.9045 → 0.9051, tabformer booster 0.9795 → 0.9928 / blend 0.9863 → 0.9947 (recall 0.734 →
+0.868), capone 0.8364 → 0.8330, fdh 0.6793 → 0.6787, the rest within 0.003. Indistinguishable
+from the ungated round, and it has to be. Measured on the test rows, the gate blanks every row of
+baf, fraudecom and ulb and 99.7% of paysim's (each row is its customer's first event there), 30%
+of ieee's, 0.2% of amlworld's and none of tabformer's, capone's, fdh's, sparkov's or banksim's.
+Where the block matters nothing changed; where it changed, the block was already worth nothing -
+fraudecom's ungated +0.0047 and gated +0.0033 are both booster randomness (Hanley-McNeil SE 0.008
+at its fraud count). capone's dip has the same sign twice (−0.0043 and −0.0047 on the blend,
+about one SE of 0.005 each). The gate is not a lever. What the full encoder and its 32k-step
+checkpoint do follows.
