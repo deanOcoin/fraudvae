@@ -755,5 +755,27 @@ of ieee's, 0.2% of amlworld's and none of tabformer's, capone's, fdh's, sparkov'
 Where the block matters nothing changed; where it changed, the block was already worth nothing -
 fraudecom's ungated +0.0047 and gated +0.0033 are both booster randomness (Hanley-McNeil SE 0.008
 at its fraud count). capone's dip has the same sign twice (−0.0043 and −0.0047 on the blend,
-about one SE of 0.005 each). The gate is not a lever. What the full encoder and its 32k-step
-checkpoint do follows.
+about one SE of 0.005 each). The gate is not a lever.
+
+**The full run at 32k of 60k steps** (`txfm-base-32k`: the step-32000 `state.pt` of `txfm-base-a`
+converted to a scorer checkpoint, its step checked, then scored on rank 0's validation draw -
+1.2671 against the logged all-rank mean 1.2641, the shard's own noise; round `v6-base32-e`, same
+booster config as every round here, caches 36 min on one gpu, post 76 min). The run's validation
+curve so far, every 4000 steps from 16k (every 2000 before the resume at 12k: 1.622, 1.435, 1.367,
+1.349, 1.327, 1.313): 1.2941, 1.2868, 1.2790, 1.2706, 1.2641, 1.2666, 1.2593, 1.2537, 1.2558,
+1.2525, 1.2533 at 56k - still edging down under the cosine tail, with the eval-to-eval noise of
+about 0.003 showing in the two upticks. **On test** (v5 → 32k, booster / blend): tabformer 0.9911
+→ 0.9969 / 0.9940 → 0.9979 (recall at 1% FPR 0.859 → 0.949, against the gate's 0.935), amlworld
+0.9901 → 0.9917 / 0.9897 → 0.9911 (recall 0.852 → 0.874; the gate encoder, trained on `full` where
+amlworld is one source of eleven, gave −0.0009 / −0.0004 here - the five AMLworld variants in
+`v6` are what this buys), fdh 0.9027 → 0.9037 / 0.9054 → 0.9068, capone 0.8369 → 0.8278 / 0.8407 →
+0.8352 (the third round with the same sign, now a full SE), ulb −0.0019 / −0.0017, ieee −0.0014 /
+−0.0018, fraudecom −0.0008 / +0.0070 (noise at SE 0.008), the rest within 0.0002; **mean blend
+0.9277 → 0.9280**, the same wash on the mean as the gate. **With 30-day label latency**: mean blend
+0.9045 → 0.9061 (the gate: 0.9051); tabformer booster 0.9795 → 0.9924 / blend 0.9863 → 0.9953
+(recall 0.734 → 0.881), fdh blend 0.6793 → 0.6902 (booster 0.6782 → 0.6786: the gain is in the
+blend's weighting, not the trees), amlworld +0.0016 / +0.0014, capone 0.8364 → 0.8326, ieee
+0.9399 → 0.9375, ulb −0.0019, the rest within 0.002. Twenty-two thousand more steps than the gate
+bought tabformer another 0.0005 of blend AUROC and 0.014 of recall, turned amlworld positive, and
+moved the 30-day mean by +0.0010 over the gate; capone's loss did not go away. What the last-step
+weights of the whole run do follows.
