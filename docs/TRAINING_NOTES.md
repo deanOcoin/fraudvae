@@ -766,16 +766,60 @@ curve so far, every 4000 steps from 16k (every 2000 before the resume at 12k: 1.
 1.2525, 1.2533 at 56k - still edging down under the cosine tail, with the eval-to-eval noise of
 about 0.003 showing in the two upticks. **On test** (v5 → 32k, booster / blend): tabformer 0.9911
 → 0.9969 / 0.9940 → 0.9979 (recall at 1% FPR 0.859 → 0.949, against the gate's 0.935), amlworld
-0.9901 → 0.9917 / 0.9897 → 0.9911 (recall 0.852 → 0.874; the gate encoder, trained on `full` where
-amlworld is one source of eleven, gave −0.0009 / −0.0004 here - the five AMLworld variants in
-`v6` are what this buys), fdh 0.9027 → 0.9037 / 0.9054 → 0.9068, capone 0.8369 → 0.8278 / 0.8407 →
+0.9901 → 0.9917 / 0.9897 → 0.9911 (recall 0.852 → 0.874; under one Hanley-McNeil SE of 0.0017,
+where the gate encoder, trained on `full` with amlworld one source of eleven, gave −0.0009 /
+−0.0004 - suggestive of what the five AMLworld variants in `v6` buy, not shown), fdh 0.9027 → 0.9037 / 0.9054 → 0.9068, capone 0.8369 → 0.8278 / 0.8407 →
 0.8352 (the third round with the same sign, now a full SE), ulb −0.0019 / −0.0017, ieee −0.0014 /
 −0.0018, fraudecom −0.0008 / +0.0070 (noise at SE 0.008), the rest within 0.0002; **mean blend
 0.9277 → 0.9280**, the same wash on the mean as the gate. **With 30-day label latency**: mean blend
 0.9045 → 0.9061 (the gate: 0.9051); tabformer booster 0.9795 → 0.9924 / blend 0.9863 → 0.9953
-(recall 0.734 → 0.881), fdh blend 0.6793 → 0.6902 (booster 0.6782 → 0.6786: the gain is in the
-blend's weighting, not the trees), amlworld +0.0016 / +0.0014, capone 0.8364 → 0.8326, ieee
+(recall 0.734 → 0.881), fdh blend 0.6793 → 0.6902 (two SEs of 0.0053; booster 0.6782 → 0.6786, so
+the gain is in the blend's weighting, not the trees), amlworld +0.0016 / +0.0014, capone 0.8364 → 0.8326, ieee
 0.9399 → 0.9375, ulb −0.0019, the rest within 0.002. Twenty-two thousand more steps than the gate
-bought tabformer another 0.0005 of blend AUROC and 0.014 of recall, turned amlworld positive, and
-moved the 30-day mean by +0.0010 over the gate; capone's loss did not go away. What the last-step
-weights of the whole run do follows.
+bought tabformer another 0.0005 of blend AUROC and 0.014 of recall, fdh's 30-day blend +0.011, and
+moved the 30-day mean by +0.0010 over the gate; amlworld's sign flipped but inside its noise, and
+capone's loss did not go away.
+
+**The full run, finished** (`txfm-base-a`: 60,000 steps, 7 gpus at batch 72, 220.8 min of training
+after the resume at 12,001 plus the 48 min before it; 100.8 billion encoded tokens seen, 55.7 billion
+of them observed, 1.66 billion event visits; 128,339,434 parameters, vocabulary 6,389, 121 fields,
+window 128). The last two evals: 1.2533 at 56k, **1.2520 at 60k** - a new best at the very last step,
+so the best-val export and the last-step weights are the same file, and the final round below
+reads the last-step snapshot `txfm-base-last` (step checked = 60000; rank 0's validation draw
+1.2557 against the logged 1.2520, the shard's noise as before). From 32k to 60k the validation
+nll moved 1.2641 → 1.2520, 0.012 in 28,000 steps, a tenth of what the first 12,000 bought (1.622 →
+1.313), the cosine tail doing what it does.
+
+**The full run's booster round** (`v6-base-e`: `--txfm txfm-base-last`, the step-60000 weights;
+caches for `full` on seven gpus in 13 min, post 72.0 min on one gpu). **On test** (v5 → 60k, booster
+/ blend): tabformer 0.9911 → 0.9967 / 0.9940 → 0.9978 (recall at 1% FPR 0.859 → 0.943), fdh 0.9027
+→ 0.9055 / 0.9054 → 0.9081 (under one SE of 0.0036), amlworld 0.9901 → 0.9916 / 0.9897 → 0.9912
+(recall 0.852 → 0.875; under one SE of 0.0017), capone 0.8369 → 0.8308 / 0.8407 → 0.8360 (the
+fourth round with that sign, about one SE of 0.0052 each time), ieee 0.9579 → 0.9563 / 0.9578 →
+0.9559 (also the fourth, about one SE of 0.0022), ulb 0.9857 → 0.9823 / 0.9841 → 0.9816 (SE
+0.0102), fraudecom −0.0051 / +0.0073 (SE 0.0082), baf, paysim, sparkov and banksim within 0.0004;
+**mean blend 0.9277 → 0.9282**. **With 30-day label latency**: mean blend 0.9045 → 0.9057; tabformer
+booster 0.9795 → 0.9923 / blend 0.9863 → 0.9953 (recall 0.734 → 0.876), fdh blend 0.6793 → 0.6851
+(about one SE of 0.0053; the 32k round's +0.0110 did not hold), amlworld +0.0015 / +0.0014, capone
+0.8364 → 0.8333, ieee 0.9399 → 0.9369, ulb −0.0028, the rest within 0.0004. Against the 32k
+snapshot's round it is a wash everywhere: mean +0.0002 on test and −0.0004 at 30 days, tabformer
+−0.0001, capone +0.0008, amlworld 0.0000 - the 28,000 steps after the snapshot changed nothing the
+booster round can measure, which is the 32k-against-60k answer.
+
+**What four rounds say together** (gate at 10k on `full`, the gated variant, 32k and 60k on `v6`;
+every delta against `v5-h200-h` on the same rows, with Hanley-McNeil SEs at v5's AUROC and fraud
+counts): one gain clears two SEs in every round, tabformer - blend +0.0034 to +0.0039 on test with
+recall at 1% FPR from 0.859 to 0.934-0.949, and +0.0084 to +0.0090 at 30 days with recall from
+0.734 to 0.868-0.881 - the card-transaction source with long customer histories, where a history
+block has something to read. fdh's 30-day blend cleared it once (+0.0110 at 32k, +0.0058 at 60k).
+Two sources carry the same small sign in all four rounds without clearing one SE: capone −0.004 to
+−0.005 and ieee −0.001 to −0.002 of blend AUROC. The mean blend over eleven sources: 0.9276 /
+0.9280 / 0.9280 / 0.9282 on test against 0.9277, and 0.9051 / 0.9051 / 0.9061 / 0.9057 at 30 days
+against 0.9045 - a wash on the mean, because the mean is mostly sources where there is nothing left
+to gain (paysim, sparkov, banksim at 0.9995+) or no history to read (ulb, baf, fraudecom, each row
+its customer's first event). The encoder earns its place on the one kind of data it was built for,
+and its value survives late labels; it does not lift the board. The gate at 10k already showed the
+shape; 60k steps sharpened tabformer by a further 0.0005 of AUROC and 0.01 of recall. The
+checkpoints, caches apart, are on the Mac under `runs/` (`txfm-base-a` with its `state.pt`,
+`txfm-base-32k`, `txfm-base-last`, `txfm-gate-full`, the four rounds); the node was destroyed
+once every file had been verified by sha256 against the box.
