@@ -28,7 +28,7 @@ N_SOURCES = len(schema.SOURCES)
 
 # the extra blend signals, in the order they appear on receipts: the sequence head and the
 # field heads (device today; graph / text / behaviour as those modules land)
-EXTRA_SIGNALS = ("seq", "local", "device", "graph", "text", "behaviour")
+EXTRA_SIGNALS = ("seq", "local", "txsup", "device", "graph", "text", "behaviour")
 
 
 def extra_signals(r: dict) -> list[str]:
@@ -247,7 +247,7 @@ def label_delay_wide(wide, wide_names, label_delay_days) -> "np.ndarray | None":
 def score_split(model, split, batch_size=8192, n_samples=8, device="cpu", idx=None, keep_features=True,
                 progress=None, scorer: Scorer | None = None, src_override=None, booster=None, keep_mu=True,
                 seq=None, split_name=None, keep_h=False, seqhead=None, heads=None, graph=None, specialists=None,
-                label_delay_days=None, txfm=None):
+                label_delay_days=None, txfm=None, txhead=None):
     """score every row of a PreparedSplit (or the given idx). results come back in the order
     of idx (or row order). src_override=0 scores everything in the 'generic' context. with a
     booster the per-row booster logit comes back as 'booster', and if the scorer has a blender,
@@ -257,7 +257,8 @@ def score_split(model, split, batch_size=8192, n_samples=8, device="cpu", idx=No
     graph: a GraphScorer; adds 'graph' from the row's entity codes (split.ent), snapshot by split_name.
     specialists: the per-source boosters; adds 'local', NaN for rows of a source without one.
     txfm: a TxfmScorer (v6); its feature block is computed per row from the same sequence index
-    (at its own window) and handed to the booster and the specialists that were trained with it."""
+    (at its own window) and handed to the booster and the specialists that were trained with it.
+    txhead: a TxfmHead (v7); adds 'txsup', its per-source logit on that block, NaN where no head."""
     model.eval()
     chunks = {"raw": [], "kl": []}
     if keep_mu:
@@ -288,6 +289,8 @@ def score_split(model, split, batch_size=8192, n_samples=8, device="cpu", idx=No
     txfm_all, txfm_at = None, None
     if txfm is not None:
         chunks["txfm_surprise"] = []
+        if txhead is not None:
+            chunks["txsup"] = []
         if seq is not None and split_name:
             # the v6 block: one causal pass over the split's rows in sequence order (TxfmScorer.features_split)
             idx_all = np.arange(len(split)) if idx is None else np.asarray(idx)
@@ -309,6 +312,8 @@ def score_split(model, split, batch_size=8192, n_samples=8, device="cpu", idx=No
             else:
                 r["txfm"] = txfm.features(num, mask, cat, src, hist)
             r["txfm_surprise"] = r["txfm"][:, -1]
+            if txhead is not None:
+                r["txsup"] = txhead.logit(r["txfm"], s_np)
         if seqhead is not None and window:
             r["seq"] = seqhead.logit(model, num, mask, cat, src, torch.from_numpy(r["h"]).to(num.device))
         for name, head in heads.items():

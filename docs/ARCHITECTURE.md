@@ -329,6 +329,22 @@ on another objective; whether a 100M-parameter next-event model changes that is
 the first v6 experiment (`docs/TRAINING_NOTES.md`, v6). A fine-tuned head as a
 blend signal and a TabICLv2 in-context signal per bank are the next two.
 
+**The labels reach the state** (v7, `fraudvae/model/txfmhead.py`). The node run
+answered the first experiment - a measured gain on the one source with long
+labelled histories, nothing elsewhere - and showed that more pretraining does
+not move it: the booster takes a few hundred splits from the block, and the
+fraud labels never touch the encoder's state. `boost.txfm_head: true` (or
+`fraudvae txfm-head RUN`) trains, per source with at least
+`specialist_min_fraud` labelled fraud rows, a small MLP on the standardised
+block - the same labelled subsample the booster uses, early stopped on that
+source's validation AUROC - and its logit is the `txsup` blend signal, present
+on the rows of a source that has a head and NaN elsewhere, exactly as the
+specialists' `local`. It reads the block through the scorer (so the cache
+serves it, and the gate and the routing apply), the encoder stays frozen, and
+the receipt gets a `sequence_supervised` block with the signal's own operating
+point. The fine-tune of the encoder's top layers is the step after this one,
+taken only if this one earns it.
+
 ## v5: device telemetry - the two new sources and the field heads
 
 `fraudvae/data/adapters/baf.py`, `fraudvae/data/adapters/fraudecom.py`,

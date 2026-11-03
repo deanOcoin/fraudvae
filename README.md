@@ -390,7 +390,7 @@ fraudvae/
   models.py    pretrained bundles: pack / pull against pretrained.json (github releases)
   model/       vae.py (model + history encoder), scoring.py, booster.py,
                seqhead.py (sequence head), heads.py (device head), dataset.py (+ the sequence index),
-               txfm.py (v6 transaction encoder: tokeniser, model, scorer)
+               txfm.py (v6 transaction encoder: tokeniser, model, scorer), txfmhead.py (v7: supervised head on its block)
   graph/       entity-graph snapshots, GraphSAGE, per-source training, scorer, public benchmarks
   text/        hashed-bag text heads (url / free text / profile), training, scorer
   behaviour/   mouse / keystroke / touch / motion features, verifiers, training, scorer

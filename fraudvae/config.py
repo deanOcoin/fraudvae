@@ -87,6 +87,8 @@ class BoostConfig:
                                           # booster features ("txfm_*"); needs txfm.run (see TxfmConfig)
     txfm_pca: int = 0                     # v7: compress that block to this many principal components (+ the mean surprise)
                                           # before the trees see it; 0 = the raw block. the second answer to feature dilution
+    txfm_head: bool = False               # v7: a supervised head per source on the encoder's block, the "txsup" blend signal
+                                          # (model/txfmhead.py); the labels' first direct route to the encoder's state
 
 
 @dataclass

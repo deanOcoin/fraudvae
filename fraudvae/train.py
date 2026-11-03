@@ -348,6 +348,20 @@ def post_train(run_dir: Path, cfg: Config, prepared="default", device=None, log=
             write_status(run_dir, state="specialists")
             train_specialists(run_dir, prepared, cfg.boost, log=log, seed=cfg.train.seed, min_fraud=cfg.boost.specialist_min_fraud,
                               model=model, device=device, txfm=txfm)
+    # v7: the supervised head on the encoder's block, its own blend signal; a head a previous
+    # pass left behind goes when this one does not ask for it, so the run is what its config says
+    from .model.txfmhead import FILE as TXFMHEAD_FILE
+    if txfm is not None and cfg.boost.txfm_head:
+        log("fitting the supervised head on the encoder's block ...")
+        write_status(run_dir, state="encoder head")
+        from .model.txfmhead import train_txfmhead
+        train_txfmhead(run_dir, prepared, txfm, device=device, log=log, max_legit_per_source=cfg.boost.max_legit_per_source,
+                       val_legit_per_source=cfg.boost.val_legit_per_source, min_fraud=cfg.boost.specialist_min_fraud, seed=cfg.train.seed)
+    else:
+        for stale in (run_dir / TXFMHEAD_FILE, run_dir / "txfmhead.json"):
+            if stale.exists():
+                stale.unlink()
+                log(f"  removed {stale.name} (boost.txfm_head is off)")
     # v5: the sequence head, on the frozen history encoder's read-out
     if history_window(model):
         log("fitting the sequence head on the history read-out ...")

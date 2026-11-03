@@ -33,6 +33,7 @@ from ..behaviour.scorer import BehaviourScorer, merge_enrolment
 from ..text.scorer import TextScorer
 from ..model.seqhead import load_seqhead
 from ..model.txfm import TxfmScorer
+from ..model.txfmhead import load_txfmhead
 from ..model.vae import load_checkpoint
 from ..paths import APP_HOME, RUNS_DIR
 from .entity_store import EntityStore
@@ -140,6 +141,8 @@ class ActiveModel:
         # v6: the transaction encoder whose block the booster reads; None for a run without one
         self.txfm = TxfmScorer.load(self.run_dir, device=self.device) if (self.booster is not None and self.booster.txfm_dim) else None
         self.txfm_labels = self.txfm.field_labels(self.categorical) if self.txfm is not None else []
+        # v7: the supervised head on that block ("txsup"), None for a run without one
+        self.txhead = load_txfmhead(self.run_dir, device=self.device) if self.txfm is not None else None
         # v5: the customer-history side. window 0 = a model without a history encoder
         self.window = history_window(self.model)
         self.seqhead = load_seqhead(self.run_dir, device=self.device) if self.window else None
@@ -383,6 +386,8 @@ class ActiveModel:
                 r[name] = head.logit(num, mask, cat, src)
             if self.txfm is not None:
                 txfm_np = self.txfm.features(num, mask, cat, src, hist2)
+                if self.txhead is not None:
+                    r["txsup"] = self.txhead.logit(txfm_np, np.array([src_idx]))
         ent = self._entity_row(entities)
         if self.graph is not None and src_idx:
             r["graph"] = self.graph.logit_rows(np.array([src_idx]), ent, which="test")
@@ -465,6 +470,17 @@ class ActiveModel:
                        "note": "next-event negative log likelihood per observed field, from the customer's past alone; "
                                "the block (state + surprises) is read by the booster, not blended on its own"})
             out["sequence_model"] = sm
+            # v7: the supervised head on that block, this bank's own, when the run has one
+            if self.txhead is not None and "txsup" in r:
+                tb = {"present": bool(np.isfinite(r["txsup"][0])), "label": "Sequence model, supervised", "fields": []}
+                if tb["present"]:
+                    lg = float(r["txsup"][0])
+                    tb.update({"logit": lg, "prob": float(1.0 / (1.0 + math.exp(-max(min(lg, 30), -30))))})
+                    tcal, tkind = self._calibration_for(ctx, name="txsup")
+                    tb["calibration"] = tkind
+                    if tcal:
+                        tb.update(self._operating(tcal, tb["prob"], fpr_target, tkind, "txsup"))
+                out["sequence_supervised"] = tb
 
         # -- v5 sequence: the history read-out through the sequence head -------------------
         if self.window:
@@ -707,6 +723,7 @@ class ActiveModel:
         headp = {name: np.full(n, np.nan, dtype=np.float32) for name in self.heads}
         graphp = np.full(n, np.nan, dtype=np.float32)
         localp = np.full(n, np.nan, dtype=np.float32)
+        txsupp = np.full(n, np.nan, dtype=np.float32)
         surprise = np.full(n, np.nan, dtype=np.float32)
         ent = None
         if self.graph is not None and any(k in df for k in ENTITY_KINDS):
@@ -740,6 +757,9 @@ class ActiveModel:
                 txfm_np = self.txfm.features(num_t, mask_t, cat_t, src_t, None) if self.txfm is not None else None
                 if txfm_np is not None:
                     surprise[sl] = txfm_np[:, -1]
+                    if self.txhead is not None:
+                        r["txsup"] = self.txhead.logit(txfm_np, src[sl])
+                        txsupp[sl] = 1.0 / (1.0 + np.exp(-np.clip(r["txsup"], -30, 30)))
                 if self.booster is not None:
                     b = self.booster.logit(num[sl], mask[sl], cat[sl], src[sl], wide=(wide[sl] if wide is not None else None),
                                            hist=(r.get("h") if self.booster.hist_dim else None), txfm=txfm_np)
@@ -762,6 +782,8 @@ class ActiveModel:
             out["graph_prob"] = graphp
         if self.specialists is not None:
             out["local_prob"] = localp
+        if self.txhead is not None:
+            out["txsup_prob"] = txsupp
         if self.scorer:
             out["novelty_norm"] = norm
         inv = {v: k for k, v in self.source_index.items()}

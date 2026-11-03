@@ -35,6 +35,7 @@ boost:
   early_stopping: 200
   txfm_features: true
   # txfm_pca: 64        # v7: the block as 64 principal components + the mean surprise instead of 888 columns
+  # txfm_head: true     # v7: a supervised head per source on the block, the txsup blend signal
 txfm:
   run: txfm-base-a      # the pretraining run (runs/<run>/txfm.pt) or a path to a txfm.pt
   window: 128

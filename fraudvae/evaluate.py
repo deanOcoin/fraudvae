@@ -31,6 +31,7 @@ from .graph.scorer import GraphScorer
 from .model.heads import load_heads
 from .model.seqhead import load_seqhead
 from .model.txfm import TxfmScorer
+from .model.txfmhead import load_txfmhead
 from .model.dataset import PreparedSet
 from .model.scoring import Scorer, auprc, auroc, extra_signals, recall_at_fpr, score_split
 from .model.vae import load_checkpoint
@@ -125,6 +126,7 @@ def evaluate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, l
     txfm = TxfmScorer.load(run_dir, device=device)   # v6: the transaction encoder, None for a run without one
     if txfm is not None:
         txfm.with_cache(prepared)                    # its block pass over the set, when `fraudvae txfm-cache` has run
+    txhead = load_txfmhead(run_dir, device=device) if txfm is not None else None   # v7: the supervised head on its block
     data = PreparedSet(prepared, splits=("test",))
     te = data["test"]
     names = data.source_names
@@ -135,7 +137,7 @@ def evaluate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, l
     r = score_split(model, te, batch_size=batch_size, n_samples=n_samples, device=device, keep_features=False,
                     keep_mu=False, scorer=scorer, booster=booster, txfm=txfm,
                     progress=lambda n: log(f"  evaluate{tag}: scored {n:,}/{len(te):,}"), seq=data.seq, split_name="test",
-                    seqhead=seqhead, heads=heads, graph=graph, specialists=specialists, label_delay_days=label_delay_days)
+                    seqhead=seqhead, heads=heads, graph=graph, specialists=specialists, label_delay_days=label_delay_days, txhead=txhead)
     y, src = te.y[:], te.src[:]
     s = r[score_type]
     log(f"  scored {len(te):,} test rows in {time.time() - t0:.0f}s (vae score type: {score_type})")
@@ -179,7 +181,7 @@ def evaluate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, l
     gen_idx = _subsample(src, y, rng, GENERIC_ROWS, with_fraud=True)
     rg = score_split(model, te, batch_size=batch_size, n_samples=n_samples, device=device, idx=gen_idx, keep_features=False,
                      keep_mu=False, scorer=scorer, booster=booster, txfm=txfm, src_override=0, seq=data.seq, split_name="test",
-                     seqhead=seqhead, heads=heads, graph=graph, specialists=specialists, label_delay_days=label_delay_days)
+                     seqhead=seqhead, heads=heads, graph=graph, specialists=specialists, label_delay_days=label_delay_days, txhead=txhead)
     gy = y[gen_idx]
     gen = {"n": int(len(gen_idx)), "fraud": int(gy.sum()),
            "vae": _metrics(gy, rg[score_type], cal["generic"]["thresholds"]),

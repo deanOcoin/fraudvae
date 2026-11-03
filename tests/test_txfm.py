@@ -456,3 +456,54 @@ def test_booster_reads_a_compressed_block(pretrained_txfm, prepared_set, tmp_pat
     # the compression object alone: k is capped by what the sample can carry
     small = BlockPCA.fit(raw[:3], 10, seed=0)
     assert small.k <= 2 and small.transform(raw[:3]).shape == (3, small.k + 1)
+
+
+def test_supervised_head_on_the_block(pretrained_txfm, prepared_set, tmp_path):
+    """v7: one head per source with enough labelled fraud, on the encoder's block; its logit is
+    the txsup signal - a number on that source's rows with a block, NaN elsewhere - and
+    score_split threads it through beside the block"""
+    import shutil
+
+    from fraudvae.data import schema
+    from fraudvae.model.dataset import PreparedSet
+    from fraudvae.model.scoring import EXTRA_SIGNALS, score_split
+    from fraudvae.model.txfm import TxfmScorer
+    from fraudvae.model.txfmhead import TxfmHead, load_txfmhead, train_txfmhead
+    from fraudvae.model.vae import TabularVAE
+
+    assert "txsup" in EXTRA_SIGNALS
+    sc = TxfmScorer.load(pretrained_txfm, device="cpu")
+    run_dir = tmp_path / "head"
+    run_dir.mkdir()
+    shutil.copy2(pretrained_txfm / "txfm.pt", run_dir / "txfm.pt")
+    quiet = lambda m: None  # noqa: E731
+    # the synthetic sources have about 230 labelled fraud rows each in train: below the default floor
+    assert train_txfmhead(run_dir, prepared_set, sc, log=quiet, min_fraud=300, epochs=2, seed=1) is None
+    assert not (run_dir / "txfmhead.pt").exists()
+    info = train_txfmhead(run_dir, prepared_set, sc, log=quiet, max_legit_per_source=3000, val_legit_per_source=1000, min_fraud=50,
+                          epochs=4, patience=2, seed=1)
+    assert info is not None and set(info["source_names"]) == {"fdh", "capone"} and info["signal"] == "txsup"
+    for v in info["sources"].values():
+        assert 0 <= v["auroc"] <= 1 and v["best_epoch"] >= 1 and v["train_fraud"] >= 50
+    head = load_txfmhead(run_dir)
+    assert isinstance(head, TxfmHead) and set(head.sources) == {schema.SOURCE_INDEX["fdh"], schema.SOURCE_INDEX["capone"]}
+    data = PreparedSet(prepared_set, splits=("val",), in_memory=True)
+    va = data["val"]
+    src_all = np.asarray(va.src)
+    idx = np.concatenate([np.flatnonzero(src_all == schema.SOURCE_INDEX["fdh"])[:40], np.flatnonzero(src_all == schema.SOURCE_INDEX["capone"])[:40]])
+    feats = sc.features_split(va, idx, data.seq, "val", device="cpu")
+    lg = head.logit(feats, src_all[idx])
+    assert lg.shape == (80,) and np.isfinite(lg).all()
+    # a source without a head, or a row without a block, gets no number
+    assert np.isnan(head.logit(feats, np.zeros(80, dtype=np.int64))).all()
+    blank = feats.copy()
+    blank[:5] = np.nan
+    lg_blank = head.logit(blank, src_all[idx])
+    assert np.isnan(lg_blank[:5]).all() and np.allclose(lg_blank[5:], lg[5:])
+    # through score_split, beside the block; in the generic context (source blanked) the signal is absent
+    vae = TabularVAE(va.num.shape[1], [c["size"] for c in data.meta["categorical"]], 11, latent_dim=4, hidden=(16,)).eval()
+    r = score_split(vae, va, batch_size=32, n_samples=1, idx=idx, txfm=sc, txhead=head, seq=data.seq, split_name="val", keep_features=False)
+    assert r["txsup"].shape == (80,) and np.allclose(r["txsup"], lg, atol=1e-5)
+    rg = score_split(vae, va, batch_size=32, n_samples=1, idx=idx, txfm=sc, txhead=head, seq=data.seq, split_name="val", keep_features=False,
+                     src_override=0)
+    assert np.isnan(rg["txsup"]).all()
