@@ -17,6 +17,8 @@ Built corpus: **42,841,879 transactions, 133,431 labelled fraud (0.311%)** acros
 | amlworld | IBM AMLworld synthetic bank transfers (HI-Small) | kaggle | 5,078,345 | 0.102% | CDLA-Sharing-1.0 (kaggle listing) |
 | baf | Bank Account Fraud (Feedzai, NeurIPS 2022) account applications | kaggle | 1,000,000 | 1.103% | CC BY-NC-SA 4.0 |
 | fraudecom | E-commerce fraud with device ids (fraud-ecommerce) | kaggle | 151,112 | 9.365% | unspecified (kaggle listing, widely redistributed teaching dataset) |
+| fdh_sim | Fraud Detection Handbook simulator, generated locally | local (pretraining only) | ~50,000,000 (not built) | ~0.80% | GPL-3.0 (the simulator's code); the generated rows are the generator's user's |
+| sparkov_sim | Sparkov generator, generated locally | local (pretraining only) | ~50,000,000 (not built) | ~0.50% | the generator's licence (see its repository); the generated rows are the generator's user's |
 
 ## fdh: Fraud Detection Handbook simulated card transactions
 
@@ -308,6 +310,28 @@ Raw excerpt:
 1359,2015-01-01 18:52:44,2015-01-01 18:52:45,15,"YSSKYOSJHPPLJ","SEO","Opera","M",53,2621473820.11095,1
 ```
 
+## fdh_sim: Fraud Detection Handbook simulator, generated locally
+
+simulated point of sale card payments with per-customer sequences and three fraud scenarios, two of them episodes over days (compromised terminals, compromised cards), generated at volume.
+
+- source: <https://github.com/Fraud-Detection-Handbook/fraud-detection-handbook>
+- citation: Le Borgne, Siblini, Lebichot, Bontempi. Reproducible Machine Learning for Credit Card Fraud Detection - Practical Handbook, 2022 (chapter 3, the simulator)
+- license: GPL-3.0 (the simulator's code); the generated rows are the generator's user's
+- files: `*.pkl`
+- pretraining only: feeds the encoder's pretraining set (`prepare --include-pretrain-only`), never the evaluation frame
+- notes: run the handbook's generate_dataset and save one pickle per day under data/raw/fdh_sim/ (the published fdh is that generator's own output); pretraining only, never in the evaluation frame
+
+## sparkov_sim: Sparkov generator, generated locally
+
+simulated US card purchases per customer with merchant geo, demographics and fraud episodes, generated at volume.
+
+- source: <https://github.com/namebrandon/Sparkov_Data_Generation>
+- citation: Brandon Harris, Sparkov_Data_Generation (the generator behind the Kaggle sparkov set)
+- license: the generator's licence (see its repository); the generated rows are the generator's user's
+- files: `*.csv`
+- pretraining only: feeds the encoder's pretraining set (`prepare --include-pretrain-only`), never the evaluation frame
+- notes: datagen.py's pipe-delimited per-profile files under data/raw/sparkov_sim/ (customers.csv is skipped); pretraining only, never in the evaluation frame
+
 ## Unified schema
 
 Schema version 5. See `docs/SCHEMA.md` for the full field list and the per-source mapping decisions.
@@ -377,3 +401,6 @@ the LI-Large variant of AMLworld: the largest file of all: 16.7 GB of csv; same 
 
 Not built yet; `python scripts/make_data_docs.py` fills in the build figures and the raw excerpt after `fraudvae build`.
 
+## Private sources
+
+A source that cannot be public (a partner's transactions) is an adapter module in a directory named by `FRAUDVAE_ADAPTERS`: `<key>.py` with a `SOURCE` dict and a `load(raw_dir)` returning the unified frame (`fraudvae/data/private.py`). It joins the registry and the schema's source list after the public sources, so every public index stands, and goes through `fetch`, `build` and `prepare` like any other; nothing of it enters this repository.

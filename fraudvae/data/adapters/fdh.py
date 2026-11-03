@@ -36,10 +36,15 @@ def load(raw_dir: Path) -> pd.DataFrame:
     frames = [_read_pickle(p) for p in files]
     raw = pd.concat(frames, ignore_index=True)
     del frames
+    return frame(raw, KEY)
 
+
+def frame(raw: pd.DataFrame, key: str) -> pd.DataFrame:
+    """the handbook simulator's columns (TRANSACTION_ID, TX_DATETIME, CUSTOMER_ID, TERMINAL_ID,
+    TX_AMOUNT, TX_FRAUD, TX_FRAUD_SCENARIO) to the unified frame; shared with fdh_sim (v7)"""
     n = len(raw)
     df = empty_frame(n)
-    df["txn_id"] = "fdh-" + raw["TRANSACTION_ID"].astype(str)
+    df["txn_id"] = f"{key}-" + raw["TRANSACTION_ID"].astype(str)
     df["ts"] = epoch_seconds(raw["TX_DATETIME"])
     df["amount"] = raw["TX_AMOUNT"].astype(np.float32)
     df["hour"], df["dow"] = hour_dow(raw["TX_DATETIME"])
@@ -52,4 +57,4 @@ def load(raw_dir: Path) -> pd.DataFrame:
     df["counterparty"] = entity_codes(raw["TERMINAL_ID"].to_numpy())   # the terminal is the closest thing to a merchant here
     df = velocity.attach(df, "customer", merchant_col="counterparty")
     df = entities.attach(df)
-    return finalize(df, KEY)
+    return finalize(df, key)

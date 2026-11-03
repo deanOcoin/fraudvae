@@ -31,11 +31,16 @@ def load(raw_dir: Path) -> pd.DataFrame:
         parts.append(pd.read_csv(p, usecols=_USE, dtype={"cc_num": str}))
     raw = pd.concat(parts, ignore_index=True)
     del parts
+    return frame(raw, pd.to_datetime(raw["trans_date_trans_time"]), KEY)
 
+
+def frame(raw: pd.DataFrame, when: pd.Series, key: str) -> pd.DataFrame:
+    """the generator's columns (cc_num, merchant, category, amt, gender, lat, long, city_pop, dob,
+    trans_num, merch_lat, merch_long, is_fraud) and the transaction times to the unified frame;
+    shared with sparkov_sim (v7), whose files keep the date and the time apart"""
     n = len(raw)
-    when = pd.to_datetime(raw["trans_date_trans_time"])
     df = empty_frame(n)
-    df["txn_id"] = "sparkov-" + raw["trans_num"].astype(str)
+    df["txn_id"] = f"{key}-" + raw["trans_num"].astype(str)
     df["ts"] = epoch_seconds(when)
     df["amount"] = raw["amt"].astype(np.float32)
     df["hour"], df["dow"] = hour_dow(when)
@@ -61,4 +66,4 @@ def load(raw_dir: Path) -> pd.DataFrame:
     df["counterparty"] = entity_codes(raw["merchant"].to_numpy())
     df = velocity.attach(df, "customer", merchant_col="counterparty")
     df = entities.attach(df)
-    return finalize(df, KEY)
+    return finalize(df, key)

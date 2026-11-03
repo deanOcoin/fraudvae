@@ -36,6 +36,10 @@ class Source:
     # the key of a source whose raw folder holds the same archive (the six amlworld variants
     # ship in one 8 GB zip): its folder is searched too before a download is asked for
     shares_archive_with: str = ""
+    # v7: a source that only feeds the encoder's pretraining and never the evaluation frame (a
+    # generator we run ourselves: a model tuned on a simulator must not be scored on it). prepare
+    # leaves these out unless asked (--include-pretrain-only)
+    pretrain_only: bool = False
 
 
 SOURCES: dict[str, Source] = {
@@ -327,6 +331,51 @@ SOURCES: dict[str, Source] = {
         shares_archive_with="amlworld",
         license_url="https://cdla.dev/sharing-1-0/",
     ),
+    # v7: the two open-source generators behind fdh and sparkov, run locally at the volume the
+    # encoder's pretraining wants - per-customer card sequences with fraud episodes, the one
+    # shape of data the v6 encoder measurably helped on. Pretraining only (indices 17-18).
+    "fdh_sim": Source(
+        key="fdh_sim",
+        name="Fraud Detection Handbook simulator, generated locally",
+        access="local",
+        url="https://github.com/Fraud-Detection-Handbook/fraud-detection-handbook",
+        license="GPL-3.0 (the simulator's code); the generated rows are the generator's user's",
+        citation="Le Borgne, Siblini, Lebichot, Bontempi. Reproducible Machine Learning for Credit Card Fraud Detection - Practical Handbook, 2022 (chapter 3, the simulator)",
+        context="simulated point of sale card payments with per-customer sequences and three fraud scenarios, two of them episodes over days (compromised terminals, compromised cards), generated at volume",
+        label_rate_hint=0.008,
+        approx_rows=50_000_000,
+        files=("*.pkl",),
+        notes="run the handbook's generate_dataset and save one pickle per day under data/raw/fdh_sim/ (the published fdh is that generator's own output); pretraining only, never in the evaluation frame",
+        pretrain_only=True,
+    ),
+    "sparkov_sim": Source(
+        key="sparkov_sim",
+        name="Sparkov generator, generated locally",
+        access="local",
+        url="https://github.com/namebrandon/Sparkov_Data_Generation",
+        license="the generator's licence (see its repository); the generated rows are the generator's user's",
+        citation="Brandon Harris, Sparkov_Data_Generation (the generator behind the Kaggle sparkov set)",
+        context="simulated US card purchases per customer with merchant geo, demographics and fraud episodes, generated at volume",
+        label_rate_hint=0.005,
+        approx_rows=50_000_000,
+        files=("*.csv",),
+        notes="datagen.py's pipe-delimited per-profile files under data/raw/sparkov_sim/ (customers.csv is skipped); pretraining only, never in the evaluation frame",
+        pretrain_only=True,
+    ),
 }
 
+ORDER = list(SOURCES)
+
+# v7: adapters outside the repository (FRAUDVAE_ADAPTERS; data/private.py) join after the public
+# ones, so a partner's data goes through fetch / build / prepare like any source and never
+# enters this tree. A broken private adapter is reported, not fatal.
+from .private import scan as _scan_private, source_fields as _private_fields  # noqa: E402
+
+for _key in _scan_private(SOURCES):
+    try:
+        SOURCES[_key] = Source(**_private_fields(_key))
+    except Exception as _e:  # noqa: BLE001
+        import sys as _sys
+
+        print(f"private adapter {_key} not registered: {_e}", file=_sys.stderr)
 ORDER = list(SOURCES)

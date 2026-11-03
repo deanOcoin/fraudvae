@@ -75,8 +75,14 @@ def transform_numeric(x: np.ndarray, kind: str) -> np.ndarray:
     return x
 
 
-def _available_sources():
-    return [k for k in schema.SOURCES if (PROCESSED_DIR / f"{k}.parquet").exists()]
+def _available_sources(include_pretrain_only=False):
+    """the built sources, in schema order; the pretraining-only ones (a generator we ran ourselves,
+    registry.pretrain_only) only when asked, so the evaluation frame never holds a simulator a
+    model was tuned on"""
+    from .registry import SOURCES as _REG
+
+    return [k for k in schema.SOURCES if (PROCESSED_DIR / f"{k}.parquet").exists()
+            and (include_pretrain_only or not getattr(_REG.get(k), "pretrain_only", False))]
 
 
 def _plan(sources, max_rows_per_source, seed):
@@ -229,10 +235,10 @@ def _stream_task(task):
 
 
 def prepare(name="default", sources=None, max_rows_per_source=None, seed=1337, out_root=PREPARED_DIR, stats_from_run=None,
-            workers=None, rows_per_task=ROWS_PER_TASK):
+            workers=None, rows_per_task=ROWS_PER_TASK, include_pretrain_only=False):
     t0 = time.time()
     fixed_stats = _stats_from_run(stats_from_run) if stats_from_run else None
-    sources = sources or _available_sources()
+    sources = sources or _available_sources(include_pretrain_only)
     if not sources:
         raise SystemExit("nothing in data/processed, run build first")
     out = Path(out_root) / name
@@ -409,10 +415,13 @@ def main(argv=None):
                     help="standardise with the mean/std a trained run used, so its model can be calibrated / evaluated on this set")
     ap.add_argument("--workers", type=int, default=None, help=f"processes streaming the parquet files (default: cpus, at most {_default_workers()})")
     ap.add_argument("--rows-per-task", type=int, default=ROWS_PER_TASK, help="rows of one source per streaming task (whole row groups)")
+    ap.add_argument("--include-pretrain-only", action="store_true",
+                    help="v7: also take the pretraining-only sources (the generators run locally); for a set the encoder pretrains on, "
+                         "never for one a model is evaluated on")
     args = ap.parse_args(argv)
     ensure_dirs()
     prepare(args.name, args.source, args.max_rows_per_source, args.seed, stats_from_run=args.stats_from_run,
-            workers=args.workers, rows_per_task=args.rows_per_task)
+            workers=args.workers, rows_per_task=args.rows_per_task, include_pretrain_only=args.include_pretrain_only)
     return 0
 
 

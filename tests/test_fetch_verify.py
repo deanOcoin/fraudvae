@@ -70,7 +70,10 @@ def test_expected_manifest_is_complete():
     from fraudvae.data.registry import SOURCES
 
     exp = json.loads(fetch.EXPECTED.read_text())
-    for key in SOURCES:
+    for key, src in SOURCES.items():
+        if src.access == "local":   # v7: generated here or private - no download to pin
+            assert key not in exp["sources"]
+            continue
         files = exp["sources"][key]
         assert files, key
         for f in files:

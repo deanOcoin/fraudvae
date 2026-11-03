@@ -186,3 +186,128 @@ def test_raw_folder_scan(tmp_path):
     assert found == {"baf": ["archive (6).zip"], "malurl": ["archive (9).zip"], "ieee": ["ieee-fraud-detection.zip"],
                      "dgraph": ["Readme.md", "dgraphfin.npz"], "bbmas": ["BB-MAS_Dataset.zip"], "brainrun": ["sensors_data.zip"],
                      "twitterbot": ["twitter_human_bots_dataset.csv"], "tabformer": ["sd254_users.csv"]}
+
+
+def _generator_raws(n=400, seed=0):
+    """tiny files in the two generators' own formats: the handbook's one-pickle-per-day frames and
+    datagen.py's pipe-delimited per-profile file (plus a customers.csv that must be skipped)"""
+    rng = np.random.default_rng(seed)
+    d = RAW_DIR / "fdh_sim" / "out"
+    d.mkdir(parents=True, exist_ok=True)
+    ts = pd.Timestamp("2024-03-01") + pd.to_timedelta(np.sort(rng.integers(0, 10 * 86400, n)), unit="s")
+    df = pd.DataFrame({"TRANSACTION_ID": np.arange(n), "TX_DATETIME": ts, "CUSTOMER_ID": rng.integers(0, 40, n),
+                       "TERMINAL_ID": rng.integers(0, 60, n), "TX_AMOUNT": rng.lognormal(3, 0.6, n).round(2),
+                       "TX_TIME_SECONDS": (ts - ts[0]).total_seconds().astype(int), "TX_TIME_DAYS": ((ts - ts[0]).days),
+                       "TX_FRAUD": (rng.random(n) < 0.05).astype(int), "TX_FRAUD_SCENARIO": 0})
+    for day, part in df.groupby(df["TX_DATETIME"].dt.date):
+        part.to_pickle(d / f"{day}.pkl")
+    d = RAW_DIR / "sparkov_sim"
+    d.mkdir(parents=True, exist_ok=True)
+    cust = ["ssn", "cc_num", "first", "last", "gender", "street", "city", "state", "zip", "lat", "long", "city_pop", "job", "dob", "acct_num", "profile"]
+    tx = ["trans_num", "trans_date", "trans_time", "unix_time", "category", "amt", "is_fraud", "merchant", "merch_lat", "merch_long"]
+    when = pd.Timestamp("2024-01-01") + pd.to_timedelta(np.sort(rng.integers(0, 30 * 86400, n)), unit="s")
+    cc = rng.choice([f"4{int(x):015d}" for x in rng.integers(0, 10 ** 15, 30)], n)
+    rows = pd.DataFrame({"ssn": "000-00-0000", "cc_num": cc, "first": "A", "last": "B", "gender": rng.choice(["F", "M"], n),
+                         "street": "1 Main St", "city": "Town", "state": "NC", "zip": "28654", "lat": 36.08, "long": -81.18,
+                         "city_pop": 3495, "job": "Analyst", "dob": "1980-05-05", "acct_num": "1", "profile": "adults_2550_female_rural.json",
+                         "trans_num": [f"{i:032x}" for i in range(n)], "trans_date": when.strftime("%Y-%m-%d"), "trans_time": when.strftime("%H:%M:%S"),
+                         "unix_time": when.astype("int64") // 10 ** 9, "category": rng.choice(["grocery_pos", "misc_net", "gas_transport"], n),
+                         "amt": rng.lognormal(3, 0.7, n).round(2), "is_fraud": (rng.random(n) < 0.05).astype(int),
+                         "merchant": rng.choice(["fraud_Kub and Mann", "fraud_Lind-Buckridge"], n), "merch_lat": 36.1, "merch_long": -81.2})[cust + tx]
+    rows.to_csv(d / "adults_2550_female_rural_0.csv", sep="|", index=False)
+    rows.iloc[:0][cust].to_csv(d / "customers.csv", sep="|", index=False)
+    return n
+
+
+def test_generator_sources_are_pretraining_only():
+    """v7: the two generators behind fdh and sparkov, run locally, build like any source through the
+    published sets' frame-building, carry the pretrain_only flag, and stay out of a prepared set
+    unless asked - a simulator a model is tuned on is never in the evaluation frame"""
+    from fraudvae.data.adapters import get_adapter
+    from fraudvae.data.adapters.base import available
+    from fraudvae.data.build import build_source
+    from fraudvae.data.prepare import _available_sources
+    from fraudvae.data.registry import ORDER, SOURCES
+    from fraudvae.paths import PROCESSED_DIR, ensure_dirs
+
+    ensure_dirs()
+    assert ORDER[16:18] == ["fdh_sim", "sparkov_sim"] == schema.SOURCES[16:18]
+    assert schema.SOURCE_INDEX["fdh_sim"] == 17 and schema.SOURCE_INDEX["sparkov_sim"] == 18
+    for key in ("fdh_sim", "sparkov_sim"):
+        assert SOURCES[key].pretrain_only and SOURCES[key].access == "local" and get_adapter(key).KEY == key
+        assert not available(RAW_DIR, key)
+    assert not any(SOURCES[k].pretrain_only for k in ORDER[:16])
+    n = _generator_raws()
+    for key in ("fdh_sim", "sparkov_sim"):
+        assert available(RAW_DIR, key)
+        stats, sample = build_source(key, RAW_DIR)
+        assert stats["rows"] == n and stats["fraud"] > 0 and stats["schema_version"] == schema.SCHEMA_VERSION
+        df = pd.read_parquet(PROCESSED_DIR / f"{key}.parquet", columns=["source", "txn_id", "customer", "ts", "split"])
+        assert (df["source"] == key).all() and df["txn_id"].str.startswith(key + "-").all() and (df["customer"] >= 0).all()
+    # a capped read stops early, as the other chunked adapters do
+    assert len(get_adapter("sparkov_sim").load(RAW_DIR, max_rows=100)) == 100
+    assert len(get_adapter("fdh_sim").load(RAW_DIR, max_rows=100)) == 100
+    # prepare leaves them out unless asked
+    assert not {"fdh_sim", "sparkov_sim"} & set(_available_sources())
+    assert {"fdh_sim", "sparkov_sim"} <= set(_available_sources(include_pretrain_only=True))
+
+
+def test_private_adapter_joins_the_registry(tmp_path):
+    """v7: an adapter in FRAUDVAE_ADAPTERS joins the schema's source list after the public sources,
+    the registry carries its SOURCE dict, and build reads it like any other - in a fresh
+    interpreter, since the source list is fixed when the schema loads"""
+    import json
+    import os
+    import subprocess
+    import sys
+
+    from fraudvae.data import private
+
+    d = tmp_path / "adapters"
+    d.mkdir()
+    (d / "acme.py").write_text(
+        "import numpy as np\n"
+        "from fraudvae.data.schema import empty_frame, finalize, assign_time_splits\n"
+        "SOURCE = {'name': 'Acme Bank card transactions', 'context': 'a partner bank', 'files': ('acme.csv',), 'approx_rows': 300}\n"
+        "def load(raw_dir):\n"
+        "    rng = np.random.default_rng(0)\n"
+        "    n = 300\n"
+        "    df = empty_frame(n)\n"
+        "    df['txn_id'] = [f'acme-{i}' for i in range(n)]\n"
+        "    df['ts'] = np.sort(rng.uniform(1.6e9, 1.6e9 + 30 * 86400, n))\n"
+        "    df['amount'] = rng.lognormal(3, 0.5, n).astype(np.float32)\n"
+        "    df['hour'] = rng.integers(0, 24, n).astype(np.float32)\n"
+        "    df['dow'] = rng.integers(0, 7, n).astype(np.float32)\n"
+        "    df['is_fraud'] = (rng.random(n) < 0.05).astype(np.int8)\n"
+        "    df['customer'] = rng.integers(0, 20, n).astype(np.int64)\n"
+        "    return assign_time_splits(finalize(df, 'acme'))\n")
+    (d / "_helper.py").write_text("x = 1\n")             # ignored: a leading underscore
+    (d / "Bad-Name.py").write_text("x = 1\n")            # ignored: not a plain key
+    (d / "fdh.py").write_text("x = 1\n")                 # ignored: collides with a public source
+    code = (
+        "import json, sys\n"
+        "from fraudvae.data import schema\n"
+        "from fraudvae.data.registry import SOURCES, ORDER\n"
+        "from fraudvae.data.adapters import get_adapter\n"
+        "from fraudvae.data.build import build_source\n"
+        "from fraudvae.paths import RAW_DIR, ensure_dirs\n"
+        "ensure_dirs()\n"
+        "stats, sample = build_source('acme', RAW_DIR)\n"
+        "print(json.dumps({'last': schema.SOURCES[-1], 'n': len(schema.SOURCES), 'index': schema.SOURCE_INDEX['acme'],\n"
+        "                  'access': SOURCES['acme'].access, 'name': SOURCES['acme'].name, 'order_last': ORDER[-1],\n"
+        "                  'loaded': hasattr(get_adapter('acme'), 'load'), 'rows': stats['rows'], 'fraud': stats['fraud']}))\n")
+    env = {**os.environ, private.ENV: str(d)}
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env, timeout=600)
+    assert r.returncode == 0, r.stderr[-2000:]
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    assert out["last"] == "acme" and out["order_last"] == "acme" and out["n"] == 19 and out["index"] == 19
+    assert out["access"] == "local" and out["name"] == "Acme Bank card transactions" and out["loaded"]
+    assert out["rows"] == 300 and out["fraud"] > 0
+    # the scan itself, in this interpreter: the three decoys are skipped, the key is read from the file name
+    os.environ[private.ENV] = str(d)
+    try:
+        assert private.scan(["fdh"]) == ["acme"]
+        assert private.source_fields("acme")["key"] == "acme" and private.source_fields("acme")["license"] == "private"
+    finally:
+        del os.environ[private.ENV]
+    assert private.scan() == [] and private.directory() is None

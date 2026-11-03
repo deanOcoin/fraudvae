@@ -118,6 +118,10 @@ def fetch_source(key: str, raw_dir: Path = RAW_DIR, quiet=False) -> bool:
             extract(sdir / rel, sdir)
         if not available(raw_dir, key) and src.kaggle_ref and _kaggle_configured():
             _kaggle_download(src.kaggle_ref, sdir)
+    elif src.access == "local":
+        # v7: generated here (a simulator) or a private source: nothing to fetch, only a place to look
+        print(f"[{key}] MISSING. Generated or private data: put the files ({', '.join(src.files)}) under {sdir}/ - {src.notes}")
+        return False
     elif src.access == "kaggle":
         if _kaggle_configured():
             print(f"[{key}] kaggle download {src.kaggle_ref}")

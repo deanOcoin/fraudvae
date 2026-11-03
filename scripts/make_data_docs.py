@@ -43,6 +43,8 @@ EXCERPT = {
 
 
 def excerpt(key: str, n=4, width=160) -> str | None:
+    if key not in EXCERPT:   # v7: a generated or private source has no fixed raw file to quote
+        return None
     rel, kind = EXCERPT[key]
     root = source_dir(RAW_DIR, key)
     p = _find(root, rel) if root.exists() else None
@@ -77,7 +79,8 @@ def main():
         s, st = SOURCES[k], stats["sources"].get(k)
         rows = f"{st['rows']:,}" if st else f"~{s.approx_rows:,} (not built)"
         rate = f"{st['fraud_rate']:.3%}" if st else f"~{s.label_rate_hint:.2%}"
-        lines.append(f"| {k} | {s.name} | {s.access} | {rows} | {rate} | {s.license} |")
+        access = s.access + (" (pretraining only)" if getattr(s, "pretrain_only", False) else "")
+        lines.append(f"| {k} | {s.name} | {access} | {rows} | {rate} | {s.license} |")
     lines.append("")
     for k in ORDER:
         s, st = SOURCES[k], stats["sources"].get(k)
@@ -86,6 +89,8 @@ def main():
                   "- files: " + ", ".join(f"`{f}`" for f in s.files)]
         if s.kaggle_ref:
             lines.append(f"- kaggle: `{s.kaggle_ref}`")
+        if getattr(s, "pretrain_only", False):
+            lines.append("- pretraining only: feeds the encoder's pretraining set (`prepare --include-pretrain-only`), never the evaluation frame")
         if s.notes:
             lines.append(f"- notes: {s.notes}")
         lk = lock.get("sources", {}).get(k)
@@ -107,7 +112,12 @@ def main():
         if ex:
             lines += ["", "Raw excerpt:", "", "```", ex, "```"]
         lines.append("")
-    lines += ["## Unified schema", "", f"Schema version {schema.SCHEMA_VERSION}. See `docs/SCHEMA.md` for the full field list and the per-source mapping decisions.", ""]
+    lines += ["## Unified schema", "", f"Schema version {schema.SCHEMA_VERSION}. See `docs/SCHEMA.md` for the full field list and the per-source mapping decisions.", "",
+              "## Private sources", "",
+              "A source that cannot be public (a partner's transactions) is an adapter module in a directory named by `FRAUDVAE_ADAPTERS`: "
+              "`<key>.py` with a `SOURCE` dict and a `load(raw_dir)` returning the unified frame (`fraudvae/data/private.py`). It joins "
+              "the registry and the schema's source list after the public sources, so every public index stands, and goes through "
+              "`fetch`, `build` and `prepare` like any other; nothing of it enters this repository.", ""]
     OUT.write_text("\n".join(lines))
     print(f"wrote {OUT} ({len(lines)} lines)")
 

@@ -126,6 +126,7 @@ still starts, novelty-only, and the sidebar tells you why.
 | baf | Bank Account Fraud (Feedzai) account applications with device telemetry (v5) | 1.0M | 1.10% | kaggle |
 | fraudecom | e-commerce first purchases with shared device ids (v5) | 151k | 9.4% | kaggle |
 | amlworld_li_small, _hi_medium, _li_medium, _hi_large, _li_large | the other five AMLworld variants (v6, pretraining corpus; not in a shipped generation) | 6.9M / 31.9M / 31.3M / 180M / 176M | 0.05-0.12% | the same kaggle zip |
+| fdh_sim, sparkov_sim | the two open-source generators behind fdh and sparkov, run locally (v7, pretraining only; never in the evaluation frame) | as generated | as generated | local |
 
 No dataset is redistributed here: each keeps its own licence (`docs/DATA_SOURCES.md`
 has the links). All sixteen are public (the five v6 variants come out of the zip the ninth already needs). The GitHub-hosted ones need nothing; the Kaggle
@@ -141,6 +142,11 @@ sources whose licences allow it ship a few hundred labelled rows from the held-o
 test split in `data/examples/` (`fraudvae examples` regenerates them from a build),
 which is what the score tab's example picker uses on a machine without the data - the
 demonstration site included.
+
+A source that cannot be public - a partner's transactions - is an adapter module in a
+directory named by `FRAUDVAE_ADAPTERS` (v7, `fraudvae/data/private.py`): it joins the
+source list after the public ones and goes through `fetch`, `build` and `prepare` like
+any other, and nothing of it enters this repository.
 
 Every source is mapped onto one schema (`fraudvae/data/schema.py`, v5): 95
 numeric fields (amount, hour, the customer's history in the last hour / day /
