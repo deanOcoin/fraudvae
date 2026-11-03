@@ -248,6 +248,33 @@ def blank_fast(X: np.ndarray, names, rng, fraction: float, log=None, what="boost
     return X
 
 
+def label_cut(next_split, codes) -> dict:
+    """per source, the first timestamp of the next split: the boundary the supervised fits of
+    the split before it are judged against"""
+    ts, src = np.asarray(next_split.ts), np.asarray(next_split.src)
+    return {int(s): float(ts[src == s].min()) for s in codes if (src == s).any()}
+
+
+def censor_recent(split, idx, next_split, horizon_days: float, log=None, what="booster"):
+    """v7: the label horizon. a deployment trained at the boundary did not yet have the labels of
+    the last horizon_days before it (a chargeback takes weeks), so the rows of idx within that
+    many days of their source's boundary with the next split leave the fit. returns (kept idx,
+    rows removed); 0 = as published, every labelled row used"""
+    idx = np.asarray(idx)
+    if not horizon_days or next_split is None or getattr(split, "ts", None) is None or getattr(next_split, "ts", None) is None:
+        return idx, 0
+    src = np.asarray(split.src)[idx].astype(np.int64)
+    ts = np.asarray(split.ts)[idx]
+    keep = np.ones(len(idx), dtype=bool)
+    for s, t in label_cut(next_split, np.unique(src)).items():
+        m = src == s
+        keep[m] = ts[m] <= t - float(horizon_days) * 86400.0
+    removed = int((~keep).sum())
+    if log and removed:
+        log(f"  {what}: {removed:,} rows within {horizon_days:g} days of the label horizon left out (their labels were not known yet)")
+    return idx[keep], removed
+
+
 def _sample(split, per_source_legit: int, rng, keep_fraud=True):
     src, y = split.src[:], split.y[:]
     keep = []
@@ -423,6 +450,7 @@ def train_booster(run_dir: Path, prepared: str, cfg, log=print, seed=1337, model
     source_names = data.source_names
 
     tr_idx = _sample(tr, cfg.max_legit_per_source, rng)
+    tr_idx, censored = censor_recent(tr, tr_idx, va, getattr(cfg, "label_horizon_days", 0.0), log=log)
     va_idx = _sample(va, cfg.val_legit_per_source, rng)
     X = _gather(tr, tr_idx)
     y = tr.y[tr_idx].astype(np.float32)
@@ -534,6 +562,7 @@ def train_booster(run_dir: Path, prepared: str, cfg, log=print, seed=1337, model
         "txfm_pca_explained": float(pca.explained.sum()) if pca is not None else None,
         "categorical_index": cat_idx, "params": params, "best_iteration": best, "num_trees": int(model.num_trees()),
         "train_rows": int(len(tr_idx)), "train_fraud": int(tr.y[tr_idx].sum()), "val_rows": int(len(va_idx)),
+        "label_horizon_days": float(getattr(cfg, "label_horizon_days", 0.0) or 0.0), "censored_rows": censored,
         "generic_fraction": cfg.generic_fraction, "val_auc_curve": [float(v) for v in curve["val"]["auc"]],
         "generic_auc_curve": [float(v) for v in curve["generic"]["auc"]],
         "val_auroc": float(np.mean([v["auroc"] for v in per_source.values() if v["auroc"] == v["auroc"]])),
@@ -662,6 +691,8 @@ def train_specialists(run_dir: Path, prepared: str, cfg, log=print, seed=1337, m
         if len(legit) > cap:
             legit = rng.choice(legit, cap, replace=False)
         tr_idx = np.sort(np.concatenate([legit, fraud]))
+        tr_idx, censored = censor_recent(tr, tr_idx, va, getattr(cfg, "label_horizon_days", 0.0), log=log, what=f"specialist {key}")
+        fraud = tr_idx[y_tr[tr_idx] == 1]
         vrows = np.flatnonzero(src_va == s)
         vl = vrows[y_va[vrows] == 0]
         if len(vl) > cfg.val_legit_per_source:
@@ -709,6 +740,7 @@ def train_specialists(run_dir: Path, prepared: str, cfg, log=print, seed=1337, m
             "txfm_in_dim": txfm.dim if txfm is not None else 0,
             "categorical_index": cat_idx, "params": params, "best_iteration": best,
             "num_trees": int(model.num_trees()), "train_rows": int(len(tr_idx)), "train_fraud": int(len(fraud)),
+            "label_horizon_days": float(getattr(cfg, "label_horizon_days", 0.0) or 0.0), "censored_rows": censored,
             "val_rows": int(len(va_idx)), "val_auroc": auroc(yv, pv), "val_auprc": auprc(yv, pv),
             "val_auc_curve": [float(v) for v in curve["val"]["auc"]],
             "importance_gain": [{"feature": names[i], "gain": float(imp[i])} for i in order[:30]],

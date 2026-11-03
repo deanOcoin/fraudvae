@@ -28,6 +28,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+from .booster import censor_recent
 from .dataset import PreparedSet
 from .loading import load_checkpoint
 from .scoring import auroc
@@ -97,7 +98,8 @@ def _rows(split, s: int, per_source_legit: int, rng) -> np.ndarray:
 
 
 def train_txfmhead(run_dir: Path, prepared: str, txfm, device="cpu", log=print, max_legit_per_source=200_000, val_legit_per_source=100_000,
-                   min_fraud=300, epochs=20, patience=3, batch_size=4096, lr=1e-3, hidden=256, dropout=0.2, seed=1337) -> dict | None:
+                   min_fraud=300, epochs=20, patience=3, batch_size=4096, lr=1e-3, hidden=256, dropout=0.2, seed=1337,
+                   label_horizon_days=0.0) -> dict | None:
     """fit one head per source with at least min_fraud labelled fraud rows in train (the
     specialists' rule), on the encoder's block of the booster's labelled subsample, early
     stopped on that source's validation AUROC; write txfmhead.pt + txfmhead.json. None when no
@@ -123,6 +125,7 @@ def train_txfmhead(run_dir: Path, prepared: str, txfm, device="cpu", log=print, 
             continue
         ts = time.time()
         tr_idx, va_idx = _rows(tr, int(s), max_legit_per_source, rng), _rows(va, int(s), val_legit_per_source, rng)
+        tr_idx, censored = censor_recent(tr, tr_idx, va, label_horizon_days, log=log, what=f"encoder head {key}")
         Xb = txfm.features_split(tr, tr_idx, data.seq, "train", device)
         Xv = txfm.features_split(va, va_idx, data.seq, "val", device)
         keep = ~np.isnan(Xb).all(1)                       # gated or routed-away rows carry no block
@@ -172,6 +175,7 @@ def train_txfmhead(run_dir: Path, prepared: str, txfm, device="cpu", log=print, 
         head.load_state_dict(best_state)
         trained.append((int(s), head))
         per_source[key] = {"auroc": best, "best_epoch": best_ep, "epochs_run": ep + 1, "train_rows": int(len(Xb)), "train_fraud": int(yb.sum()),
+                           "censored_rows": censored,
                            "val_rows": int(keep_v.sum()), "val_fraud": int(yv[keep_v].sum()), "pos_weight": pos_weight, "seconds": round(time.time() - ts, 1)}
         log(f"  encoder head {key}: {len(Xb):,} rows ({int(yb.sum()):,} fraud), best val auroc {best:.4f} at epoch {best_ep} ({time.time() - ts:.0f}s)")
         del Xb_t, yb_t, Xv_t
@@ -187,6 +191,7 @@ def train_txfmhead(run_dir: Path, prepared: str, txfm, device="cpu", log=print, 
     info = {"created": time.strftime("%Y-%m-%dT%H:%M:%S"), "prepared": prepared, "signal": SIGNAL, **merged.config(),
             "source_names": [names.get(s, str(s)) for s, _ in trained], "sources": per_source,
             "val_auroc": float(np.mean([v["auroc"] for v in per_source.values()])), "min_fraud": min_fraud, "epochs": epochs,
+            "label_horizon_days": float(label_horizon_days or 0.0),
             "patience": patience, "lr": lr, "seconds": round(time.time() - t0, 1)}
     (run_dir / "txfmhead.json").write_text(json.dumps(info, indent=1))
     log("  encoder head val auroc: " + " ".join(f"{k}={v['auroc']:.3f}" for k, v in per_source.items()) + f" ({time.time() - t0:.0f}s)")

@@ -165,6 +165,19 @@ keeps a log at `$FRAUDVAE_HOME/server.log` (`FRAUDVAE_SERVER_LOG` to move it)
 with `faulthandler` armed on it, so a native crash leaves a Python stack
 behind instead of a vanished process.
 
+**The label horizon** (v7, `boost.label_horizon_days`). A deployment trained at a
+boundary did not yet have the labels of the last weeks before it: a chargeback
+takes a month to arrive. With a horizon of N days, the train rows within N days
+of their source's validation boundary leave the supervised fits (the booster,
+the specialists, the encoder head) and the validation rows within N days of the
+test boundary leave the blender's fit; `booster.json`, `specialists.json`,
+`txfmhead.json` and `calibration.json` record the horizon and how many rows it
+cost. The thresholds still read every validation row, and the delayed-label
+evaluation (`eval_delay30.json`) remains where late labels are judged: the
+horizon is about what the models were allowed to learn from, the evaluation
+about what they are shown. 0 keeps every labelled row, as every published
+generation did; 30 is what a card deployment lives with.
+
 ## v5: the history encoder and the sequence head
 
 `fraudvae/model/vae.py` (HistoryEncoder), `fraudvae/model/dataset.py`

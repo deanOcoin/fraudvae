@@ -89,6 +89,10 @@ class BoostConfig:
                                           # before the trees see it; 0 = the raw block. the second answer to feature dilution
     txfm_head: bool = False               # v7: a supervised head per source on the encoder's block, the "txsup" blend signal
                                           # (model/txfmhead.py); the labels' first direct route to the encoder's state
+    label_horizon_days: float = 0.0       # v7: the label horizon. train rows within this many days of their source's validation
+                                          # boundary leave the supervised fits (booster, specialists, encoder head), and val rows
+                                          # within it of the test boundary leave the blender's fit: a deployment did not have those
+                                          # labels yet. 0 = as published. 30 is what a card deployment lives with
 
 
 @dataclass

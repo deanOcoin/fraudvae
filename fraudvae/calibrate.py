@@ -22,7 +22,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from .model.booster import Booster, Specialists
+from .model.booster import Booster, Specialists, censor_recent
 from .graph.scorer import GraphScorer
 from .model.heads import load_heads
 from .model.seqhead import load_seqhead
@@ -148,7 +148,11 @@ def _sigmoid(x):
     return 1.0 / (1.0 + np.exp(-np.clip(x, -30, 30)))
 
 
-def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, log=print, batch_size=16384):
+def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, log=print, batch_size=16384, label_horizon_days=0.0):
+    """label_horizon_days (v7): val rows within that many days of their source's test boundary
+    leave the blender's fit - a deployment calibrated at the boundary did not have their labels
+    yet. the thresholds (pass 3) still read every val row; the delayed-label evaluation is where
+    late labels are judged"""
     run_dir = Path(run_dir)
     model, ck = load_checkpoint(run_dir / "model.pt", device=device)
     booster = Booster.load(run_dir)
@@ -160,8 +164,9 @@ def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, 
     if txfm is not None:
         txfm.with_cache(prepared)                    # its block pass over the set, when `fraudvae txfm-cache` has run
     txhead = load_txfmhead(run_dir, device=device) if txfm is not None else None   # v7: the supervised head on its block
-    data = PreparedSet(prepared, splits=("val",))
+    data = PreparedSet(prepared, splits=("val", "test") if label_horizon_days else ("val",))
     va = data["val"]
+    te = data["test"] if label_horizon_days else None
     names = data.source_names
     y, src = va.y[:], va.src[:]
     rng = np.random.default_rng(0)
@@ -190,6 +195,7 @@ def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, 
 
     # ---- pass 2: score type + blender on a labelled subsample --------------------------------
     fit_idx = _subsample(src, y, rng, FIT_ROWS, with_fraud=True)
+    fit_idx, censored_fit = censor_recent(va, fit_idx, te, label_horizon_days, log=log, what="blender")
     rf = score_split(model, va, batch_size=batch_size, n_samples=n_samples, device=device, idx=fit_idx, scorer=scorer,
                      booster=booster, txfm=txfm, keep_features=False, keep_mu=False, seq=data.seq, split_name="val", seqhead=seqhead, heads=heads, graph=graph, specialists=specialists, txhead=txhead)
     yf, sf = y[fit_idx], src[fit_idx]
@@ -208,6 +214,7 @@ def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, 
         score_mean[s] = rf[score_type][m].mean()
         score_std[s] = max(float(rf[score_type][m].std()), 1e-6)
     gen_fit = np.sort(rng.choice(gen_idx, min(len(gen_idx), 200_000), replace=False))
+    gen_fit, _ = censor_recent(va, gen_fit, te, label_horizon_days, what="blender (generic)")
     rfg = score_split(model, va, batch_size=batch_size, n_samples=n_samples, device=device, idx=gen_fit, scorer=scorer,
                       booster=booster, txfm=txfm, src_override=0, keep_features=False, keep_mu=False, seq=data.seq, split_name="val", seqhead=seqhead, heads=heads, graph=graph, specialists=specialists, txhead=txhead)
     yg = y[gen_fit]
@@ -262,6 +269,7 @@ def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, 
         "schema_version": data.meta.get("schema_version"),
         "features": {"numeric": data.numeric_names, "categorical": data.categorical_names},
         "score_type": score_type, "score_type_candidates": cands,
+        "label_horizon_days": float(label_horizon_days or 0.0), "censored_fit_rows": int(censored_fit),
         "baselines": baselines, "fpr_targets": list(FPR_TARGETS),
         "sources": {}, "booster": {"sources": {}} if booster is not None else None,
         "blend": {**blend, "sources": {}},

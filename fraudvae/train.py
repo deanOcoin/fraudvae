@@ -356,7 +356,8 @@ def post_train(run_dir: Path, cfg: Config, prepared="default", device=None, log=
         write_status(run_dir, state="encoder head")
         from .model.txfmhead import train_txfmhead
         train_txfmhead(run_dir, prepared, txfm, device=device, log=log, max_legit_per_source=cfg.boost.max_legit_per_source,
-                       val_legit_per_source=cfg.boost.val_legit_per_source, min_fraud=cfg.boost.specialist_min_fraud, seed=cfg.train.seed)
+                       val_legit_per_source=cfg.boost.val_legit_per_source, min_fraud=cfg.boost.specialist_min_fraud, seed=cfg.train.seed,
+                       label_horizon_days=cfg.boost.label_horizon_days)
     else:
         for stale in (run_dir / TXFMHEAD_FILE, run_dir / "txfmhead.json"):
             if stale.exists():
@@ -402,7 +403,8 @@ def post_train(run_dir: Path, cfg: Config, prepared="default", device=None, log=
     log("calibrating thresholds + blender + latent map on val ...")
     write_status(run_dir, state="calibrating")
     from .calibrate import calibrate_run
-    calibrate_run(run_dir, prepared=prepared, device=device, n_samples=cfg.train.score_samples, log=log)
+    calibrate_run(run_dir, prepared=prepared, device=device, n_samples=cfg.train.score_samples, log=log,
+                  label_horizon_days=cfg.boost.label_horizon_days)
     log("evaluating on test ...")
     write_status(run_dir, state="evaluating")
     from .evaluate import evaluate_run
