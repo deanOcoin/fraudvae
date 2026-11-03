@@ -445,6 +445,9 @@ def pretrain(cfg, prepared="default", name=None, run_dir: Path | None = None, re
                 summary[k] = round(summary[k] + prev.get(k, 0), 1)
         (run_dir / "txfm.json").write_text(json.dumps(summary, indent=1))
         write_status(run_dir, state="done", epoch=1, epochs=1, step=tc.steps, steps=tc.steps, best=best, elapsed=time.time() - t_start)
+        from .manifest import write_manifest
+
+        write_manifest(run_dir, "pretrain", cfg, prepared, log=log)
         metrics_f.close()
         log(f"done in {(time.time() - t_start) / 60:.1f} min; best val next-event nll {best:.4f}")
     if dist:

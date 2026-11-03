@@ -496,6 +496,18 @@ themselves add to the variance cancels when they are the same rows.
 Runs record the schema version they were trained on; the server refuses to
 load one from another version and the UI greys it out.
 
+**What a run is made of** (v7, `fraudvae/manifest.py`). The stages that leave
+artefacts behind - pretraining, the post stage (also at the end of `train`), a
+standalone `boost` or `evaluate` - write `manifest.json`: the code (version, git
+commit, whether the tree was clean), the configuration and its hash, the
+prepared set with the hash of its `meta.json`, and the sha256 of every model
+file in the run, with earlier records kept under `history`. The post stage
+also removes any evaluation the run already holds (`eval*.json`,
+`scores_test*.npz`) before it writes its own. Both come from one night: a
+checkpoint copied into a new run brought its old `eval.json` along, and a
+round was read against it until the file's time stamp gave it away. A
+comparison should be between things whose provenance is written down.
+
 ## Server
 
 v5 additions. `POST /api/score` takes, besides `features` and `source`:

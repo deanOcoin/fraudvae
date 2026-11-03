@@ -229,6 +229,9 @@ def main(argv=None):
     prepared = args.prepared or json.loads((run_dir / "run.json").read_text()).get("prepared", "default")
     evaluate_run(run_dir, prepared=prepared, device=torch.device(args.device), n_samples=args.samples,
                  label_delay_days=args.label_delay)
+    from .manifest import write_manifest
+
+    write_manifest(run_dir, "evaluate", None, prepared, extra={"label_delay_days": args.label_delay}, log=print)
     return 0
 
 

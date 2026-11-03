@@ -600,6 +600,9 @@ def main(argv=None):
         cfg = _c.Config()
         _c._merge(cfg, run.get("config", {}))
     train_booster(run_dir, prepared, cfg.boost)
+    from ..manifest import write_manifest
+
+    write_manifest(run_dir, "boost", cfg, prepared, log=print)
     return 0
 
 

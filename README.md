@@ -395,7 +395,7 @@ fraudvae/
   text/        hashed-bag text heads (url / free text / profile), training, scorer
   behaviour/   mouse / keystroke / touch / motion features, verifiers, training, scorer
   train.py  pretrain.py (v6)  txfm_cache.py (v6: the encoder's features for a prepared set, once)  calibrate.py  evaluate.py
-  compare.py (two runs on the same rows, paired)  config.py
+  compare.py (two runs on the same rows, paired)  manifest.py (what a run is made of, hashed)  config.py
   remote/      keys, ssh (paramiko), provision (incl. raw-data push + box-side pipeline),
                jobs, advisor, relay (a git repo as the laptop-off control channel)
   server/      fastapi app + api modules, inference (the loaded generations + fusion), timeline,

@@ -313,18 +313,22 @@ def train(cfg: Config, prepared="default", run_dir: Path | None = None, name: st
     if device.type == "cuda":
         torch.cuda.empty_cache()
 
-    post_train(run_dir, cfg, prepared=prepared, device=device, log=log, t_start=t_start, best=best)
+    post_train(run_dir, cfg, prepared=prepared, device=device, log=log, t_start=t_start, best=best, stage="train")
     log(f"done. total {(time.time() - t_start) / 60:.1f} min")
     return run_dir
 
 
-def post_train(run_dir: Path, cfg: Config, prepared="default", device=None, log=print, t_start=None, best=None):
+def post_train(run_dir: Path, cfg: Config, prepared="default", device=None, log=print, t_start=None, best=None, stage="post"):
     """everything after the VAE: booster, calibration (blender + thresholds), test evaluation.
     also `fraudvae post RUN`, for re-doing those with a different booster config without
-    retraining the VAE (the booster is the cheap half)."""
+    retraining the VAE (the booster is the cheap half). any evaluation the run already holds
+    goes first - a copied checkpoint brings its old eval files along, and a round was once
+    read against them - and manifest.json records what was built from what at the end."""
     run_dir = Path(run_dir)
     device = device or pick_device(cfg.device)
     t_start = t_start or time.time()
+    from .manifest import clear_evaluations, write_manifest
+    clear_evaluations(run_dir, log=log)
     from .model.vae import load_checkpoint
     model, _ = load_checkpoint(run_dir / "model.pt", device=device)
     # v6: the pretrained transaction encoder, copied into the run so that calibration, evaluation
@@ -398,6 +402,7 @@ def post_train(run_dir: Path, cfg: Config, prepared="default", device=None, log=
         log(f"evaluating on test again with {ENTITY_LABEL_DELAY_DAYS}-day label latency ...")
         evaluate_run(run_dir, prepared=prepared, device=device, n_samples=cfg.train.score_samples, log=log,
                      label_delay_days=ENTITY_LABEL_DELAY_DAYS)
+    write_manifest(run_dir, stage, cfg, prepared, log=log)
     kw = {"best": best} if best is not None else {}
     write_status(run_dir, state="finished", elapsed=time.time() - t_start, **kw)
 

@@ -44,8 +44,11 @@ def test_prepare_outputs(prepared_set):
 
 def test_training_run_artifacts(trained_run):
     for f in ("model.pt", "metrics.jsonl", "calibration.json", "eval.json", "latent_map.npz", "run.json", "status.json",
-              "booster.txt", "booster.json"):
+              "booster.txt", "booster.json", "manifest.json"):
         assert (trained_run / f).exists(), f
+    man = json.loads((trained_run / "manifest.json").read_text())
+    assert man["stage"] == "train" and man["prepared"]["name"] == "t" and man["prepared"]["meta_sha256"]
+    assert {"model.pt", "booster.txt", "calibration.json"} <= set(man["files"]) and "eval.json" in man["evaluations"]
     ev = json.loads((trained_run / "eval.json").read_text())
     assert set(ev["sources"]) == {"fdh", "capone"}
     # planted pattern (x6 amounts at night) is easy, even 2 tiny epochs should get it
