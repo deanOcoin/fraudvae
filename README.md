@@ -236,7 +236,9 @@ labelled in-sample, because at 0.1% FPR a threshold is the n-th highest of a
 few thousand legitimate scores and fitted to noise. Every test row's scores are
 kept beside the receipt (`scores_test.npz`, and `scores_test_delay30.npz` for the
 30-day pass), so two runs on the same rows can be compared row by row rather
-than by their summary numbers.
+than by their summary numbers: `fraudvae compare A B` gives, per source and for
+the mean, the change in AUROC, recall and precision at the alert budget with a
+paired-bootstrap interval and a verdict.
 
 `docs/ARCHITECTURE.md` has the longer version, the UI's "How it works" tab
 the friendly one.
@@ -392,7 +394,8 @@ fraudvae/
   graph/       entity-graph snapshots, GraphSAGE, per-source training, scorer, public benchmarks
   text/        hashed-bag text heads (url / free text / profile), training, scorer
   behaviour/   mouse / keystroke / touch / motion features, verifiers, training, scorer
-  train.py  pretrain.py (v6)  txfm_cache.py (v6: the encoder's features for a prepared set, once)  calibrate.py  evaluate.py  config.py
+  train.py  pretrain.py (v6)  txfm_cache.py (v6: the encoder's features for a prepared set, once)  calibrate.py  evaluate.py
+  compare.py (two runs on the same rows, paired)  config.py
   remote/      keys, ssh (paramiko), provision (incl. raw-data push + box-side pipeline),
                jobs, advisor, relay (a git repo as the laptop-off control channel)
   server/      fastapi app + api modules, inference (the loaded generations + fusion), timeline,

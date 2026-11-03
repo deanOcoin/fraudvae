@@ -467,7 +467,17 @@ go to `latent_map.npz` for the UI scatter.
 `evaluate.py` applies the frozen validation thresholds to the test split and
 reports, per source and for a generic subsample, realised FPR / recall /
 precision alongside AUROC, AUPRC, recall@FPR for the VAE, the booster and
-the blend. `mean_auroc` (what runs are ranked by) is the blend's.
+the blend. `mean_auroc` (what runs are ranked by) is the blend's. It also
+keeps every test row's scores (`scores_test.npz`, `scores_test_delay30.npz`
+for the delayed pass), and **`fraudvae compare A B`** reads two of them: the
+same rows scored by two runs, judged paired with a Poisson bootstrap over the
+rows (the same weights for both runs), per source and for the mean over
+sources, on AUROC, recall at the FPR targets and precision at the first. Each
+difference comes with a 95% interval and a call; a source's verdict reads the
+recall at the first target, then the AUROC. The summary numbers of two
+receipts cannot settle a difference of a few thousandths - the v6 node run
+spent a night finding that out - but the rows can, because whatever the rows
+themselves add to the variance cancels when they are the same rows.
 
 Runs record the schema version they were trained on; the server refuses to
 load one from another version and the UI greys it out.

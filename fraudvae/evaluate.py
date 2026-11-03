@@ -87,7 +87,7 @@ def write_scores(path: Path, r: dict, te, names: dict, score_type: str, label_de
     prepared set's row ids (offsets into the source parquet), source and label, the vae score
     as calibrated, the booster logit, the blend probability and each extra signal's logit,
     NaN where a row has no such signal. `meta` holds the setting the scores were made under."""
-    n = len(te)
+    n = len(te.y)
     cols = {"row": np.asarray(te.row[:], dtype=np.int64), "src": np.asarray(te.src[:], dtype=np.int8),
             "y": np.asarray(te.y[:], dtype=np.int8), "vae": np.asarray(r[score_type], dtype=np.float32)}
     for k in ("booster", "blend", "txfm_surprise") + tuple(extra_signals(r)):
