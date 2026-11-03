@@ -126,6 +126,12 @@ class TxfmConfig:
     max_rows_per_source: int | None = None   # cap the rows loaded per source (laptop probes); None = all
     pack: bool = True              # the event encoder reads only the fields a source observes (Tokeniser.source_fields)
     source_alpha: float = 1.0      # a step's windows come from one source drawn with p ~ rows^alpha: 1 = by size, 0.5 = sqrt, 0 = equal
+    save_every: int = 0            # v7: a full checkpoint (txfm_step<N>.pt) every N steps whatever the validation says; 0 = off.
+                                   # the 32k snapshot of the node run had to be rebuilt from state.pt because txfm.pt only moves on a new best
+    probe: str | None = None       # v7: a source name; at every eval a logistic probe on the frozen state of that source's val windows
+                                   # (fraud vs legit) is logged as probe_auroc - the downstream curve the pretraining is gated on,
+                                   # since the next-event nll kept improving past the point where the detector stopped
+    probe_windows: int = 4096      # windows the probe reads (half fraud where there are enough)
     compile: bool = False          # torch.compile the encoder (dynamic shapes: the packed width changes with the source)
 
 

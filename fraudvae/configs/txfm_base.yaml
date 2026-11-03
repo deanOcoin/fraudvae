@@ -25,6 +25,8 @@ txfm:
   pack: true             # the event encoder reads a source's own fields only (a third of the schema on average)
   source_alpha: 0.5      # a step's source drawn with p ~ sqrt(rows): the 431M amlworld rows (92% of the corpus) do not set the whole curriculum
   compile: true          # torch.compile, dynamic shapes; measured on a B200: 0.188 s/step at batch 64 against 0.239 eager
+  # save_every: 4000     # v7: a full checkpoint every 4k steps whatever the validation says (txfm_step<N>.pt)
+  # probe: tabformer     # v7: a logistic probe on the frozen state of tabformer's val windows at every eval (probe_auroc)
 notes: >
   60k steps x 65k events = 3.9B event visits (~8 passes over 470M rows). Measured on 8x B200
   (docs/TRAINING_NOTES.md, v6): batch 64 with compile moves more windows per second than

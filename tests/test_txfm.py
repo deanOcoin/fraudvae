@@ -507,3 +507,36 @@ def test_supervised_head_on_the_block(pretrained_txfm, prepared_set, tmp_path):
     rg = score_split(vae, va, batch_size=32, n_samples=1, idx=idx, txfm=sc, txhead=head, seq=data.seq, split_name="val", keep_features=False,
                      src_override=0)
     assert np.isnan(rg["txsup"]).all()
+
+
+def test_pretrain_snapshots_and_probes(prepared_set):
+    """v7: txfm.save_every writes a loadable checkpoint on a step cadence whatever the validation
+    says, and txfm.probe logs at every eval how linearly separable one source's fraud is in the
+    frozen state - the downstream curve a pretraining is gated on"""
+    from fraudvae.config import load_config
+    from fraudvae.pretrain import linear_probe, pretrain
+
+    cfg = load_config("txfm_small")
+    cfg.device = "cpu"
+    cfg.txfm.d_model, cfg.txfm.event_layers, cfg.txfm.history_layers, cfg.txfm.window = 32, 1, 1, 8
+    cfg.txfm.steps, cfg.txfm.batch_size, cfg.txfm.warmup, cfg.txfm.eval_every, cfg.txfm.eval_windows = 40, 32, 5, 20, 128
+    cfg.txfm.save_every, cfg.txfm.probe, cfg.txfm.probe_windows = 20, "fdh", 256
+    run_dir = pretrain(cfg, prepared=prepared_set, name="test-txfm-probe")
+    for step in (20, 40):
+        p = run_dir / f"txfm_step{step}.pt"
+        assert p.exists()
+        sc = TxfmScorer.load(p, device="cpu")
+        assert sc.info["extra"]["snapshot"] is True and sc.info["extra"]["step"] == step and sc.window == 8
+    metrics = [json.loads(ln) for ln in (run_dir / "metrics.jsonl").read_text().splitlines()]
+    assert [m["step"] for m in metrics] == [20, 40] and all(m["probe_source"] == "fdh" and m["probe_windows"] > 0 for m in metrics)
+    assert all(np.isfinite(m["probe_auroc"]) and 0 <= m["probe_auroc"] <= 1 for m in metrics)
+    # the probe itself: a separable representation reads high, a thin class reads NaN
+    rng = np.random.default_rng(0)
+    y = (rng.random(600) < 0.3).astype(int)
+    x = rng.normal(size=(600, 8))
+    x[:, 0] += 3.0 * y
+    assert linear_probe(x, y, seed=0) > 0.95
+    assert np.isnan(linear_probe(x[:30], np.r_[np.ones(5, dtype=int), np.zeros(25, dtype=int)], seed=0))
+    with pytest.raises(SystemExit):
+        cfg.txfm.probe = "no_such_bank"
+        pretrain(cfg, prepared=prepared_set, name="test-txfm-probe-bad")

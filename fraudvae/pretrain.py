@@ -133,6 +133,7 @@ class ShardedSequences:
         self.tokens = torch.empty((self.n, n_fields), dtype=dtype, device=device)
         self.dt_log = torch.empty(self.n, dtype=torch.float32, device=device)
         src_all = np.zeros(self.n, dtype=np.int16)
+        y_all = np.zeros(self.n, dtype=np.int8)
         chunk = 1 << 18
         t0 = time.time()
         prev_ts = None
@@ -141,6 +142,7 @@ class ShardedSequences:
             g = gids[s : s + chunk]
             num, mask, cat, ts = seq.gather_rows(g)
             src = np.zeros(len(g), dtype=np.int64)
+            lab = np.zeros(len(g), dtype=np.int8)
             for lo, hi, name in seq.ranges:
                 sp = seq.splits.get(name)
                 if sp is None:
@@ -150,7 +152,9 @@ class ShardedSequences:
                     local = g[sel] - lo
                     u, inv = np.unique(local, return_inverse=True)
                     src[sel] = sp.src[u][inv].astype(np.int64)
+                    lab[sel] = sp.y[u][inv].astype(np.int8)
             src_all[s : s + len(g)] = src
+            y_all[s : s + len(g)] = lab
             bs = start_sorted[self.positions[s : s + chunk]]
             # seconds since the previous event of the same block; the first event of a block has none
             ts_prev = np.concatenate([[prev_ts if prev_ts is not None else np.nan], ts[:-1]])
@@ -165,6 +169,7 @@ class ShardedSequences:
             self.dt_log[s : s + len(g)] = torch.where(dtt >= 0, torch.log1p(dtt.clamp(min=0)), torch.zeros_like(dtt))
         self.pos_t = torch.from_numpy(self.positions).to(device)
         self.device = device
+        self.y_all = y_all   # the label of every resident row (only the probe reads it; the losses never see it)
         # the targets by source: a training step draws its windows from one source, so the
         # event encoder runs at that source's packed width (and the sampler can balance sources)
         src_of = lambda targets: src_all[np.searchsorted(self.positions, targets)]  # noqa: E731
@@ -173,6 +178,10 @@ class ShardedSequences:
         gb = (self.tokens.numel() * self.tokens.element_size() + self.dt_log.numel() * 4) / 2**30
         log(f"rank {rank}/{world}: {self.n:,} rows of {n_all:,} resident ({gb:.2f} GB as token ids), "
             f"{len(self.train_targets):,} train targets, {len(self.val_targets):,} val targets, tokenised in {time.time() - t0:.0f}s")
+
+    def labels(self, positions) -> np.ndarray:
+        """the fraud label of the rows at these seq positions (for the probe)"""
+        return self.y_all[np.searchsorted(self.positions, np.asarray(positions, dtype=np.int64))]
 
     def windows(self, end_positions: np.ndarray, L: int):
         """windows of L events ending at the given seq positions (oldest first):
@@ -201,6 +210,64 @@ def _loss(model, tok, toks, dt, valid, cfg, gen=None, fields=None):
     mlm = model.masked_nll(states, tok_out, toks, masked, fields)
     encoded = toks.shape[0] * toks.shape[1] * (toks.shape[2] if fields is None else len(fields))
     return next_loss + cfg.mlm_weight * mlm, next_loss.detach(), mlm.detach(), int(obs.sum()), encoded
+
+
+MIN_PROBE_CLASS = 10
+
+
+def linear_probe(x: np.ndarray, y: np.ndarray, seed: int = 0) -> float:
+    """how linearly separable the labels are in this representation: a logistic regression on
+    the standardised rows, fit on one stratified half and scored (AUROC) on the other. NaN when
+    a class is too thin to split. the downstream number a pretraining is gated on: the node run's
+    next-event nll kept improving from 32k to 60k steps while the detector built on the state
+    did not move, and a loss curve cannot show that."""
+    from sklearn.linear_model import LogisticRegression
+
+    from .model.scoring import auroc
+
+    x = np.asarray(x, dtype=np.float64)
+    y = np.asarray(y).astype(int)
+    if (y == 1).sum() < MIN_PROBE_CLASS or (y == 0).sum() < MIN_PROBE_CLASS:
+        return float("nan")
+    rng = np.random.default_rng(seed)
+    fit = np.zeros(len(y), dtype=bool)
+    for c in (0, 1):
+        idx = np.flatnonzero(y == c)
+        fit[rng.choice(idx, len(idx) // 2, replace=False)] = True
+    mu, sd = x[fit].mean(0), x[fit].std(0) + 1e-6
+    z = (x - mu) / sd
+    clf = LogisticRegression(C=1.0, max_iter=500).fit(z[fit], y[fit])
+    return auroc(y[~fit], clf.decision_function(z[~fit]))
+
+
+def probe_targets(shard: ShardedSequences, src_k: int, n_windows: int, seed: int):
+    """val windows of one source for the probe: every fraud row up to half of n_windows, the
+    rest legit, drawn once so every eval reads the same rows. (positions, labels)"""
+    tg = shard.val_by_source.get(src_k)
+    if tg is None or len(tg) == 0:
+        return np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.int8)
+    lab = shard.labels(tg)
+    rng = np.random.default_rng(seed)
+    fraud, legit = tg[lab == 1], tg[lab == 0]
+    fraud = fraud if len(fraud) <= n_windows // 2 else np.sort(rng.choice(fraud, n_windows // 2, replace=False))
+    k = max(0, n_windows - len(fraud))
+    legit = legit if len(legit) <= k else np.sort(rng.choice(legit, k, replace=False))
+    ends = np.sort(np.concatenate([fraud, legit]))
+    return ends, shard.labels(ends)
+
+
+@torch.no_grad()
+def probe_states(model, tok, shard: ShardedSequences, ends: np.ndarray, L: int, batch: int, src_k: int) -> np.ndarray:
+    """the state after the last event of each window (what the booster's block starts with)"""
+    model.eval()
+    fields = tok.fields_for_source(src_k, shard.device)
+    out = []
+    for s in range(0, len(ends), batch):
+        toks, dt, valid = shard.windows(ends[s : s + batch], L)
+        states, _ = model(toks, dt, valid, fields)
+        out.append(states[:, L].float().cpu().numpy())
+    model.train()
+    return np.concatenate(out) if out else np.zeros((0, model.d_model), dtype=np.float32)
 
 
 @torch.no_grad()
@@ -341,6 +408,17 @@ def pretrain(cfg, prepared="default", name=None, run_dir: Path | None = None, re
     vrng = np.random.default_rng(tc.seed)
     per = max(1, tc.eval_windows // max(1, len(shard.val_by_source)))
     val_targets = {k: np.sort(vrng.choice(v, min(per, len(v)), replace=False)) for k, v in shard.val_by_source.items()}
+    # v7: the downstream probe - one source's val windows, fraud against legit, read at every eval on rank 0's shard
+    probe_k, probe_ends, probe_y = None, None, None
+    if tc.probe:
+        probe_k = schema.SOURCE_INDEX.get(tc.probe)
+        if probe_k is None:
+            raise SystemExit(f"txfm.probe names an unknown source {tc.probe!r}")
+        probe_ends, probe_y = probe_targets(shard, probe_k, tc.probe_windows, tc.seed)
+        if rank == 0:
+            log(f"probe: {tc.probe}, {len(probe_ends):,} val windows on rank 0 ({int(probe_y.sum()):,} fraud); "
+                f"a logistic read of the frozen state, logged as probe_auroc at every eval")
+    last_val, stop = float("nan"), False
     t_start, t0 = time.time(), time.time()
     sums = {"loss": 0.0, "next": 0.0, "mlm": 0.0, "tokens": 0, "encoded": 0}
     totals = {"tokens": 0, "encoded": 0, "events": 0}
@@ -394,9 +472,15 @@ def pretrain(cfg, prepared="default", name=None, run_dir: Path | None = None, re
                 v = torch.tensor([val_nll if val_nll == val_nll else 0.0, 1.0 if val_nll == val_nll else 0.0], device=device)
                 dist.all_reduce(v)
                 val_nll = float(v[0] / v[1]) if v[1] > 0 else float("nan")
+            last_val = val_nll
+            probe_auc = float("nan")
+            if rank == 0 and probe_k is not None and len(probe_ends):
+                xs_ = probe_states(model, tok, shard, probe_ends, tc.window, max(16, tc.batch_size * 4), probe_k)
+                probe_auc = linear_probe(xs_, probe_y, seed=tc.seed)
             rec = {"step": step, "train_loss": sums["loss"] / max(1, seen_steps), "train_next": sums["next"] / max(1, seen_steps),
                    "train_mlm": sums["mlm"] / max(1, seen_steps), "val_next_nll": val_nll, "val_fields": fields,
                    "val_sources": {src_names.get(k, str(k)): v for k, v in by_src.items()},
+                   "probe_source": tc.probe, "probe_auroc": probe_auc, "probe_windows": int(len(probe_ends)) if probe_k is not None else 0,
                    "tokens_per_sec": sums["tokens"] * world / max(1e-6, time.time() - t0),
                    "encoded_per_sec": sums["encoded"] * world / max(1e-6, time.time() - t0), "elapsed": time.time() - t_start}
             if rank == 0:
@@ -404,7 +488,8 @@ def pretrain(cfg, prepared="default", name=None, run_dir: Path | None = None, re
                 metrics_f.flush()
                 worst = sorted(fields.items(), key=lambda kv: -kv[1])[:3]
                 log(f"eval at step {step}: val next-event nll {val_nll:.4f} per observed token (train {rec['train_next']:.4f}); "
-                    f"hardest fields {', '.join(f'{k} {v:.2f}' for k, v in worst)}")
+                    f"hardest fields {', '.join(f'{k} {v:.2f}' for k, v in worst)}"
+                    + (f"; probe {tc.probe} auroc {probe_auc:.4f}" if probe_auc == probe_auc else ""))
             improved = val_nll == val_nll and val_nll < best - 1e-4
             if improved or val_nll != val_nll:
                 best = min(best, val_nll) if val_nll == val_nll else best
@@ -422,10 +507,17 @@ def pretrain(cfg, prepared="default", name=None, run_dir: Path | None = None, re
                             "tokeniser": tok.config()}, run_dir / "state.pt")
             if bad >= tc.patience:
                 log(f"  no improvement for {bad} evals, stopping")
-                break
+                stop = True
             sums = {"loss": 0.0, "next": 0.0, "mlm": 0.0, "tokens": 0, "encoded": 0}
             seen_steps = 0
             t0 = time.time()
+        # v7: a full checkpoint on a step cadence, whatever the validation says (txfm.pt only moves on a new best)
+        if tc.save_every and step % tc.save_every == 0 and rank == 0:
+            save_checkpoint(run_dir / f"txfm_step{step}.pt", model, tok, meta, to_dict(cfg),
+                            extra={"step": step, "snapshot": True, "val_next_nll": last_val, "best_val_next_nll_so_far": best})
+            log(f"  snapshot txfm_step{step}.pt saved")
+        if stop:
+            break
     if dist:
         tt = torch.tensor([totals["tokens"], totals["encoded"], totals["events"]], dtype=torch.float64, device=device)
         dist.all_reduce(tt)

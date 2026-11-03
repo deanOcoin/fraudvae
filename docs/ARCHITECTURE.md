@@ -273,7 +273,13 @@ Four things about the loop that the first node run taught (`docs/TRAINING_NOTES.
   the prior for a first transaction is one trained vector, the same everywhere.
 - *Resume.* `state.pt` (weights, optimiser, step, best) is written at every eval;
   `--resume` with the same `--name` carries on, so a run can be gated at 10k steps,
-  judged with the booster, and continued rather than restarted.
+  judged with the booster, and continued rather than restarted. Two additions from the
+  node run (v7): `save_every` writes a full `txfm_step<N>.pt` on a step cadence whatever the
+  validation says (the 32k snapshot had to be rebuilt from `state.pt`, because `txfm.pt` only
+  moves on a new best), and `probe: tabformer` reads, at every eval, a logistic regression on
+  the frozen state of that source's val windows, fraud against legit, into `metrics.jsonl` as
+  `probe_auroc` - the downstream curve a pretraining is gated on, since the next-event nll
+  kept improving from 32k to 60k steps while the detector built on the state did not move.
 - *Only where there is a history.* With `txfm.gate_first` the block is NaN for a
   customer's first event: there the state is the start token's and the surprise is the
   marginal of the row's own values, an echo of fields the trees already see, and on a
