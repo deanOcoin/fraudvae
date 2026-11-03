@@ -7,6 +7,12 @@ headline mean_auroc is the blend's, because that is what the app flags on.
 
 A generic pass scores a test subsample with the source token blanked, which
 is the number for "a bank the model has never seen".
+
+Every test row's scores are kept next to the receipt as scores_test.npz (scores_test_delay30.npz
+for the delayed-label pass): the row ids, labels and sources with the vae score, the booster
+logit, the blend probability and each extra signal's logit. Two runs evaluated on the same
+prepared set then compare paired, row by row, with `fraudvae compare` - the summary numbers
+in eval.json cannot say whether a difference of a few thousandths is real; the rows can.
 """
 from __future__ import annotations
 
@@ -72,6 +78,36 @@ def _signal_metrics(ys, logit, thresholds=None, min_rows=200):
     return rec
 
 
+def scores_name(label_delay_days=None) -> str:
+    return f"scores_test_delay{label_delay_days:g}.npz" if label_delay_days else "scores_test.npz"
+
+
+def write_scores(path: Path, r: dict, te, names: dict, score_type: str, label_delay_days, prepared: str) -> Path:
+    """every scored test row, for the paired comparison of two runs (`fraudvae compare`): the
+    prepared set's row ids (offsets into the source parquet), source and label, the vae score
+    as calibrated, the booster logit, the blend probability and each extra signal's logit,
+    NaN where a row has no such signal. `meta` holds the setting the scores were made under."""
+    n = len(te)
+    cols = {"row": np.asarray(te.row[:], dtype=np.int64), "src": np.asarray(te.src[:], dtype=np.int8),
+            "y": np.asarray(te.y[:], dtype=np.int8), "vae": np.asarray(r[score_type], dtype=np.float32)}
+    for k in ("booster", "blend", "txfm_surprise") + tuple(extra_signals(r)):
+        if k in r and len(r[k]) == n:
+            cols[k] = np.asarray(r[k], dtype=np.float32)
+    meta = {"created": time.strftime("%Y-%m-%dT%H:%M:%S"), "label_delay_days": label_delay_days, "score_type": score_type,
+            "prepared": prepared, "n": int(n), "source_names": {str(int(k)): v for k, v in names.items()},
+            "signals": [k for k in cols if k not in ("row", "src", "y")]}
+    np.savez(path, meta=np.array(json.dumps(meta)), **cols)
+    return path
+
+
+def read_scores(path: Path) -> dict:
+    """the arrays of a scores_test*.npz plus its meta dict under "meta" """
+    with np.load(path, allow_pickle=False) as z:
+        out = {k: z[k] for k in z.files if k != "meta"}
+        out["meta"] = json.loads(str(z["meta"]))
+    return out
+
+
 def evaluate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, log=print, batch_size=16384,
                  label_delay_days=None):
     """label_delay_days: score as a deployment with that label latency would (the one-week
@@ -103,6 +139,7 @@ def evaluate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, l
     y, src = te.y[:], te.src[:]
     s = r[score_type]
     log(f"  scored {len(te):,} test rows in {time.time() - t0:.0f}s (vae score type: {score_type})")
+    write_scores(run_dir / scores_name(label_delay_days), r, te, names, score_type, label_delay_days, prepared)
 
     out = {"created": time.strftime("%Y-%m-%dT%H:%M:%S"), "n_samples": n_samples, "score_type": score_type,
            "schema_version": cal.get("schema_version"), "with_booster": booster is not None,

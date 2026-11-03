@@ -233,7 +233,10 @@ precision a receipt quotes for a threshold are what that threshold did on the
 held-out test split (`eval.json`, `at_val_thresholds`); the figures measured on
 the validation rows the threshold was set on are kept as `expected_*` and
 labelled in-sample, because at 0.1% FPR a threshold is the n-th highest of a
-few thousand legitimate scores and fitted to noise.
+few thousand legitimate scores and fitted to noise. Every test row's scores are
+kept beside the receipt (`scores_test.npz`, and `scores_test_delay30.npz` for the
+30-day pass), so two runs on the same rows can be compared row by row rather
+than by their summary numbers.
 
 `docs/ARCHITECTURE.md` has the longer version, the UI's "How it works" tab
 the friendly one.

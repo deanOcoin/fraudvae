@@ -58,6 +58,15 @@ def test_training_run_artifacts(trained_run):
     cal = json.loads((trained_run / "calibration.json").read_text())
     assert cal["score_type"] in ("raw", "norm")
     assert "generic" in cal and "fpr_0.01" in cal["sources"]["fdh"]["thresholds"]
+    # every test row's scores sit beside the receipt, for the paired comparison of two runs
+    from fraudvae.evaluate import read_scores
+    from fraudvae.model.scoring import auroc
+
+    sc = read_scores(trained_run / "scores_test.npz")
+    assert sc["meta"]["n"] == ev["n"] == len(sc["y"]) == len(sc["row"]) == len(sc["blend"]) and sc["meta"]["label_delay_days"] is None
+    assert {"vae", "booster", "blend"} <= set(sc["meta"]["signals"]) and np.isfinite(sc["blend"]).all()
+    fdh = sc["src"] == int(cal["sources"]["fdh"]["source_index"])
+    assert abs(auroc(sc["y"][fdh], sc["blend"][fdh]) - ev["sources"]["fdh"]["blend"]["auroc"]) < 1e-9
     assert cal["blend"]["n_features"] == len(cal["blend"]["coef"]) and cal["blend"]["with_booster"]
     assert "fdh" in cal["blend"]["sources"] and "generic" in cal["blend"]
     assert cal["booster"]["sources"]["fdh"]["auroc"] > 0.9
@@ -495,6 +504,11 @@ def test_label_latency_in_the_score_api(client, trained_run):
     assert rn["labels"]["fast_block"] == "not sent"
     ev30 = json.loads((trained_run / "eval_delay30.json").read_text())
     assert ev30["label_delay_days"] == 30 and set(ev30["sources"]) == {"fdh", "capone"}
+    from fraudvae.evaluate import read_scores
+
+    sc30 = read_scores(trained_run / "scores_test_delay30.npz")
+    assert sc30["meta"]["label_delay_days"] == 30 and len(sc30["blend"]) == ev30["n"]
+    assert np.array_equal(sc30["row"], read_scores(trained_run / "scores_test.npz")["row"])   # the same rows, so the two pair
     ev = json.loads((trained_run / "eval.json").read_text())
     assert ev["label_delay_days"] is None and 0 <= ev30["sources"]["fdh"]["blend"]["auroc"] <= 1
 

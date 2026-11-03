@@ -18,7 +18,8 @@ raw downloads ──fetch──▶ data/raw/<source>/            (never in git)
    └─boost──▶ runs/<name>/booster.txt + booster.json                             (LightGBM on [common | wide])
    └─seqhead─▶ runs/<name>/seqhead.pt + seqhead.json                              (v5: classifier on the history read-out)
    └─calibrate──▶ runs/<name>/calibration.json + latent_map.npz                  (blender + thresholds on val)
-   └─evaluate──▶ runs/<name>/eval.json                                           (VAE / booster / seq / blend on test)
+   └─evaluate──▶ runs/<name>/eval.json + scores_test.npz                        (VAE / booster / seq / blend on test;
+                                                                                   every row's scores, for `compare`)
    │
    └─serve──▶ fastapi + the static ui, loads the best compatible run by test (blend) auroc
 
