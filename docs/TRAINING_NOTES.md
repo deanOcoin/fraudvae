@@ -823,3 +823,85 @@ shape; 60k steps sharpened tabformer by a further 0.0005 of AUROC and 0.01 of re
 checkpoints, caches apart, are on the Mac under `runs/` (`txfm-base-a` with its `state.pt`,
 `txfm-base-32k`, `txfm-base-last`, `txfm-gate-full`, the four rounds); the node was destroyed
 once every file had been verified by sha256 against the box.
+
+## v7: the instruments before the next round
+
+The four rounds above settled two things: the encoder's gain is real on the one source shaped
+like its training data and absent elsewhere, and more pretraining steps do not move the
+detector while they keep moving the encoder's own loss. They also showed the limits of the
+instruments the rounds were read with - a difference of a few thousandths between two runs on
+the same test rows sat inside the Hanley-McNeil standard error on both sides, a round was once
+compared against an eval file copied in with a checkpoint, and the 32k snapshot had to be
+rebuilt from a resume state because `txfm.pt` only moves on a new validation best. v7 begins
+with the instruments, on the laptop, before anything is rented. Everything below is on the
+`v6` branch with its tests; none of it changes a published number.
+
+**Measured, not summarised.** `fraudvae evaluate` keeps every test row's scores beside the
+receipt (`scores_test.npz`, `scores_test_delay30.npz`: the row ids, labels and sources, the vae
+score, the booster logit, the blend probability, each extra signal's logit), and `fraudvae
+compare A B` judges two runs on the same rows paired: a Poisson bootstrap over the rows with
+the same weights for both runs, per source and for the mean over sources, on AUROC, recall at
+the FPR targets and precision at the first, each difference with a 95% interval and a call;
+a source's verdict reads the recall at the alert budget, then the AUROC. Weighted counts over
+the sorted scores make a thousand replicates of the 8.57M-row split a matter of minutes. The
+first calibration of it was meant to be the known pair v5-h200-f → v5-h200-h; it cannot be, on
+today's data: f's booster has 639 features against h's 739 (the 150 one-week label columns
+came with h), so f cannot be scored on a current prepared set at all. The pair used instead is
+h against its own recipe refit on a train split capped at 300k rows per source (`v5eval`, the
+v5 standardisation, full val and test), a direction that is known.
+
+**What a run is made of.** Every stage that leaves artefacts writes `manifest.json` (code
+version and commit, the config and its hash, the prepared set and the hash of its `meta.json`,
+the sha256 of every model file, earlier records under `history`), and the post stage removes
+any evaluation a run inherited before writing its own.
+
+**Where the block goes, and how wide.** `txfm.sources: [tabformer, fdh]` routes the encoder's
+block to the named sources and hands the booster NaN elsewhere, recorded in `booster.json`
+like the first-event gate. `boost.txfm_pca: 64` compresses the block to 64 principal
+components plus the mean surprise before the trees see it (fitted on the booster's train rows,
+read by the specialists, applied by any booster handed the raw block). The two answers to the
+dilution hypothesis of the v6 rounds - 888 mostly uninformative columns costing capone and
+ieee a few thousandths in all four - and the round that tests them is the first thing the next
+box does: the same post stage from the kept 60k weights with the block routed (tabformer and
+fdh; then with ieee), compressed, and, as the control, replaced by a within-source permutation
+of itself. If the permuted block loses what the real one lost, it was dilution.
+
+**The labels reach the state.** `boost.txfm_head: true` (or `fraudvae txfm-head RUN`) trains,
+per source with at least `specialist_min_fraud` labelled fraud rows, a small MLP on the
+standardised block, early stopped on that source's validation AUROC, and its logit is the
+`txsup` blend signal, present where a head exists and NaN elsewhere as the specialists'
+`local` is. It reads the cached block, so it costs minutes on a box that has the cache. The
+encoder stays frozen; the top layers are unfrozen only if this head earns a paired-interval
+gain on tabformer or ieee.
+
+**A pretraining gated on the right curve.** `txfm.save_every` writes a full `txfm_step<N>.pt`
+on a step cadence whatever the validation says, and `txfm.probe: tabformer` logs at every eval
+a logistic regression's AUROC on the frozen state of that source's val windows, fraud against
+legit (`probe_auroc` in `metrics.jsonl`). The nll was the wrong curve: it fell from 1.2641 at
+32k to 1.2520 at 60k while the detector built on the state did not move. A re-weighted
+pretraining (the AMLworld family capped, tabformer and the history sources up, window 256)
+runs only if the 60k state probes better than the 10k one and the head on the 60k state beats
+the head on the 10k state - that is, only if the representation, not its read-out, is the limit.
+
+**The label horizon.** `boost.label_horizon_days: 30` leaves out of the supervised fits every
+train row within 30 days of its source's validation boundary, and out of the blender's fit
+every val row within 30 days of the test boundary: a deployment did not have those labels yet.
+Each fit records the horizon and the rows it cost. None of the sources carries a label
+timestamp, so this is a protocol rather than data; the delayed-label evaluation stays where
+late labels are judged.
+
+**More of the shape that moved.** The two open-source generators behind fdh and sparkov have
+adapters (`fdh_sim`, `sparkov_sim`, pretraining only: `prepare --include-pretrain-only`, never
+the evaluation frame), for per-customer card sequences with fraud episodes at the volume the
+pretraining wants, in place of the 74.5% of steps the v6 run spent on AMLworld variants. And a
+source that cannot be public - a partner's twelve months with label timestamps, the one lever
+no run can substitute for - is an adapter module outside the repository (`FRAUDVAE_ADAPTERS`),
+joining the source list after the public ones and going through fetch, build and prepare like
+any other.
+
+The decision rules these feed are short. A source keeps the block when its paired interval for
+recall at 1% FPR under 30-day labels is above zero, or the AUROC's is and the recall's does not
+fall below. The branch merges when a variant exists with no source worse than v5-h200-h by a
+paired interval under either label setting and at least one better. The headline moves from
+the mean AUROC, which three saturated sources and one at a ceiling hold still, to the recall at
+1% FPR under 30-day labels, per source and mean.
