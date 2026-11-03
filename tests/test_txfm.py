@@ -354,3 +354,50 @@ def test_gate_first_blanks_rows_without_history(pretrained_txfm, prepared_set):
     one = sc.features_windows(tr, idx, data.seq, "train")
     assert np.isnan(one[first]).all()
     assert np.isfinite(one[~first, : sc.d_model]).all()   # the state is always finite; a surprise is NaN where the field is unobserved
+
+
+def test_block_routed_to_named_sources(pretrained_txfm, prepared_set, tmp_path):
+    """v7: with txfm.sources the block is NaN for every row of a source it is not routed to and
+    unchanged elsewhere, on the block pass and the window path alike; the booster records the
+    routing by name and a scorer loaded from that run applies the same one"""
+    import shutil
+
+    from fraudvae.config import load_config
+    from fraudvae.data import schema
+    from fraudvae.model.booster import train_booster
+    from fraudvae.model.dataset import PreparedSet
+    from fraudvae.model.txfm import TxfmScorer
+
+    data = PreparedSet(prepared_set, splits=("train", "val"), in_memory=True)
+    va = data["val"]
+    src_all = np.asarray(va.src)
+    # the split lays sources out one after another: take rows of both
+    idx = np.concatenate([np.flatnonzero(src_all == schema.SOURCE_INDEX["fdh"])[:200],
+                          np.flatnonzero(src_all == schema.SOURCE_INDEX["capone"])[:200]])
+    src = src_all[idx]
+    assert {int(s) for s in np.unique(src)} == {schema.SOURCE_INDEX["fdh"], schema.SOURCE_INDEX["capone"]}
+    sc = TxfmScorer.load(pretrained_txfm, device="cpu")
+    plain = sc.features_split(va, idx, data.seq, "val", batch_size=16)
+    sc.set_sources(["fdh"])
+    assert sc.sources == {schema.SOURCE_INDEX["fdh"]} and sc.source_names == ["fdh"]
+    routed = sc.features_split(va, idx, data.seq, "val", batch_size=16)
+    fdh = src == schema.SOURCE_INDEX["fdh"]
+    assert fdh.any() and (~fdh).any()
+    assert np.isnan(routed[~fdh]).all() and np.array_equal(routed[fdh], plain[fdh], equal_nan=True)
+    one = sc.features_windows(va, idx, data.seq, "val")
+    assert np.isnan(one[~fdh]).all() and np.isfinite(one[fdh, : sc.d_model]).all()
+    with pytest.raises(SystemExit):
+        sc.set_sources(["no_such_bank"])
+    assert sc.set_sources(None).sources is None and sc.set_sources([]).sources is None
+    # the booster records the routing, and a scorer loaded beside that booster applies it
+    sc.set_sources(["fdh"])
+    cfg = load_config("smoke")
+    cfg.boost.txfm_features, cfg.boost.max_rounds, cfg.boost.early_stopping = True, 20, 10
+    run_dir = tmp_path / "routed"
+    run_dir.mkdir()
+    shutil.copy2(pretrained_txfm / "txfm.pt", run_dir / "txfm.pt")
+    info = train_booster(run_dir, prepared_set, cfg.boost, log=lambda m: None, seed=1, model=None, device="cpu", txfm=sc)
+    assert info["txfm_sources"] == ["fdh"] and info["txfm_dim"] == sc.dim
+    again = TxfmScorer.load(run_dir, device="cpu")
+    assert again.sources == {schema.SOURCE_INDEX["fdh"]} and again.source_names == ["fdh"]
+    assert np.isnan(again.features_split(va, idx, data.seq, "val", batch_size=16)[~fdh]).all()

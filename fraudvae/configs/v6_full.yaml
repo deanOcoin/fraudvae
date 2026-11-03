@@ -37,4 +37,5 @@ boost:
 txfm:
   run: txfm-base-a      # the pretraining run (runs/<run>/txfm.pt) or a path to a txfm.pt
   window: 128
+  # sources: [tabformer, fdh]   # v7: route the block to these sources only (NaN elsewhere); unset = every source
 notes: the v6 base configuration; see docs/TRAINING_NOTES.md (v6) for what each piece bought

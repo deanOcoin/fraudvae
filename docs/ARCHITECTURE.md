@@ -280,6 +280,13 @@ Four things about the loop that the first node run taught (`docs/TRAINING_NOTES.
   source with no sequences at all (ulb) the gate round's booster overfitted that echo.
   The booster records the choice in `booster.json` (`txfm_gate_first`) so calibration,
   evaluation and the server blank the same rows; `v6_full_gated` turns it on.
+- *Only where it earns its place* (v7). `txfm.sources: [tabformer, fdh]` routes the block to
+  the named sources and hands the booster NaN for every row of the others, on the block pass,
+  the cache and the server's window path alike, recorded in `booster.json` (`txfm_sources`)
+  like the gate. The node run's gain was one source's (tabformer, the long card histories the
+  encoder was trained on) while 888 mostly uninformative columns cost capone and ieee a few
+  splits' worth of accuracy in every round; routing is the cheapest answer to that, and the
+  round that settles whether it was dilution is in `docs/TRAINING_NOTES.md` (v7).
 
 **Where it reaches the score.** `boost.txfm_features: true` with `txfm.run:
 <pretraining run>` makes the post stage copy `txfm.pt` into the run and append

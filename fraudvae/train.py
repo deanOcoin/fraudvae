@@ -331,7 +331,7 @@ def post_train(run_dir: Path, cfg: Config, prepared="default", device=None, log=
     # and the server find it next to the booster that reads its features
     txfm = None
     if cfg.boost.enabled and cfg.boost.txfm_features:
-        txfm = _load_txfm(run_dir, cfg.txfm.run, device, log, prepared=prepared, gate_first=cfg.txfm.gate_first)
+        txfm = _load_txfm(run_dir, cfg.txfm.run, device, log, prepared=prepared, gate_first=cfg.txfm.gate_first, sources=cfg.txfm.sources)
     if cfg.boost.enabled:
         log("fitting the supervised booster on the labelled train split ..."
             + (" (with the history encoder's read-out as features)" if cfg.boost.history_features and history_window(model) else "")
@@ -402,7 +402,7 @@ def post_train(run_dir: Path, cfg: Config, prepared="default", device=None, log=
     write_status(run_dir, state="finished", elapsed=time.time() - t_start, **kw)
 
 
-def _load_txfm(run_dir: Path, run, device, log, prepared=None, gate_first=False):
+def _load_txfm(run_dir: Path, run, device, log, prepared=None, gate_first=False, sources=None):
     """v6: resolve txfm.run (a run name under runs/, a directory or a txfm.pt path), copy the
     checkpoint into this run as txfm.pt (unless it is already there) and load it. with a
     prepared set the block pass over each split is cached next to the set (see txfm_cache):
@@ -428,6 +428,9 @@ def _load_txfm(run_dir: Path, run, device, log, prepared=None, gate_first=False)
     scorer.gate_first = bool(gate_first)
     if gate_first:
         log("  transaction encoder: the block is blanked for a customer's first event (txfm.gate_first)")
+    scorer.set_sources(sources)
+    if scorer.sources is not None:
+        log(f"  transaction encoder: the block is routed to {', '.join(scorer.source_names)} only, NaN elsewhere (txfm.sources)")
     extra = scorer.info.get("extra", {})
     log(f"transaction encoder: {dest} ({scorer.d_model} d, window {scorer.window}, {scorer.dim} feature columns, "
         f"val next-event nll {extra.get('best_val_next_nll', float('nan')):.4f} at step {extra.get('step', '?')})")

@@ -458,6 +458,25 @@ class TxfmScorer:
         # fields the trees already see; the booster records the choice in booster.json so
         # calibration, evaluation and the server apply the same one
         self.gate_first = False
+        # sources: the block only for rows of these sources (codes), NaN elsewhere; None = every
+        # source. the v6 node run's gain was one source's (tabformer, long card histories) while
+        # 888 mostly uninformative columns cost capone and ieee a few splits' worth; routing the
+        # block to the sources whose validation earns it is the cheap answer. recorded in
+        # booster.json (txfm_sources, by name) like gate_first, so every reader applies the same
+        self.sources = None
+        self.source_names = None
+
+    def set_sources(self, names):
+        """route the block to these sources (schema names); None or an empty list = every source"""
+        from ..data import schema
+
+        names = [str(n) for n in (names or [])]
+        unknown = [n for n in names if n not in schema.SOURCE_INDEX]
+        if unknown:
+            raise SystemExit(f"txfm.sources names unknown sources: {unknown} (known: {', '.join(schema.SOURCES)})")
+        self.source_names = names or None
+        self.sources = {schema.SOURCE_INDEX[n] for n in names} or None
+        return self
 
     @classmethod
     def load(cls, run_dir: str | Path, device="cpu"):
@@ -471,9 +490,11 @@ class TxfmScorer:
         booster_json = p.parent / "booster.json"
         if booster_json.exists():
             try:
-                sc.gate_first = bool(json.loads(booster_json.read_text()).get("txfm_gate_first", False))
+                info = json.loads(booster_json.read_text())
             except (OSError, ValueError):
-                pass
+                info = {}
+            sc.gate_first = bool(info.get("txfm_gate_first", False))
+            sc.set_sources(info.get("txfm_sources") or None)
         return sc
 
     def with_cache(self, prepared: str):
@@ -496,9 +517,18 @@ class TxfmScorer:
         return names
 
     @torch.no_grad()
-    def _gated(self, out: np.ndarray, seq, split_name: str, idx) -> np.ndarray:
-        """apply gate_first to a block in the order of idx: NaN where the row is its customer's
-        first event in the sequence index"""
+    def _routed(self, out: np.ndarray, src) -> np.ndarray:
+        """apply the source routing to a block: NaN for rows of a source the block is not for"""
+        if self.sources is None or src is None:
+            return out
+        src = np.asarray(src.cpu().numpy() if hasattr(src, "cpu") else src).astype(np.int64)
+        out[~np.isin(src, list(self.sources))] = np.nan
+        return out
+
+    def _gated(self, out: np.ndarray, seq, split_name: str, idx, src=None) -> np.ndarray:
+        """apply gate_first and the source routing to a block in the order of idx: NaN where the
+        row is its customer's first event in the sequence index, or of a source not routed to"""
+        out = self._routed(out, src)
         if not self.gate_first or seq is None or not split_name:
             return out
         idx = np.asarray(idx)
@@ -520,7 +550,7 @@ class TxfmScorer:
             out[m.cpu().numpy()] = np.concatenate([h.cpu().numpy(), per_field.cpu().numpy(), total.cpu().numpy()[:, None]], axis=1)
         if self.gate_first:
             out[(~valid[:, :-1].any(dim=1)).cpu().numpy()] = np.nan
-        return out
+        return self._routed(out, src)
 
     def features_windows(self, split, idx, seq, split_name, device=None, src_override=None, batch_size=8192) -> np.ndarray:
         """[len(idx), dim] in the order of idx, one history window per row (what the server
@@ -558,7 +588,7 @@ class TxfmScorer:
                 order = np.argsort(idx, kind="stable")
                 out = np.empty((len(idx), self.dim), dtype=np.float32)
                 out[order] = cached[idx[order]]
-                return self._gated(out, seq, split_name, idx)
+                return self._gated(out, seq, split_name, idx, np.asarray(split.src)[idx])
         device = torch.device(device or self.device)
         L = self.window
         S = int(stride or max(1, L // 4))
@@ -639,7 +669,7 @@ class TxfmScorer:
             total = (nf * o).sum(1) / o.sum(1).clamp(min=1)
             out[order[rows]] = np.concatenate([h.cpu().numpy(), per_field.cpu().numpy(), total.cpu().numpy()[:, None]], axis=1)
         assert row_lo == len(ps)
-        return self._gated(out, seq, split_name, idx)
+        return self._gated(out, seq, split_name, idx, np.asarray(split.src)[idx])
 
     def cache_split(self, split, seq, split_name: str, cache_dir, part: int = 0, parts: int = 1, device=None, batch_size=256,
                     stride=None, log=print) -> Path:
