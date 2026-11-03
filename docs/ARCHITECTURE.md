@@ -287,6 +287,13 @@ Four things about the loop that the first node run taught (`docs/TRAINING_NOTES.
   encoder was trained on) while 888 mostly uninformative columns cost capone and ieee a few
   splits' worth of accuracy in every round; routing is the cheapest answer to that, and the
   round that settles whether it was dilution is in `docs/TRAINING_NOTES.md` (v7).
+- *Fewer columns* (v7). `boost.txfm_pca: 64` hands the trees 64 principal components of the
+  block plus the mean surprise instead of its 888 columns. The shared booster fits the
+  compression on a sample of its train rows (`txfm_pca.npz` in the run), the specialists read
+  the same file, and a booster given the raw block - by `score_split` or the server - compresses
+  it itself (`Booster._x`), so the scorer, the cache and the receipt's surprise block stay as
+  they are. A row whose block is NaN throughout stays NaN. The other answer to dilution; the
+  node run's booster took a few hundred splits from the block, which 65 columns can carry.
 
 **Where it reaches the score.** `boost.txfm_features: true` with `txfm.run:
 <pretraining run>` makes the post stage copy `txfm.pt` into the run and append

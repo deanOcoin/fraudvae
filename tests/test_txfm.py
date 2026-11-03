@@ -401,3 +401,58 @@ def test_block_routed_to_named_sources(pretrained_txfm, prepared_set, tmp_path):
     again = TxfmScorer.load(run_dir, device="cpu")
     assert again.sources == {schema.SOURCE_INDEX["fdh"]} and again.source_names == ["fdh"]
     assert np.isnan(again.features_split(va, idx, data.seq, "val", batch_size=16)[~fdh]).all()
+
+
+def test_booster_reads_a_compressed_block(pretrained_txfm, prepared_set, tmp_path):
+    """v7: boost.txfm_pca hands the trees k principal components of the encoder's block plus the
+    mean surprise instead of its hundreds of columns; the compression is fitted by the shared
+    booster, saved in the run, read by the specialists, and applied to the raw block wherever
+    a booster is handed one (score_split, the server). a row with no block stays NaN"""
+    import shutil
+
+    from fraudvae.config import load_config
+    from fraudvae.model.booster import BlockPCA, Booster, Specialists, train_booster, train_specialists
+    from fraudvae.model.dataset import PreparedSet
+    from fraudvae.model.scoring import score_split
+    from fraudvae.model.txfm import TxfmScorer
+    from fraudvae.model.vae import TabularVAE
+
+    cfg = load_config("smoke")
+    cfg.boost.txfm_features, cfg.boost.txfm_pca, cfg.boost.max_rounds, cfg.boost.early_stopping = True, 4, 20, 10
+    sc = TxfmScorer.load(pretrained_txfm, device="cpu")
+    run_dir = tmp_path / "pca"
+    run_dir.mkdir()
+    shutil.copy2(pretrained_txfm / "txfm.pt", run_dir / "txfm.pt")
+    info = train_booster(run_dir, prepared_set, cfg.boost, log=lambda m: None, seed=1, model=None, device="cpu", txfm=sc)
+    assert info["txfm_pca"] == 4 and info["txfm_dim"] == 5 and info["txfm_in_dim"] == sc.dim
+    assert info["txfm_names"] == ["txfm_pc0", "txfm_pc1", "txfm_pc2", "txfm_pc3", "txfm_surprise"] and info["features"][-5:] == info["txfm_names"]
+    assert 0 < info["txfm_pca_explained"] <= 1 and (run_dir / BlockPCA.FILE).exists()
+    bst = Booster.load(run_dir)
+    assert bst.pca is not None and bst.pca.k == 4 and bst.pca.in_dim == sc.dim and bst.txfm_dim == 5
+    data = PreparedSet(prepared_set, splits=("val",))
+    va = data["val"]
+    b = np.arange(60)
+    raw = sc.features_split(va, b, data.seq, "val", device="cpu")
+    comp = bst.pca.transform(raw)
+    assert comp.shape == (60, 5) and np.isfinite(comp).all() and np.array_equal(comp[:, -1], raw[:, -1])
+    raw_nan = raw.copy()
+    raw_nan[3] = np.nan
+    assert np.isnan(bst.pca.transform(raw_nan)[3]).all() and np.isfinite(bst.pca.transform(raw_nan)[4]).all()
+    # raw in or compressed in, the same logit; and the scoring path (which also hands the booster
+    # the rows' wide block) agrees with the direct call given the same block
+    z_raw = bst.logit(va.num[b], va.mask[b], va.cat[b], va.src[b], wide=va.wide(b), txfm=raw)
+    z_comp = bst.logit(va.num[b], va.mask[b], va.cat[b], va.src[b], wide=va.wide(b), txfm=comp)
+    assert np.allclose(z_raw, z_comp) and np.isfinite(z_raw).all()
+    vae = TabularVAE(va.num.shape[1], [c["size"] for c in data.meta["categorical"]], 11, latent_dim=4, hidden=(16,)).eval()
+    r = score_split(vae, va, batch_size=32, n_samples=1, idx=b, booster=bst, txfm=sc, seq=data.seq, split_name="val", keep_features=False)
+    assert np.allclose(r["booster"], z_raw, atol=1e-4)
+    # the specialists read the same five columns from the file the booster wrote
+    summary = train_specialists(run_dir, prepared_set, cfg.boost, log=lambda m: None, seed=1, min_fraud=10, model=None, device="cpu", txfm=sc)
+    assert summary["sources"] and summary["txfm_dim"] == 5
+    sp = Specialists.load(run_dir)
+    assert sp is not None and all(b_.pca is not None and b_.txfm_dim == 5 for b_ in sp.boosters.values())
+    local = sp.logit(va.num[b], va.mask[b], va.cat[b], va.src[b], txfm=raw)
+    assert np.isfinite(local).any()
+    # the compression object alone: k is capped by what the sample can carry
+    small = BlockPCA.fit(raw[:3], 10, seed=0)
+    assert small.k <= 2 and small.transform(raw[:3]).shape == (3, small.k + 1)

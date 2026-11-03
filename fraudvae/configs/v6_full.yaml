@@ -34,6 +34,7 @@ boost:
   max_rounds: 3000
   early_stopping: 200
   txfm_features: true
+  # txfm_pca: 64        # v7: the block as 64 principal components + the mean surprise instead of 888 columns
 txfm:
   run: txfm-base-a      # the pretraining run (runs/<run>/txfm.pt) or a path to a txfm.pt
   window: 128

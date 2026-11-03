@@ -137,6 +137,80 @@ def build_features(num, mask, cat, src, wide=None, hist=None, txfm=None) -> np.n
     return x
 
 
+class BlockPCA:
+    """v7: the encoder's block compressed before the trees - k principal components of the raw
+    block (state + per-field surprise), fitted on a sample of the train rows, plus the mean
+    surprise kept as it is. 888 columns the booster takes a few hundred splits from dilute a
+    739-column model (feature_fraction 0.8 picks them four fifths of the time); k + 1 columns
+    carry what the trees used of them without the dilution. A row whose block is NaN throughout
+    (routed away, gated, or a caller without the encoder) stays NaN. txfm_pca.npz in the run."""
+
+    FILE = "txfm_pca.npz"
+
+    def __init__(self, fill: np.ndarray, mean: np.ndarray, components: np.ndarray, explained: np.ndarray):
+        self.fill, self.mean, self.components, self.explained = fill, mean, components, explained
+
+    @property
+    def k(self) -> int:
+        return int(self.components.shape[0])
+
+    @property
+    def in_dim(self) -> int:
+        return int(self.components.shape[1]) + 1
+
+    def names(self) -> list[str]:
+        return [f"txfm_pc{i}" for i in range(self.k)] + ["txfm_surprise"]
+
+    @classmethod
+    def fit(cls, block: np.ndarray, k: int, seed=0, max_rows=300_000):
+        from sklearn.decomposition import PCA
+
+        body = np.asarray(block, dtype=np.float32)[:, :-1]
+        keep = ~np.isnan(body).all(1)
+        body = body[keep]
+        if len(body) > max_rows:
+            body = body[np.random.default_rng(seed).choice(len(body), max_rows, replace=False)]
+        fill = np.nanmean(body, axis=0)
+        fill = np.where(np.isfinite(fill), fill, 0.0).astype(np.float32)   # a field no row observes
+        body = np.where(np.isnan(body), fill, body)
+        k = int(min(k, body.shape[1], max(1, len(body) - 1)))
+        pca = PCA(n_components=k, svd_solver="randomized", random_state=seed).fit(body)
+        return cls(fill, pca.mean_.astype(np.float32), pca.components_.astype(np.float32), pca.explained_variance_ratio_.astype(np.float32))
+
+    def transform(self, block: np.ndarray) -> np.ndarray:
+        block = np.asarray(block, dtype=np.float32)
+        body, surprise = block[:, :-1], block[:, -1:]
+        empty = np.isnan(body).all(1)
+        body = np.where(np.isnan(body), self.fill, body).astype(np.float64)
+        # accumulated in float64 so a row's components do not depend on the rows beside it in the
+        # batch (float32 BLAS sums in a batch-shaped order, and a tree threshold sits exactly there)
+        proj = ((body - self.mean.astype(np.float64)) @ self.components.T.astype(np.float64)).astype(np.float32)
+        out = np.concatenate([proj, surprise], axis=1).astype(np.float32)
+        out[empty] = np.nan
+        return out
+
+    def save(self, run_dir: Path) -> Path:
+        p = Path(run_dir) / self.FILE
+        np.savez(p, fill=self.fill, mean=self.mean, components=self.components, explained=self.explained)
+        return p
+
+    @classmethod
+    def load(cls, run_dir: Path):
+        """the run's compression, or its parent run's for a specialist directory; None without one"""
+        for d in (Path(run_dir), Path(run_dir).parent.parent):
+            p = d / cls.FILE
+            if p.exists():
+                with np.load(p) as z:
+                    return cls(z["fill"], z["mean"], z["components"], z["explained"])
+        return None
+
+
+def _block(txfm, pca, *args, **kw) -> np.ndarray:
+    """the encoder's block for the booster: features_split, through the compression when there is one"""
+    out = txfm.features_split(*args, **kw)
+    return pca.transform(out) if pca is not None else out
+
+
 def history_readout(model, split, idx, seq, split_name, device, src_override=None, batch_size=16384) -> np.ndarray:
     """[len(idx), H] the frozen history encoder's summary of each row's customer past (its
     context vector), for the booster to read as features. unsupervised, so no label leaks"""
@@ -229,6 +303,7 @@ class Booster:
         self.n_num = info["n_numeric"]
         self.wide_names = info.get("wide_names", [])
         self.wide_index = {n: i for i, n in enumerate(self.wide_names)}
+        self.pca = None   # v7: set by load() when the booster reads the compressed block
 
     def wide_vector(self, wide: dict | None) -> np.ndarray:
         """{'ieee.V1': 3.0, ...} -> [1, n_wide] float32 with NaN for everything not given"""
@@ -248,7 +323,12 @@ class Booster:
             return None
         lgb = _lgb()
         info = json.loads((run_dir / "booster.json").read_text())
-        return cls(lgb.Booster(model_file=str(p)), info)
+        bst = cls(lgb.Booster(model_file=str(p)), info)
+        if info.get("txfm_pca"):
+            bst.pca = BlockPCA.load(run_dir)
+            if bst.pca is None:
+                raise BoosterUnavailable(f"{run_dir.name} reads a compressed encoder block but {BlockPCA.FILE} is missing")
+        return bst
 
     @property
     def hist_dim(self) -> int:
@@ -271,6 +351,8 @@ class Booster:
             hist = np.full((n, self.hist_dim), np.nan, dtype=np.float32)   # a caller without the encoder: "no summary"
         if self.txfm_dim and txfm is None:
             txfm = np.full((n, self.txfm_dim), np.nan, dtype=np.float32)
+        elif self.txfm_dim and self.pca is not None and np.asarray(txfm).shape[1] == self.pca.in_dim:
+            txfm = self.pca.transform(txfm)   # the encoder's raw block, compressed as the trees were trained
         return build_features(num, mask, cat, src, wide if self.wide_names else None, hist if self.hist_dim else None,
                               txfm if self.txfm_dim else None)
 
@@ -325,6 +407,10 @@ def train_booster(run_dir: Path, prepared: str, cfg, log=print, seed=1337, model
     vae = model   # `model` becomes the lightgbm model below
     hist_dim = _hist_dim(vae, cfg)
     txfm = txfm if getattr(cfg, "txfm_features", False) else None
+    pca = None
+    if txfm is not None and getattr(cfg, "txfm_pca", 0):
+        # fitted on the train rows' raw block below, once X is gathered
+        pca = "fit"
     txfm_dim = txfm.dim if txfm is not None else 0
     names = feature_names(data.numeric_names, data.categorical_names, tr.wide_names, hist_dim, txfm.names if txfm is not None else ())
     n_num = len(data.numeric_names)
@@ -351,10 +437,23 @@ def train_booster(run_dir: Path, prepared: str, cfg, log=print, seed=1337, model
         log(f"  booster: history read-out ({hist_dim} dims) for {len(tr_idx) + len(va_idx):,} rows ({time.time() - t1:.0f}s)")
     if txfm_dim:
         t1 = time.time()
-        X = np.concatenate([X, txfm.features_split(tr, tr_idx, data.seq, "train", device)], axis=1)
-        Xv = np.concatenate([Xv, txfm.features_split(va, va_idx, data.seq, "val", device)], axis=1)
-        log(f"  booster: transaction encoder block ({txfm_dim} dims: {txfm.d_model} state + {txfm_dim - txfm.d_model - 1} field surprises + mean) "
-            f"for {len(tr_idx) + len(va_idx):,} rows ({time.time() - t1:.0f}s)")
+        raw_tr = txfm.features_split(tr, tr_idx, data.seq, "train", device)
+        if pca == "fit":
+            pca = BlockPCA.fit(raw_tr, int(cfg.txfm_pca), seed=seed)
+            pca.save(run_dir)
+            names = feature_names(data.numeric_names, data.categorical_names, tr.wide_names, hist_dim, pca.names())
+            txfm_dim = len(pca.names())
+            hs = slice(len(names) - hist_dim - txfm_dim, len(names) - txfm_dim)
+            xs = slice(len(names) - txfm_dim, len(names))
+            log(f"  booster: encoder block compressed to {pca.k} components + the mean surprise "
+                f"({100 * float(pca.explained.sum()):.1f}% of the block's variance) from {txfm.dim} columns")
+            raw_tr = pca.transform(raw_tr)
+        X = np.concatenate([X, raw_tr], axis=1)
+        del raw_tr
+        Xv = np.concatenate([Xv, _block(txfm, pca, va, va_idx, data.seq, "val", device)], axis=1)
+        log(f"  booster: transaction encoder block ({txfm_dim} dims"
+            + (f": {txfm.d_model} state + {txfm_dim - txfm.d_model - 1} field surprises + mean" if pca is None else "")
+            + f") for {len(tr_idx) + len(va_idx):,} rows ({time.time() - t1:.0f}s)")
     log(f"  booster: {len(tr_idx):,} train rows ({int(y.sum()):,} fraud), {len(va_idx):,} val rows, {X.shape[1]} features")
     X = blank_fast(X, names, rng, getattr(cfg, "fast_dropout", 0.0), log=log)
 
@@ -367,7 +466,7 @@ def train_booster(run_dir: Path, prepared: str, cfg, log=print, seed=1337, model
             # the encoder's summary with the bank blanked, as it would be computed in generic mode
             Xg_[:, hs] = history_readout(vae, tr, tr_idx[g], data.seq, "train", device, src_override=0)
         if txfm_dim:
-            Xg_[:, xs] = txfm.features_split(tr, tr_idx[g], data.seq, "train", device, src_override=0)
+            Xg_[:, xs] = _block(txfm, pca, tr, tr_idx[g], data.seq, "train", device, src_override=0)
         X = np.concatenate([X, Xg_])
         del Xg_
         y = np.concatenate([y, y[g]])
@@ -391,7 +490,7 @@ def train_booster(run_dir: Path, prepared: str, cfg, log=print, seed=1337, model
     if hist_dim:
         Xv_g[:, hs] = history_readout(vae, va, va_idx, data.seq, "val", device, src_override=0)
     if txfm_dim:
-        Xv_g[:, xs] = txfm.features_split(va, va_idx, data.seq, "val", device, src_override=0)
+        Xv_g[:, xs] = _block(txfm, pca, va, va_idx, data.seq, "val", device, src_override=0)
     dval = lgb.Dataset(Xv, label=yv, reference=dtrain, feature_name=names, categorical_feature=cat_idx)
     dval_g = lgb.Dataset(Xv_g, label=yv, reference=dtrain, feature_name=names, categorical_feature=cat_idx)
     curve = {}
@@ -429,8 +528,10 @@ def train_booster(run_dir: Path, prepared: str, cfg, log=print, seed=1337, model
     info = {
         "created": time.strftime("%Y-%m-%dT%H:%M:%S"), "prepared": prepared, "features": names, "n_numeric": n_num,
         "wide_names": list(tr.wide_names), "hist_dim": hist_dim,
-        "txfm_dim": txfm_dim, "txfm_names": list(txfm.names) if txfm is not None else [],
+        "txfm_dim": txfm_dim, "txfm_names": (pca.names() if pca is not None else list(txfm.names)) if txfm is not None else [],
         "txfm_gate_first": bool(getattr(txfm, "gate_first", False)), "txfm_sources": getattr(txfm, "source_names", None),
+        "txfm_pca": pca.k if pca is not None else 0, "txfm_in_dim": txfm.dim if txfm is not None else 0,
+        "txfm_pca_explained": float(pca.explained.sum()) if pca is not None else None,
         "categorical_index": cat_idx, "params": params, "best_iteration": best, "num_trees": int(model.num_trees()),
         "train_rows": int(len(tr_idx)), "train_fraud": int(tr.y[tr_idx].sum()), "val_rows": int(len(va_idx)),
         "generic_fraction": cfg.generic_fraction, "val_auc_curve": [float(v) for v in curve["val"]["auc"]],
@@ -531,8 +632,14 @@ def train_specialists(run_dir: Path, prepared: str, cfg, log=print, seed=1337, m
     vae = model
     hist_dim = _hist_dim(vae, cfg)
     txfm = txfm if getattr(cfg, "txfm_features", False) else None
-    txfm_dim = txfm.dim if txfm is not None else 0
-    names = feature_names(data.numeric_names, data.categorical_names, tr.wide_names, hist_dim, txfm.names if txfm is not None else ())
+    pca = None
+    if txfm is not None and getattr(cfg, "txfm_pca", 0):
+        pca = BlockPCA.load(run_dir)   # the shared booster fitted it; the specialists read the same columns
+        if pca is None:
+            raise SystemExit(f"boost.txfm_pca is set but {run_dir / BlockPCA.FILE} is missing: train the booster first")
+    txfm_dim = (len(pca.names()) if pca is not None else txfm.dim) if txfm is not None else 0
+    names = feature_names(data.numeric_names, data.categorical_names, tr.wide_names, hist_dim,
+                          (pca.names() if pca is not None else txfm.names) if txfm is not None else ())
     n_num = len(data.numeric_names)
     n_common = n_num + len(data.categorical_names) + 1
     cat_idx = list(range(n_num, n_common)) + [n_common + j for j in tr.wide_cat_cols]
@@ -566,8 +673,8 @@ def train_specialists(run_dir: Path, prepared: str, cfg, log=print, seed=1337, m
             X = np.concatenate([X, history_readout(vae, tr, tr_idx, data.seq, "train", device)], axis=1)
             Xv = np.concatenate([Xv, history_readout(vae, va, va_idx, data.seq, "val", device)], axis=1)
         if txfm_dim:
-            X = np.concatenate([X, txfm.features_split(tr, tr_idx, data.seq, "train", device)], axis=1)
-            Xv = np.concatenate([Xv, txfm.features_split(va, va_idx, data.seq, "val", device)], axis=1)
+            X = np.concatenate([X, _block(txfm, pca, tr, tr_idx, data.seq, "train", device)], axis=1)
+            Xv = np.concatenate([Xv, _block(txfm, pca, va, va_idx, data.seq, "val", device)], axis=1)
         X = blank_fast(X, names, rng, getattr(cfg, "fast_dropout", 0.0))
         total_legit = int(((src_tr == s) & (y_tr == 0)).sum())
         w = np.where(y == 0, min(total_legit / max(len(legit), 1), cfg.legit_weight_cap or 1e9), 1.0).astype(np.float32)
@@ -593,8 +700,10 @@ def train_specialists(run_dir: Path, prepared: str, cfg, log=print, seed=1337, m
         info = {
             "created": time.strftime("%Y-%m-%dT%H:%M:%S"), "prepared": prepared, "source": key, "features": names, "n_numeric": n_num,
             "wide_names": list(tr.wide_names), "hist_dim": hist_dim, "txfm_dim": txfm_dim,
-            "txfm_names": list(txfm.names) if txfm is not None else [], "txfm_gate_first": bool(getattr(txfm, "gate_first", False)),
-            "txfm_sources": getattr(txfm, "source_names", None),
+            "txfm_names": (pca.names() if pca is not None else list(txfm.names)) if txfm is not None else [],
+            "txfm_gate_first": bool(getattr(txfm, "gate_first", False)),
+            "txfm_sources": getattr(txfm, "source_names", None), "txfm_pca": pca.k if pca is not None else 0,
+            "txfm_in_dim": txfm.dim if txfm is not None else 0,
             "categorical_index": cat_idx, "params": params, "best_iteration": best,
             "num_trees": int(model.num_trees()), "train_rows": int(len(tr_idx)), "train_fraud": int(len(fraud)),
             "val_rows": int(len(va_idx)), "val_auroc": auroc(yv, pv), "val_auprc": auprc(yv, pv),

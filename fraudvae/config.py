@@ -85,6 +85,8 @@ class BoostConfig:
     history_features: bool = False        # v5: the frozen history encoder's read-out as booster features ("hist_*")
     txfm_features: bool = False           # v6: the pretrained transaction encoder's state and per-field surprise as
                                           # booster features ("txfm_*"); needs txfm.run (see TxfmConfig)
+    txfm_pca: int = 0                     # v7: compress that block to this many principal components (+ the mean surprise)
+                                          # before the trees see it; 0 = the raw block. the second answer to feature dilution
 
 
 @dataclass
