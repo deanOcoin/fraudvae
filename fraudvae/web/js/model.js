@@ -1,5 +1,5 @@
 // model & training tab: the versions (newest first, one selected), the selected run's record, local training
-import { get, post, pollTask, fmt, el, esc, palette } from "./api.js";
+import { get, post, pollTask, fmt, el, esc, palette, glide } from "./api.js";
 import { refreshMeta, refreshModels, scoreHref, rememberRun, getSelectedRun, setSelectedRun, picksFraud, state as appState } from "./app.js";
 
 let runs = [];
@@ -133,7 +133,7 @@ function destroyCharts() { charts.forEach((c) => c.destroy()); charts = []; }
 
 async function showRun(name, scroll = false) {
   const box = document.getElementById("run-detail");
-  if (scroll) box.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (scroll) box.scrollIntoView({ behavior: glide(), block: "start" });
   let d;
   try { d = await get(`/api/runs/${encodeURIComponent(name)}/metrics`); } catch (e) { box.innerHTML = `<p class="dim">${esc(e.message)}</p>`; return; }
   if (name !== selected) return;   // a later selection overtook this one

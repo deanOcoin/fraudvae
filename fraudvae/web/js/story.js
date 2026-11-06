@@ -1,7 +1,7 @@
 // the "development process" tab: how the model got here, in two registers (the full account and a plain
 // one), plus the datasets with their licences and how to train it yourself. Static html
 // partials with the live model timeline filled in where the text quotes numbers.
-import { get, fmt, el } from "./api.js";
+import { get, fmt, el, glide } from "./api.js";
 
 const PAGES = { full: "/static/story.html", plain: "/static/story_plain.html" };
 
@@ -20,7 +20,7 @@ export async function initStory(state) {
     body.querySelectorAll("a[href^='#']").forEach((a) => {
       // in-page links scroll inside the story; tab links keep working
       const id = a.getAttribute("href").slice(1);
-      if (body.querySelector(`#${CSS.escape(id)}`)) a.addEventListener("click", (e) => { e.preventDefault(); body.querySelector(`#${CSS.escape(id)}`).scrollIntoView({ behavior: "smooth", block: "start" }); });
+      if (body.querySelector(`#${CSS.escape(id)}`)) a.addEventListener("click", (e) => { e.preventDefault(); body.querySelector(`#${CSS.escape(id)}`).scrollIntoView({ behavior: glide(), block: "start" }); });
     });
     // the two versions point at each other
     body.querySelectorAll("a.to-plain, a.to-full").forEach((a) => a.addEventListener("click", (e) => { e.preventDefault(); show(a.classList.contains("to-plain") ? "plain" : "full"); }));

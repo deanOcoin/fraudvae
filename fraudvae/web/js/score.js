@@ -1,5 +1,5 @@
 // score tab: the form, the receipt, the latent map
-import { get, post, fmt, el, esc, palette } from "./api.js";
+import { get, post, fmt, el, esc, palette, glide } from "./api.js";
 import { getSelectedRun, setSelectedRun, selectedModel, refreshModels } from "./app.js";
 
 let schema, state;
@@ -387,7 +387,7 @@ async function score() {
     }
     plotLatent(r);
     // on a phone the receipt sits below the form: bring it up
-    if (window.innerWidth < 900) document.getElementById("receipt").scrollIntoView({ behavior: "smooth", block: "start" });
+    if (window.innerWidth < 900) document.getElementById("receipt").scrollIntoView({ behavior: glide(), block: "start" });
     status.textContent = `scored from ${r.observed_features} known fields · ${r.n_samples} posterior samples${r.supervised ? " · booster + blend" : " · VAE alone"}${r.sequence ? ` · ${r.sequence.n_history} past payments` : ""}`;
   } catch (e) {
     status.textContent = e.message;

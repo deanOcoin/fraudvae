@@ -87,6 +87,9 @@ export function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+// how a scroll moves: smoothly, unless the reader's system asks for less motion
+export const glide = () => (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth");
+
 export const palette = {
   ink: "#15212e", ink2: "#566879", ink3: "#8a98a8", line: "#d6dde5",
   accent: "#0b6e79", alarm: "#c8102e", calm: "#1f7a4d", amber: "#b8730a",
