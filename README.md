@@ -126,7 +126,7 @@ still starts, novelty-only, and the sidebar tells you why.
 | baf | Bank Account Fraud (Feedzai) account applications with device telemetry (v5) | 1.0M | 1.10% | kaggle |
 | fraudecom | e-commerce first purchases with shared device ids (v5) | 151k | 9.4% | kaggle |
 | amlworld_li_small, _hi_medium, _li_medium, _hi_large, _li_large | the other five AMLworld variants (v6, pretraining corpus; not in a shipped generation) | 6.9M / 31.9M / 31.3M / 180M / 176M | 0.05-0.12% | the same kaggle zip |
-| fdh_sim, sparkov_sim | the two open-source generators behind fdh and sparkov, run locally (v7, pretraining only; never in the evaluation frame) | as generated | as generated | local |
+| fdh_sim, sparkov_sim | the two open-source generators behind fdh and sparkov, run locally (v7, pretraining only; never in the evaluation frame; `fraudvae simulate` writes fdh_sim's rows at ten million a minute) | as generated | as generated | local |
 
 No dataset is redistributed here: each keeps its own licence (`docs/DATA_SOURCES.md`
 has the links). All sixteen are public (the five v6 variants come out of the zip the ninth already needs). The GitHub-hosted ones need nothing; the Kaggle

@@ -319,7 +319,7 @@ simulated point of sale card payments with per-customer sequences and three frau
 - license: GPL-3.0 (the simulator's code); the generated rows are the generator's user's
 - files: `*.pkl`
 - pretraining only: feeds the encoder's pretraining set (`prepare --include-pretrain-only`), never the evaluation frame
-- notes: run the handbook's generate_dataset and save one pickle per day under data/raw/fdh_sim/ (the published fdh is that generator's own output); pretraining only, never in the evaluation frame
+- notes: generate with `fraudvae simulate --rows N --out data/raw/fdh_sim/<name>` (a vectorised reimplementation of the handbook's generator, one pickle per day, ten million rows a minute) or run the handbook's generate_dataset and save one pickle per day there (the published fdh is that generator's own output); pretraining only, never in the evaluation frame
 
 ## sparkov_sim: Sparkov generator, generated locally
 

@@ -345,7 +345,7 @@ SOURCES: dict[str, Source] = {
         label_rate_hint=0.008,
         approx_rows=50_000_000,
         files=("*.pkl",),
-        notes="run the handbook's generate_dataset and save one pickle per day under data/raw/fdh_sim/ (the published fdh is that generator's own output); pretraining only, never in the evaluation frame",
+        notes="generate with `fraudvae simulate --rows N --out data/raw/fdh_sim/<name>` (a vectorised reimplementation of the handbook's generator, one pickle per day, ten million rows a minute) or run the handbook's generate_dataset and save one pickle per day there (the published fdh is that generator's own output); pretraining only, never in the evaluation frame",
         pretrain_only=True,
     ),
     "sparkov_sim": Source(
