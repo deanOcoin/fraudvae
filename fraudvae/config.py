@@ -93,6 +93,9 @@ class BoostConfig:
                                           # boundary leave the supervised fits (booster, specialists, encoder head), and val rows
                                           # within it of the test boundary leave the blender's fit: a deployment did not have those
                                           # labels yet. 0 = as published. 30 is what a card deployment lives with
+    blend_without_vae: bool = False       # v7: fit the blender without the VAE's columns (score z, KL z and their one-hot
+                                          # interactions); the booster, the one-hot and the extra signals stay. recorded in
+                                          # calibration.json (blend.without_vae) so the server builds the same layout
 
 
 @dataclass

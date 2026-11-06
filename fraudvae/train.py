@@ -405,7 +405,7 @@ def post_train(run_dir: Path, cfg: Config, prepared="default", device=None, log=
     write_status(run_dir, state="calibrating")
     from .calibrate import calibrate_run
     calibrate_run(run_dir, prepared=prepared, device=device, n_samples=cfg.train.score_samples, log=log,
-                  label_horizon_days=cfg.boost.label_horizon_days)
+                  label_horizon_days=cfg.boost.label_horizon_days, blend_without_vae=cfg.boost.blend_without_vae)
     log("evaluating on test ...")
     write_status(run_dir, state="evaluating")
     from .evaluate import evaluate_run

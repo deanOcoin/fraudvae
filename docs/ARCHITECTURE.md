@@ -513,6 +513,14 @@ deliberately not inputs: unbounded and time-drifting, they pulled the blend
 below both of its components on tabformer's newest months (see
 TRAINING_NOTES); they remain the receipt's explanation of the novelty score.
 
+**Without the VAE** (v7). `boost.blend_without_vae: true` fits the blender on the booster
+logit, the one-hot, booster × one-hot and the extra signals alone, the VAE's two columns and
+their interactions left out; `calibration.json` records it (`blend.without_vae`) and
+`Scorer.set_blend` builds the same layout at serving time, `fraudvae txfm-head RUN` keeps the
+run's choice when it recalibrates, and `fraudvae calibrate RUN --without-vae` is the same by
+hand. It is the ablation that says what the novelty side is worth at the operating point
+once the booster carries the encoder's block and the supervised head.
+
 Pass 3 scores the whole validation split once (VAE, booster, blend) and
 records per source and for the generic context, for each of the three
 scores: legit quantiles, thresholds at FPR targets (0.1/0.5/1/2/5%) with

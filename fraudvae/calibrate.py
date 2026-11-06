@@ -148,11 +148,13 @@ def _sigmoid(x):
     return 1.0 / (1.0 + np.exp(-np.clip(x, -30, 30)))
 
 
-def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, log=print, batch_size=16384, label_horizon_days=0.0):
+def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, log=print, batch_size=16384, label_horizon_days=0.0,
+                  blend_without_vae=False):
     """label_horizon_days (v7): val rows within that many days of their source's test boundary
     leave the blender's fit - a deployment calibrated at the boundary did not have their labels
     yet. the thresholds (pass 3) still read every val row; the delayed-label evaluation is where
-    late labels are judged"""
+    late labels are judged. blend_without_vae (v7): the blender fit without the VAE's columns,
+    recorded in the calibration so the same layout is built at serving time"""
     run_dir = Path(run_dir)
     model, ck = load_checkpoint(run_dir / "model.pt", device=device)
     booster = Booster.load(run_dir)
@@ -222,20 +224,21 @@ def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, 
     score_std[0] = max(float(rfg[score_type][yg == 0].std()), 1e-6)
 
     signals = extra_signals(rf)
-    X = scorer.blend_features(rf, sf, rf.get("booster"), score_type, score_mean, score_std, signals=signals)
+    X = scorer.blend_features(rf, sf, rf.get("booster"), score_type, score_mean, score_std, signals=signals, without_vae=blend_without_vae)
     Xg = scorer.blend_features(rfg, np.zeros(len(gen_fit), dtype=int), rfg.get("booster"), score_type, score_mean, score_std,
-                               signals=signals)
+                               signals=signals, without_vae=blend_without_vae)
     X_all = np.concatenate([X, Xg])
     y_all = np.concatenate([yf, yg])
     s_all = np.concatenate([sf, np.zeros(len(gen_fit), dtype=sf.dtype)])
     fit_mask = (np.arange(len(X_all)) % 2) == 0
-    feature_names = Scorer.blend_feature_names(n_src, signals)
+    feature_names = Scorer.blend_feature_names(n_src, signals, without_vae=blend_without_vae)
     shrink = _interaction_shrink(feature_names, s_all[fit_mask], y_all[fit_mask])
     blend = _fit_logistic(X_all[fit_mask], y_all[fit_mask], col_scale=shrink)
     blend.update({"score_type": score_type, "score_mean": score_mean.round(6).tolist(), "score_std": score_std.round(6).tolist(),
-                  "signals": signals,
-                  "features": "booster logit, VAE score z, KL z (each clipped), source one-hot, each of the three x "
-                              "one-hot" + (", then per extra signal: value, present, value x one-hot" if signals else ""),
+                  "signals": signals, "without_vae": bool(blend_without_vae),
+                  "features": ("booster logit (clipped), source one-hot, booster x one-hot" if blend_without_vae else
+                               "booster logit, VAE score z, KL z (each clipped), source one-hot, each of the three x one-hot")
+                              + (", then per extra signal: value, present, value x one-hot" if signals else ""),
                   "feature_names": feature_names,
                   "interaction_shrink": {"ref_fraud_rows": SHRINK_REF,
                                          "per_source": {names.get(int(s), "generic") if s else "generic": round(float(shrink[feature_names.index(f"booster*src{int(s)}")]), 4)
@@ -249,6 +252,8 @@ def calibrate_run(run_dir: Path, prepared="default", device="cpu", n_samples=8, 
         m = s_all[~fit_mask] == s_
         hold["sources"][names.get(int(s_), "generic") if s_ else "generic"] = auroc(y_all[~fit_mask][m], p_hold[m])
     blend["holdout"] = hold
+    if blend_without_vae:
+        log("  blender: fit without the VAE's columns (boost.blend_without_vae): the booster, the one-hot and the extra signals")
     shrunk = {k: v for k, v in blend["interaction_shrink"]["per_source"].items() if v < 0.999}
     log(f"  blender fit on {blend['fit_rows']:,} rows; held-out half auroc {hold['auroc']:.4f}; per-bank weights shrunk "
         f"toward the shared ones for {len(shrunk)} banks (smallest: "
@@ -358,10 +363,11 @@ def main(argv=None):
     ap.add_argument("--prepared", default=None, help="defaults to the set the run was trained on")
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--samples", type=int, default=8)
+    ap.add_argument("--without-vae", action="store_true", help="fit the blender without the VAE's columns (boost.blend_without_vae)")
     args = ap.parse_args(argv)
     run_dir = Path(args.run) if Path(args.run).exists() else RUNS_DIR / args.run
     prepared = args.prepared or json.loads((run_dir / "run.json").read_text()).get("prepared", "default")
-    calibrate_run(run_dir, prepared=prepared, device=torch.device(args.device), n_samples=args.samples)
+    calibrate_run(run_dir, prepared=prepared, device=torch.device(args.device), n_samples=args.samples, blend_without_vae=args.without_vae)
     return 0
 
 

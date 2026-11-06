@@ -225,9 +225,16 @@ def main(argv=None):
     info = train_txfmhead(run_dir, prepared, txfm, device=args.device, log=log, min_fraud=args.min_fraud, epochs=args.epochs)
     if info is None:
         return 1
-    # the blend has to learn the new signal, and the receipt has to be remade with it
+    # the blend has to learn the new signal, and the receipt has to be remade with it; its layout
+    # stays what the run's calibration chose (boost.blend_without_vae)
+    without_vae = False
+    if (run_dir / "calibration.json").exists():
+        try:
+            without_vae = bool((json.loads((run_dir / "calibration.json").read_text()).get("blend") or {}).get("without_vae", False))
+        except (OSError, ValueError):
+            without_vae = False
     clear_evaluations(run_dir, log=log)
-    calibrate_run(run_dir, prepared=prepared, device=args.device, n_samples=args.samples, log=log)
+    calibrate_run(run_dir, prepared=prepared, device=args.device, n_samples=args.samples, log=log, blend_without_vae=without_vae)
     evaluate_run(run_dir, prepared=prepared, device=args.device, n_samples=args.samples, log=log)
     bj = run_dir / "booster.json"
     if bj.exists() and fast_columns(json.loads(bj.read_text()).get("features", [])):

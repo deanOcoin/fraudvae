@@ -36,6 +36,7 @@ boost:
   txfm_features: true
   # txfm_pca: 64        # v7: the block as 64 principal components + the mean surprise instead of 888 columns
   # txfm_head: true     # v7: a supervised head per source on the block, the txsup blend signal
+  # blend_without_vae: true   # v7: the blender without the VAE's columns - the booster, the one-hot and the extra signals
 txfm:
   run: txfm-base-a      # the pretraining run (runs/<run>/txfm.pt) or a path to a txfm.pt
   window: 128

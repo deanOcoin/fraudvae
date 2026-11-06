@@ -97,6 +97,7 @@ class Scorer:
         self.n_sources = max([n_sources] + known)
         n_sources = self.n_sources
         self.blend = None
+        self.blend_without_vae = False
         if blend and blend.get("coef"):
             self.set_blend(blend)
         F = n_features
@@ -121,6 +122,7 @@ class Scorer:
         self.score_mean = np.asarray(blend["score_mean"], dtype=np.float32)
         self.score_std = np.maximum(np.asarray(blend["score_std"], dtype=np.float32), 1e-6)
         self.blend_signals = list(blend.get("signals", []))
+        self.blend_without_vae = bool(blend.get("without_vae", False))
 
     def _src(self, src, n_known: int) -> np.ndarray:
         """source indices with anything the tables were not fit for mapped to generic (0)"""
@@ -150,9 +152,12 @@ class Scorer:
     BLEND_CLIP = {"b": (-15.0, 15.0), "v": (-5.0, 15.0), "zkl": (-5.0, 15.0), "signal": (-15.0, 15.0)}
 
     def blend_features(self, r: dict, src: np.ndarray, booster_logit: np.ndarray | None, score_type: str | None = None,
-                       score_mean=None, score_std=None, signals: list[str] | None = None) -> np.ndarray:
+                       score_mean=None, score_std=None, signals: list[str] | None = None, without_vae: bool | None = None) -> np.ndarray:
         """[booster logit, VAE score z, KL z, source one-hot, each of the three x one-hot, and
-        (v5) per extra signal: value x present, present, value x one-hot].
+        (v5) per extra signal: value x present, present, value x one-hot]. without_vae (v7,
+        boost.blend_without_vae; None = what the fitted blender chose): the VAE's two columns
+        and their interactions left out, so the blend is the booster with per-bank weights plus
+        the extra signals.
         the interaction columns are what lets the blender trust the booster more for one bank
         and the VAE more for another. every signal is clipped (BLEND_CLIP).
 
@@ -165,6 +170,7 @@ class Scorer:
         unbounded, drift with time, and on the 30-year tabformer file they dragged the blend
         below both of its inputs on the newest months. they stay on the receipt as explanation."""
         signals = list(self.blend_signals if signals is None and self.blend else (signals or []))
+        without_vae = bool(self.blend_without_vae if without_vae is None and self.blend else without_vae)
         kind = score_type or (self.blend["score_type"] if self.blend else "raw")
         s_mean = self.score_mean if score_mean is None else np.asarray(score_mean, dtype=np.float32)
         s_std = self.score_std if score_std is None else np.maximum(np.asarray(score_std, dtype=np.float32), 1e-6)
@@ -181,7 +187,7 @@ class Scorer:
         zkl = np.clip((r["kl"] - self.kl_mean[src]) / self.kl_std[src], *self.BLEND_CLIP["zkl"])[:, None]
         onehot = np.zeros((n, n_oh + 1), dtype=np.float32)
         onehot[np.arange(n), src] = 1.0
-        parts = [b, v, zkl, onehot, b * onehot, v * onehot, zkl * onehot]
+        parts = [b, onehot, b * onehot] if without_vae else [b, v, zkl, onehot, b * onehot, v * onehot, zkl * onehot]
         for name in signals:
             val = r.get(name)
             if val is None:
@@ -193,9 +199,12 @@ class Scorer:
         return np.concatenate(parts, axis=1).astype(np.float32)
 
     @staticmethod
-    def blend_feature_names(n_sources: int, signals: list[str]) -> list[str]:
+    def blend_feature_names(n_sources: int, signals: list[str], without_vae: bool = False) -> list[str]:
         oh = [f"src{i}" for i in range(n_sources + 1)]
-        names = ["booster", "vae_z", "kl_z"] + oh + [f"booster*{o}" for o in oh] + [f"vae_z*{o}" for o in oh] + [f"kl_z*{o}" for o in oh]
+        if without_vae:
+            names = ["booster"] + oh + [f"booster*{o}" for o in oh]
+        else:
+            names = ["booster", "vae_z", "kl_z"] + oh + [f"booster*{o}" for o in oh] + [f"vae_z*{o}" for o in oh] + [f"kl_z*{o}" for o in oh]
         for name in signals:
             names += [name, f"{name}_present"] + [f"{name}*{o}" for o in oh]
         return names
