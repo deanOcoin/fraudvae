@@ -53,11 +53,15 @@ html.public #rail-compute { display: none; }   /* the server marks the public si
 b { font-weight: 600; }
 
 /* ---------- layout ---------- */
-.shell { display: grid; grid-template-columns: var(--rail) minmax(0, 1fr); min-height: 100vh; }
+/* dvh, where a browser has it, is the height left once a phone's or tablet's toolbars are shown;
+   the vh line before it is the fallback */
+.shell { display: grid; grid-template-columns: var(--rail) minmax(0, 1fr); min-height: 100vh; min-height: 100dvh; }
 .rail {
-  position: sticky; top: 0; height: 100vh;
+  position: sticky; top: 0; height: 100vh; height: 100dvh;
   background: linear-gradient(180deg, #17232f 0%, #111b25 100%); color: #c9d3de;
   display: flex; flex-direction: column; padding: 1.4rem 1rem;
+  /* a short window (a laptop with its dock, a phone on its side) scrolls the rail, so its foot stays reachable */
+  overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
 }
 .brand { color: #fff; text-decoration: none; font-weight: 400; font-size: 1.2rem; letter-spacing: -0.01em; display: flex; align-items: center; gap: 0.5rem; margin-bottom: 2rem; }
 .brand-mark { width: 24px; height: 24px; flex: 0 0 auto; filter: drop-shadow(0 0 4px rgba(95,199,207,0.35)); }
@@ -115,13 +119,17 @@ input[type=number] { font-variant-numeric: tabular-nums; }
 
 /* ---------- score tab ---------- */
 .score-grid { display: grid; grid-template-columns: minmax(0, 1fr) clamp(370px, 31vw, 440px); gap: 2rem; align-items: start; }
-.score-form { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 1.4rem 1.6rem; box-shadow: var(--shadow-1); }
+.score-form { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 1.4rem 1.6rem; box-shadow: var(--shadow-1); container-type: inline-size; }
 .form-top { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.2rem; margin-bottom: 1rem; }
+/* the four settings go one under another once the form itself is narrow (a tablet, a small
+   laptop with the receipt beside it), whatever the window: their menus then show their words */
+@container (max-width: 460px) { .form-top { grid-template-columns: minmax(0, 1fr); } }
 .field { min-width: 0; }
 .fgroup { margin-top: 1.3rem; }
 .form-sec + #field-groups > .fgroup:first-child { margin-top: 0.2rem; }
-.fgroup-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.5rem; }
-.fgroup-head h3 { font-size: 0.98rem; }
+/* the group's name keeps its line; on a narrow form its note drops under it rather than squeezing it */
+.fgroup-head { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 0.1rem 0.8rem; margin-bottom: 0.5rem; }
+.fgroup-head h3 { font-size: 0.98rem; flex: 0 0 auto; }
 .fgroup-head .dim { font-size: 0.82rem; }
 .fgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(190px, 100%), 1fr)); gap: 0.65rem 1rem; }
 .fgrid label { display: flex; flex-direction: column; gap: 0.15rem; font-size: 0.9rem; min-width: 0; }
@@ -133,8 +141,11 @@ input[type=number] { font-variant-numeric: tabular-nums; }
    button is one click away from any field; it is not pressed for the visitor. scroll-padding
    keeps a field the browser scrolls to (tabbing, validation) from landing under the bar */
 html { scroll-padding-bottom: 6rem; scroll-padding-top: 1rem; }
-.form-actions { position: sticky; bottom: 0; z-index: 4; margin: 1.2rem -1.6rem -1.4rem; padding: 0.8rem 1.6rem; display: flex; gap: 0.9rem; align-items: center; flex-wrap: wrap; background: rgba(255, 255, 255, 0.94); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); border-top: 1px solid var(--line-2); border-radius: 0 0 var(--radius-lg) var(--radius-lg); }
-.form-actions .actions-note { margin-left: auto; font-size: 0.8rem; }
+.form-actions { position: sticky; bottom: 0; z-index: 4; margin: 1.2rem -1.6rem -1.4rem; padding: 0.7rem 1.6rem; display: flex; gap: 0.5rem 1rem; align-items: center; flex-wrap: wrap; background: rgba(255, 255, 255, 0.94); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); border-top: 1px solid var(--line-2); border-radius: 0 0 var(--radius-lg) var(--radius-lg); }
+/* what happened and what to do, in one small column beside the button (under it, where the bar is
+   too narrow), so the bar stays a strip and does not cover a fifth of a laptop screen */
+.fa-text { flex: 1 1 15rem; min-width: 0; display: flex; flex-direction: column; gap: 0.1rem; font-size: 0.8rem; line-height: 1.4; }
+.fa-text #score-status:empty { display: none; }
 .btn.primary.attention { box-shadow: 0 0 0 3px rgba(11, 110, 121, 0.3); animation: fv-pulse 1.6s ease-in-out 3; }
 @keyframes fv-pulse { 0%, 100% { box-shadow: 0 0 0 3px rgba(11, 110, 121, 0.3); } 50% { box-shadow: 0 0 0 7px rgba(11, 110, 121, 0.12); } }
 .rc-stale { background: var(--amber-soft); color: #6b4300; font-size: 0.8rem; padding: 0.35rem 0.7rem; border-radius: 6px; margin-bottom: 0.6rem; }
@@ -156,7 +167,7 @@ details.batch summary { cursor: pointer; font-weight: 500; }
 /* the receipt */
 /* the receipt keeps its place beside the form however far the form is scrolled; a long receipt
    scrolls inside its own column, so the verdict at its top stays in view */
-.receipt-col { position: sticky; top: 1rem; max-height: calc(100vh - 2rem); overflow-y: auto; display: flex; flex-direction: column; gap: 1.2rem; padding-right: 2px; scrollbar-width: thin; }
+.receipt-col { position: sticky; top: 1rem; max-height: calc(100vh - 2rem); max-height: calc(100dvh - 2rem); overflow-y: auto; display: flex; flex-direction: column; gap: 1.2rem; padding-right: 2px; scrollbar-width: thin; }
 .receipt {
   background: var(--receipt); font-family: var(--mono); font-size: 0.84rem; color: var(--ink);
   padding: 1.3rem 1.3rem 1.6rem; position: relative; border: 1px solid var(--line);
@@ -631,6 +642,16 @@ kbd { font-family: var(--mono); font-size: 0.72rem; padding: 0.02rem 0.34rem; bo
    tapped, and leave it zoomed; at 16px they do not. Only iOS answers to this @supports test */
 @supports (-webkit-touch-callout: none) {
   input, select, textarea, .history-box textarea { font-size: max(16px, 1em); }
+}
+
+/* "back to the form": only where the receipt sits below the form */
+.rs-back { display: none; }
+@media (max-width: 1100px) { .rs-back { display: inline-block; } }
+
+/* a phone on its side: every line of the sticky bar is a line less of the form */
+@media (max-height: 480px) and (min-width: 761px) {
+  .form-actions { padding-top: 0.5rem; padding-bottom: 0.5rem; }
+  .form-actions .actions-note { display: none; }
 }
 
 /* the map's controls under the chart */

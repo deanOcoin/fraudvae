@@ -18,6 +18,8 @@ let mystery = false;        // its label stays hidden until it is scored
 let userSource = false;     // the visitor picked the bank: examples then come from it
 // this visit's record on labelled rows, each row counted once however often it is rescored
 const tally = { right: 0, total: 0, counted: new Set() };
+// the stylesheet's breakpoint: at or under it the receipt sits below the form, not beside it
+const stacked = () => !!(window.matchMedia && window.matchMedia("(max-width: 1100px)").matches);
 
 const GROUP_ORDER = ["core", "velocity", "merchant", "account", "ext", "ulb_pca"];
 const GROUP_NOTE = {
@@ -386,8 +388,8 @@ async function score() {
       document.getElementById("example-note").innerHTML = exampleNote(ex, false);
     }
     plotLatent(r);
-    // on a phone the receipt sits below the form: bring it up
-    if (window.innerWidth < 900) document.getElementById("receipt").scrollIntoView({ behavior: glide(), block: "start" });
+    // where the receipt sits below the form (the stylesheet's own breakpoint), bring it up
+    if (stacked()) document.getElementById("receipt").scrollIntoView({ behavior: glide(), block: "start" });
     status.textContent = `scored from ${r.observed_features} known fields · ${r.n_samples} posterior samples${r.supervised ? " · booster + blend" : " · VAE alone"}${r.sequence ? ` · ${r.sequence.n_history} past payments` : ""}`;
   } catch (e) {
     status.textContent = e.message;
@@ -694,7 +696,7 @@ function summaryHtml(v, reveal) {
     const rec = tally.total >= 2 ? `<span class="rs-tally">This visit: right on ${tally.right} of ${tally.total} real payments.</span>` : "";
     p.push(`<div class="rs-truth ${t.ok ? "ok" : "bad"}${reveal ? " reveal" : ""}"><span>${reveal ? "The mystery payment was" : "It really was"} <b>${what}</b>: ${esc(said)} <span aria-hidden="true">${t.ok ? "✓" : "✗"}</span></span>${rec}</div>`);
   }
-  p.push(`<div class="rs-actions"><button type="button" class="rs-copy" data-copy="summary">Copy summary</button><button type="button" class="rs-copy" data-copy="api">Copy as API call</button></div>`);
+  p.push(`<div class="rs-actions"><button type="button" class="rs-copy" data-copy="summary">Copy summary</button><button type="button" class="rs-copy" data-copy="api">Copy as API call</button><button type="button" class="rs-copy rs-back" data-back>Back to the form <span aria-hidden="true">↑</span></button></div>`);
   p.push(`</section>`);
   return p.join("");
 }
@@ -737,7 +739,13 @@ async function copyText(text) {
 }
 
 function wireCopy(box, v, r) {
-  box.querySelectorAll(".rs-copy").forEach((b) => b.addEventListener("click", async () => {
+  // where the receipt sits below a long form: straight back up to the examples
+  box.querySelector(".rs-copy[data-back]")?.addEventListener("click", () => {
+    const form = document.getElementById("score-form");
+    form.scrollIntoView({ behavior: glide(), block: "start" });
+    form.querySelector(".chip")?.focus({ preventScroll: true });
+  });
+  box.querySelectorAll(".rs-copy[data-copy]").forEach((b) => b.addEventListener("click", async () => {
     const what = b.dataset.copy;
     const ok = await copyText(what === "api" ? apiCall(lastRequest) : summaryText(v, r));
     const was = b.textContent;
