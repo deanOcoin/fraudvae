@@ -39,6 +39,7 @@ export async function initScore(appState) {
   buildSourceSelect();
   await buildRunSelect();
   buildFields();
+  restoreSettings();
   wireForm();
   await loadLatentBackground();
   loadTestRates();
@@ -49,6 +50,19 @@ export async function initScore(appState) {
     if (sel && e.detail && sel.value !== e.detail && [...sel.options].some((o) => o.value === e.detail)) { sel.value = e.detail; onRunChanged(); }
   });
   updateLede();
+}
+
+// the alert budget and the label timing a visitor last chose, as the model version already is:
+// this browser only, and a page that cannot store anything simply starts from the defaults
+const KEEP = { "fpr-select": "fraudvae.budget", "delay-select": "fraudvae.delay" };
+function restoreSettings() {
+  for (const [id, key] of Object.entries(KEEP)) {
+    const sel = document.getElementById(id);
+    let v = null;
+    try { v = localStorage.getItem(key); } catch (_) { /* storage blocked */ }
+    if (sel && v && [...sel.options].some((o) => o.value === v)) sel.value = v;
+    sel?.addEventListener("change", () => { try { localStorage.setItem(key, sel.value); } catch (_) { /* storage blocked */ } });
+  }
 }
 
 // the introduction is said once in plain words; the line under it names the version that will
