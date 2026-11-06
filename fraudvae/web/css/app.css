@@ -667,3 +667,20 @@ kbd { font-family: var(--mono); font-size: 0.72rem; padding: 0.02rem 0.34rem; bo
 }
 
 .noscript { margin: 0 0 1.4rem; padding: 0.8rem 1rem; border-radius: 8px; background: var(--amber-soft); color: #6b4300; }
+
+/* printing (or saving as PDF) gives the verdict and the map, not the form and the rail: what a
+   case file wants. Other tabs print as they read, without the rail */
+@media print {
+  @page { margin: 12mm; }
+  html, body { background: #fff !important; }
+  .rail, .site-foot, .score-form, details.batch, .rs-actions, .map-tools, .repo-link, #rc-toggle, #term-box, #score-lede, .noscript { display: none !important; }
+  .shell { display: block; min-height: 0; }
+  .content { padding: 0; max-width: none; }
+  .page-head { margin-bottom: 0.8rem; max-width: none; }
+  .score-grid { display: block; }
+  .receipt-col { position: static; max-height: none; overflow: visible; display: block; }
+  .receipt, .latent-card, .gen-card, .source-detail, .run-detail { box-shadow: none !important; animation: none !important; }
+  .latent-card { margin-top: 1rem; break-inside: avoid; }
+  .rs-verdict, .rs-truth, .rs-opinion, .ru-dot, .ru-zone, .ru-track, .dots i, .receipt { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .tab.hidden { display: none !important; }
+}

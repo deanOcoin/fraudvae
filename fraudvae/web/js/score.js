@@ -696,7 +696,7 @@ function summaryHtml(v, reveal) {
     const rec = tally.total >= 2 ? `<span class="rs-tally">This visit: right on ${tally.right} of ${tally.total} real payments.</span>` : "";
     p.push(`<div class="rs-truth ${t.ok ? "ok" : "bad"}${reveal ? " reveal" : ""}"><span>${reveal ? "The mystery payment was" : "It really was"} <b>${what}</b>: ${esc(said)} <span aria-hidden="true">${t.ok ? "✓" : "✗"}</span></span>${rec}</div>`);
   }
-  p.push(`<div class="rs-actions"><button type="button" class="rs-copy" data-copy="summary">Copy summary</button><button type="button" class="rs-copy" data-copy="api">Copy as API call</button><button type="button" class="rs-copy rs-back" data-back>Back to the form <span aria-hidden="true">↑</span></button></div>`);
+  p.push(`<div class="rs-actions"><button type="button" class="rs-copy" data-copy="summary">Copy summary</button><button type="button" class="rs-copy" data-copy="api">Copy as API call</button><button type="button" class="rs-copy" data-print>Print</button><button type="button" class="rs-copy rs-back" data-back>Back to the form <span aria-hidden="true">↑</span></button></div>`);
   p.push(`</section>`);
   return p.join("");
 }
@@ -739,6 +739,7 @@ async function copyText(text) {
 }
 
 function wireCopy(box, v, r) {
+  box.querySelector(".rs-copy[data-print]")?.addEventListener("click", () => window.print());
   // where the receipt sits below a long form: straight back up to the examples
   box.querySelector(".rs-copy[data-back]")?.addEventListener("click", () => {
     const form = document.getElementById("score-form");
