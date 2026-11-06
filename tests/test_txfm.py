@@ -540,3 +540,58 @@ def test_pretrain_snapshots_and_probes(prepared_set):
     with pytest.raises(SystemExit):
         cfg.txfm.probe = "no_such_bank"
         pretrain(cfg, prepared=prepared_set, name="test-txfm-probe-bad")
+
+
+def test_permuted_block_is_a_shuffle_within_each_source(pretrained_txfm, prepared_set, tmp_path):
+    """v7: the dilution control. with permute on, the block pass hands every row another row's
+    block of the same source: within a source the rows are a permutation of the plain block's
+    (the same marginals), they differ from it, and the same call gives the same shuffle; the gate
+    and the routing still read the row's own place; the booster records the choice and a scorer
+    loaded beside it applies the same one"""
+    import shutil
+    from collections import Counter
+
+    from fraudvae.config import load_config
+    from fraudvae.data import schema
+    from fraudvae.model.booster import train_booster
+    from fraudvae.model.dataset import PreparedSet
+    from fraudvae.model.txfm import TxfmScorer
+
+    data = PreparedSet(prepared_set, splits=("train", "val"), in_memory=True)
+    va = data["val"]
+    src_all = np.asarray(va.src)
+    idx = np.concatenate([np.flatnonzero(src_all == schema.SOURCE_INDEX["fdh"])[:200],
+                          np.flatnonzero(src_all == schema.SOURCE_INDEX["capone"])[:200]])
+    src = src_all[idx]
+    sc = TxfmScorer.load(pretrained_txfm, device="cpu")
+    assert sc.permute is False
+    plain = sc.features_split(va, idx, data.seq, "val", batch_size=16)
+    sc.permute = True
+    shuffled = sc.features_split(va, idx, data.seq, "val", batch_size=16)
+    assert shuffled.shape == plain.shape and not np.array_equal(shuffled, plain, equal_nan=True)
+    assert np.array_equal(shuffled, sc.features_split(va, idx, data.seq, "val", batch_size=16), equal_nan=True)
+    rows = lambda x: Counter(np.nan_to_num(r, nan=-1e9).tobytes() for r in x)   # noqa: E731
+    for s in np.unique(src):
+        m = src == s
+        assert rows(shuffled[m]) == rows(plain[m])
+    # the gate and the routing still apply to the row's own history and source
+    sc.gate_first = True
+    sc.set_sources(["fdh"])
+    both = sc.features_split(va, idx, data.seq, "val", batch_size=16)
+    fdh = src == schema.SOURCE_INDEX["fdh"]
+    hist = data.seq.positions("val", idx) - np.asarray(data.seq.start)[data.seq.global_ids("val", idx)]
+    assert np.isnan(both[~fdh]).all() and np.isnan(both[hist == 0]).all()
+    assert rows(both[fdh & (hist > 0)]) <= rows(plain[fdh])
+    sc.gate_first = False
+    sc.set_sources(None)
+    # the booster records the control, and a scorer loaded beside that booster applies it
+    cfg = load_config("smoke")
+    cfg.boost.txfm_features, cfg.boost.max_rounds, cfg.boost.early_stopping = True, 20, 10
+    run_dir = tmp_path / "permuted"
+    run_dir.mkdir()
+    shutil.copy2(pretrained_txfm / "txfm.pt", run_dir / "txfm.pt")
+    info = train_booster(run_dir, prepared_set, cfg.boost, log=lambda m: None, seed=1, model=None, device="cpu", txfm=sc)
+    assert info["txfm_permuted"] is True
+    again = TxfmScorer.load(run_dir, device="cpu")
+    assert again.permute is True
+    assert np.array_equal(again.features_split(va, idx, data.seq, "val", batch_size=16), shuffled, equal_nan=True)

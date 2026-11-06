@@ -465,6 +465,11 @@ class TxfmScorer:
         # booster.json (txfm_sources, by name) like gate_first, so every reader applies the same
         self.sources = None
         self.source_names = None
+        # permute: the dilution control (txfm.permute_block). the block pass hands each row another
+        # row's block from the same source (a fixed-seed shuffle within each source, cache path and
+        # on-the-fly path alike), so a round built on it shows what the block's columns cost the
+        # trees when they carry nothing; recorded in booster.json (txfm_permuted) like the gate
+        self.permute = False
 
     def set_sources(self, names):
         """route the block to these sources (schema names); None or an empty list = every source"""
@@ -495,6 +500,7 @@ class TxfmScorer:
                 info = {}
             sc.gate_first = bool(info.get("txfm_gate_first", False))
             sc.set_sources(info.get("txfm_sources") or None)
+            sc.permute = bool(info.get("txfm_permuted", False))
         return sc
 
     def with_cache(self, prepared: str):
@@ -525,10 +531,27 @@ class TxfmScorer:
         out[~np.isin(src, list(self.sources))] = np.nan
         return out
 
+    PERMUTE_SEED = 1337
+
+    def _permuted(self, out: np.ndarray, src) -> np.ndarray:
+        """the dilution control: every row's block becomes another row's of the same source, by a
+        fixed-seed shuffle within each source, so the marginals are the originals and the
+        information is gone"""
+        if not self.permute or src is None:
+            return out
+        src = np.asarray(src.cpu().numpy() if hasattr(src, "cpu") else src).astype(np.int64)
+        rng = np.random.default_rng(self.PERMUTE_SEED)
+        for s in np.unique(src):
+            rows = np.flatnonzero(src == s)
+            if len(rows) > 1:
+                out[rows] = out[rng.permutation(rows)]
+        return out
+
     def _gated(self, out: np.ndarray, seq, split_name: str, idx, src=None) -> np.ndarray:
-        """apply gate_first and the source routing to a block in the order of idx: NaN where the
-        row is its customer's first event in the sequence index, or of a source not routed to"""
-        out = self._routed(out, src)
+        """apply the permutation control, gate_first and the source routing to a block in the
+        order of idx: NaN where the row is its customer's first event in the sequence index, or
+        of a source not routed to"""
+        out = self._routed(self._permuted(out, src), src)
         if not self.gate_first or seq is None or not split_name:
             return out
         idx = np.asarray(idx)

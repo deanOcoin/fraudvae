@@ -104,6 +104,9 @@ class TxfmConfig:
     gate_first: bool = False       # NaN the block for a customer's first event (no history = nothing to say); recorded in booster.json
     sources: list[str] | None = None   # v7: the block only for rows of these sources (NaN elsewhere); None = every source.
                                        # the node run's gain was tabformer's alone and the block cost capone / ieee a little
+    permute_block: bool = False    # v7: the dilution control. the block pass's rows are shuffled within each source (fixed
+                                   # seed) before the gate and the routing, so the trees get a block with the same marginals
+                                   # and no information about the row; recorded in booster.json as txfm_permuted
     d_model: int = 256
     event_layers: int = 2          # 0 = mean of the field embeddings through an mlp instead of a transformer
     history_layers: int = 4

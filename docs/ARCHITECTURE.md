@@ -313,6 +313,13 @@ Four things about the loop that the first node run taught (`docs/TRAINING_NOTES.
   it itself (`Booster._x`), so the scorer, the cache and the receipt's surprise block stay as
   they are. A row whose block is NaN throughout stays NaN. The other answer to dilution; the
   node run's booster took a few hundred splits from the block, which 65 columns can carry.
+- *The control* (v7). `txfm.permute_block: true` hands the trees the block with its rows
+  shuffled within each source (a fixed seed, before the gate and the routing, on the cache
+  and the on-the-fly pass alike): the same marginals, no information about the row. A round
+  built on it is the dilution control for the losses the node run saw on capone and ieee -
+  if they lose the same amount with a block that carries nothing, the loss is the columns'
+  weight on the trees, not the encoder's reading of those sources. Recorded in `booster.json`
+  (`txfm_permuted`); the server's one-row path does not shuffle, and such a run is never served.
 
 **Where it reaches the score.** `boost.txfm_features: true` with `txfm.run:
 <pretraining run>` makes the post stage copy `txfm.pt` into the run and append
