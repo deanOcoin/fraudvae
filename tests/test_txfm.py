@@ -595,3 +595,34 @@ def test_permuted_block_is_a_shuffle_within_each_source(pretrained_txfm, prepare
     again = TxfmScorer.load(run_dir, device="cpu")
     assert again.permute is True
     assert np.array_equal(again.features_split(va, idx, data.seq, "val", batch_size=16), shuffled, equal_nan=True)
+
+
+def test_finetune_exports_an_encoder_with_only_its_top_layers_changed(pretrained_txfm, prepared_set, tmp_path):
+    """v7: txfm-finetune writes a txfm.pt in the pretraining format that TxfmScorer loads and the
+    block pass reads unchanged; only the unfrozen history layers and their norm differ from the
+    base weights; the summary carries per-source validation numbers and the base checkpoint's sha"""
+    from fraudvae.model.dataset import PreparedSet
+    from fraudvae.model.txfm import load_txfm
+    from fraudvae.model.txfmft import FILE, finetune
+
+    base, _, _ = load_txfm(pretrained_txfm / "txfm.pt", "cpu")
+    out = finetune(pretrained_txfm, prepared_set, ["fdh", "capone"], run_dir=tmp_path / "ft", device="cpu", steps=20, batch=8,
+                   eval_every=10, legit_ratio=3, max_legit=200, log=lambda m: None)
+    assert out == tmp_path / "ft" and (out / "txfm.pt").exists() and (out / FILE).exists()
+    sc = TxfmScorer.load(out, device="cpu")
+    assert sc is not None and sc.window == base.window and sc.d_model == base.d_model
+    before, after = base.state_dict(), sc.model.state_dict()
+    changed = [k for k in before if not torch.equal(before[k], after[k])]
+    assert changed, "the fine-tune moved nothing"
+    assert all(k.startswith("history.layers.") or k.startswith("hist_norm.") for k in changed), changed
+    frozen = [k for k in before if k not in changed]
+    assert any(k.startswith("tok.") for k in frozen) and any(k.startswith("event") for k in frozen) and any(k.startswith("next_head") for k in frozen)
+    _, _, ck = load_txfm(out / "txfm.pt", "cpu")
+    assert ck["extra"]["finetuned_sources"] == ["fdh", "capone"] and len(ck["extra"]["base_checkpoint_sha256"]) == 64
+    assert ck["extra"]["unfrozen_history_layers"] == 1   # the fixture's encoder has one history layer
+    summary = json.loads((out / FILE).read_text())
+    assert set(summary["sources"]) == {"fdh", "capone"} and all(0 <= v["auroc"] <= 1 and v["fraud"] > 0 for v in summary["sources"].values())
+    assert summary["steps"] == 20 and len(summary["history"]) == 2 and summary["base_sha256"] == ck["extra"]["base_checkpoint_sha256"]
+    data = PreparedSet(prepared_set, splits=("val",))
+    f = sc.features_split(data["val"], np.arange(50), data.seq, "val")
+    assert f.shape == (50, sc.dim) and np.isfinite(f[:, : sc.d_model]).all()

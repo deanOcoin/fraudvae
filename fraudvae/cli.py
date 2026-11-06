@@ -8,6 +8,7 @@
   fraudvae pretrain         v6: pretrain the transaction-sequence encoder (no labels; torchrun for many gpus)
   fraudvae txfm-cache RUN   v6: the encoder's features for every row of a prepared set, once, for the post stage
   fraudvae txfm-head RUN    v7: a supervised head on the encoder's block (the txsup signal), then calibrate + evaluate
+  fraudvae txfm-finetune RUN v7: the encoder fine-tuned on the fraud labels of named sources (top layers only) -> a new txfm.pt
   fraudvae boost RUN        (re)train the supervised booster for a run
   fraudvae post RUN         booster + calibration + evaluation for an existing run (new --config ok)
   fraudvae calibrate RUN    (re)compute thresholds for a run
@@ -93,6 +94,7 @@ COMMANDS = {
     "pretrain": lambda argv: __import__("fraudvae.pretrain", fromlist=["main"]).main(argv),
     "txfm-cache": lambda argv: __import__("fraudvae.txfm_cache", fromlist=["main"]).main(argv),
     "txfm-head": lambda argv: __import__("fraudvae.model.txfmhead", fromlist=["main"]).main(argv),
+    "txfm-finetune": lambda argv: __import__("fraudvae.model.txfmft", fromlist=["main"]).main(argv),
 }
 
 

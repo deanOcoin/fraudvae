@@ -371,6 +371,20 @@ the receipt gets a `sequence_supervised` block with the signal's own operating
 point. The fine-tune of the encoder's top layers is the step after this one,
 taken only if this one earns it.
 
+**Fine-tuning on the labels** (v7, `fraudvae txfm-finetune RUN --prepared SET --sources a,b,c
+--name NAME`). Until here the labels never touched the encoder's weights: pretraining is
+self-supervised and the supervised head reads a frozen state. The fine-tune unfreezes the last
+two history layers and their norm, puts a small head (a learned source embedding beside the
+state after the last event, one hidden layer) on labelled windows of the named sources - every
+fraud train row plus legit rows at 20 to one, capped per source - and makes one pass with
+class-weighted cross-entropy, the encoder layers at 3e-5 and the head at 1e-3. The checkpoint
+with the best mean validation recall at 1% FPR is written as `runs/NAME/txfm.pt` in the
+pretraining format, so `TxfmScorer`, `txfm-cache` and the post stage read it like any other
+encoder (`extra` records the base checkpoint's sha256, the sources and the validation numbers;
+`txfmft.json` keeps them beside it). The fine-tune head itself goes no further: the post stage's
+booster and `txsup` head read the exported encoder's block, and the paired comparison against
+the run built on the pretrained encoder is what decides whether the fine-tune earned its place.
+
 ## v5: device telemetry - the two new sources and the field heads
 
 `fraudvae/data/adapters/baf.py`, `fraudvae/data/adapters/fraudecom.py`,
