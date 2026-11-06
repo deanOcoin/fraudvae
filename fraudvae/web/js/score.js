@@ -5,6 +5,8 @@ import { getSelectedRun, setSelectedRun, selectedModel, refreshModels } from "./
 let schema, state;
 let latentChart = null;
 let latentBackground = null;   // {xy, y, src} from the active run
+let latentPoint = null;        // where the shown payment landed on it
+let latentZoom = false;        // the map framed around that payment, not the whole sample
 let lastResult = null;
 let showAll = false;
 // the label of the loaded example, while the form has not been edited since: the receipt
@@ -338,6 +340,11 @@ function wireForm() {
     }
   }));
   document.getElementById("batch-form").addEventListener("submit", batchScore);
+  document.getElementById("latent-zoom")?.addEventListener("click", () => {
+    if (!latentPoint) return;
+    latentZoom = !latentZoom;
+    drawLatent(latentPoint);
+  });
 }
 
 // what was loaded, in words; a mystery row keeps its label to itself until it is scored
@@ -936,39 +943,104 @@ async function loadLatentBackground() {
   if (!run) { drawLatent(); return; }
   try {
     latentBackground = await get(`/api/runs/${encodeURIComponent(run)}/latent`);
-    document.getElementById("latent-note").textContent = `${latentBackground.y.length.toLocaleString("en-US")} payments from the validation data, laid out so that payments the VAE finds alike sit close together (PCA of its posterior means)`;
+    const n = latentBackground.y.length;
+    const share = latentBackground.y.reduce((a, b) => a + b, 0) / Math.max(n, 1);
+    // the map draws every bank's fraud at up to 1,200 rows beside 2,500 honest ones, so fraud
+    // shows; a reader should not take the red for how common fraud is
+    document.getElementById("latent-note").textContent = `${n.toLocaleString("en-US")} payments from the validation data, laid out so that payments the VAE finds alike sit close together (PCA of its posterior means).`
+      + (share > 0.05 ? ` Fraud is over-sampled so that it shows: about 1 in ${Math.round(1 / share)} points here, far more than in real traffic.` : "");
   } catch (e) {
     document.getElementById("latent-note").textContent = "no latent map for this run";
   }
+  latentPoint = null;
+  latentZoom = false;
   drawLatent();
+}
+
+// the map's frame: every point, the payment included, on whole-number bounds; or, zoomed, a
+// window reaching an eighth of the map either side of the payment. Fixed bounds also mean that hiding a
+// cloud from the legend no longer zooms the axes in on whatever is left
+function latentBounds(point, zoom) {
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  const take = (x, y) => { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; };
+  if (latentBackground) for (const [x, y] of latentBackground.xy) take(x, y);
+  if (point) take(point[0], point[1]);
+  if (!Number.isFinite(x0)) return null;
+  if (zoom && point) {
+    // on half units, so the axes' own ticks land on the edges
+    const lo = (v) => Math.floor(v * 2) / 2, hi = (v) => Math.ceil(v * 2) / 2;
+    const dx = Math.max(0.5, (x1 - x0) / 8), dy = Math.max(0.5, (y1 - y0) / 8);
+    return { x: [lo(point[0] - dx), hi(point[0] + dx)], y: [lo(point[1] - dy), hi(point[1] + dy)] };
+  }
+  return { x: [Math.floor(x0), Math.ceil(x1)], y: [Math.floor(y0), Math.ceil(y1)] };
 }
 
 function drawLatent(point = null) {
   const canvas = document.getElementById("latent-chart");
   if (!window.Chart) { canvas.replaceWith(el("p", { class: "dim" }, "charts need the Chart.js CDN")); return; }
+  latentPoint = point;
+  const zoomBtn = document.getElementById("latent-zoom");
+  if (zoomBtn) { zoomBtn.hidden = !point; zoomBtn.textContent = latentZoom ? "Show the whole map" : "Zoom in on this payment"; zoomBtn.setAttribute("aria-pressed", latentZoom ? "true" : "false"); }
+  // Chart.js draws the lowest `order` last, on top. The clouds keep the order they always had
+  // (the honest payments over the fraud, so the fraud shows where it leaves normal behind); the
+  // payment's ring, white outline and cross go over everything, where no cloud can hide them
   const datasets = [];
+  let legitN = 0;
   if (latentBackground) {
     const bg = latentBackground;
     const legit = [], fraud = [];
     for (let i = 0; i < bg.y.length; i++) {
       (bg.y[i] ? fraud : legit).push({ x: bg.xy[i][0], y: bg.xy[i][1] });
     }
-    datasets.push({ label: "legitimate", data: legit, backgroundColor: "rgba(86,104,121,0.22)", pointRadius: 1.6, pointHoverRadius: 1.6 });
-    datasets.push({ label: "fraud", data: fraud, backgroundColor: "rgba(200,16,46,0.45)", pointRadius: 1.8, pointHoverRadius: 1.8 });
+    legitN = legit.length;
+    datasets.push({ label: "legitimate", data: legit, backgroundColor: "rgba(86,104,121,0.22)", pointRadius: 1.6, pointHoverRadius: 1.6, order: 3, parsing: false });
+    datasets.push({ label: "fraud", data: fraud, backgroundColor: "rgba(200,16,46,0.45)", pointRadius: 1.8, pointHoverRadius: 1.8, order: 4, parsing: false });
   }
+  const mine = [];
   if (point) {
-    datasets.push({ label: "this transaction", data: [{ x: point[0], y: point[1] }], backgroundColor: "#fff", borderColor: palette.ink, borderWidth: 2.5, pointRadius: 9, pointStyle: "crossRot", pointHoverRadius: 9 });
+    const at = [{ x: point[0], y: point[1] }];
+    mine.push(datasets.length);
+    datasets.push({ label: "", data: at, pointStyle: "circle", pointRadius: 16, pointHoverRadius: 16, backgroundColor: "rgba(255,255,255,0.5)", borderColor: "rgba(21,33,46,0.55)", borderWidth: 1.5, order: 2, parsing: false });
+    mine.push(datasets.length);
+    datasets.push({ label: "", data: at, pointStyle: "crossRot", pointRadius: 9, pointHoverRadius: 9, borderColor: "#fff", borderWidth: 7, order: 1, parsing: false });
+    mine.push(datasets.length);
+    datasets.push({ label: "this transaction", data: at, pointStyle: "crossRot", pointRadius: 9, pointHoverRadius: 9, backgroundColor: "#fff", borderColor: palette.ink, borderWidth: 2.75, order: 0, parsing: false });
   }
+  const b = latentBounds(point, latentZoom);
+  const axis = (title, lim) => ({ title: { display: true, text: title }, grid: { color: "#eef1f4" }, ...(lim ? { min: lim[0], max: lim[1] } : {}) });
   if (latentChart) latentChart.destroy();
   latentChart = new Chart(canvas, {
     type: "scatter",
     data: { datasets },
     options: {
       animation: false, responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { position: "bottom", labels: { boxWidth: 10, usePointStyle: true } }, tooltip: { enabled: false } },
-      scales: { x: { title: { display: true, text: "latent PC 1" }, grid: { color: "#eef1f4" } }, y: { title: { display: true, text: "latent PC 2" }, grid: { color: "#eef1f4" } } },
+      events: ["click"],   // no hover work over 36,000 points; the legend still answers a click or a tap
+      plugins: {
+        legend: {
+          position: "bottom",
+          labels: { boxWidth: 10, usePointStyle: true, filter: (item) => !!item.text, sort: (p, q) => p.datasetIndex - q.datasetIndex },
+          // the payment's three layers hide and show together
+          onClick: (e, item, legend) => {
+            const ch = legend.chart;
+            const group = mine.includes(item.datasetIndex) ? mine : [item.datasetIndex];
+            const show = !ch.isDatasetVisible(item.datasetIndex);
+            for (const i of group) ch.setDatasetVisibility(i, show);
+            ch.update();
+          },
+        },
+        tooltip: { enabled: false },
+      },
+      scales: { x: axis("latent PC 1", b && b.x), y: axis("latent PC 2", b && b.y) },
     },
   });
+  // the same picture in words, for a screen reader and for anyone who wants the coordinates
+  const n = latentBackground ? latentBackground.y.length : 0;
+  const where = point ? `this payment sits at PC 1 ${fmt.num(point[0], 2)}, PC 2 ${fmt.num(point[1], 2)}` : "";
+  canvas.setAttribute("aria-label", n
+    ? `A map of ${n.toLocaleString("en-US")} validation payments, ${legitN.toLocaleString("en-US")} honest in grey and ${(n - legitN).toLocaleString("en-US")} fraud in red${point ? `; ${where}, marked with a cross` : ""}.`
+    : point ? `No map for this version; ${where}.` : "No map for this version.");
+  const w = document.getElementById("latent-where");
+  if (w) w.textContent = point ? `${where}${latentZoom ? " (zoomed)" : ""}` : "";
 }
 
 function plotLatent(r) {
