@@ -1,6 +1,13 @@
 // training data tab
 import { get, post, pollTask, fmt, el, esc, palette } from "./api.js";
 
+// a fraud rate as a count: 0.13% -> "1 in 770"
+function oneIn(rate) {
+  if (!rate || rate <= 0) return "";
+  const n = 1 / rate;
+  return `1 in ${n >= 100 ? Number(n.toPrecision(2)).toLocaleString("en-US") : Math.round(n)}`;
+}
+
 let data = null;
 let schema = null;
 let charts = [];
@@ -33,7 +40,7 @@ function renderSummary() {
   const lo = Math.min(...span.map((s) => s.ts_min)), hi = Math.max(...span.map((s) => s.ts_max));
   document.getElementById("corpus-summary").innerHTML = `
     <div class="stat"><b>${fmt.int(data.total_rows)}</b><span>transactions</span></div>
-    <div class="stat"><b>${fmt.int(data.total_fraud)}</b><span>labelled fraud (${fmt.pct(data.total_fraud / Math.max(data.total_rows, 1), 3)})</span></div>
+    <div class="stat"><b>${fmt.int(data.total_fraud)}</b><span>labelled fraud (${fmt.pct(data.total_fraud / Math.max(data.total_rows, 1), 3)}, ${oneIn(data.total_fraud / Math.max(data.total_rows, 1))} payments)</span></div>
     <div class="stat"><b>${built.length} / ${data.sources.length}</b><span>sources ${data.public ? "in the corpus" : "built"}, ${real} with real transactions</span></div>
     <div class="stat"><b>${span.length ? fmt.date(lo).slice(0, 4) + "–" + fmt.date(hi).slice(0, 4) : "–"}</b><span>calendar span of dated sources</span></div>
     ${data.public
@@ -58,7 +65,7 @@ function renderList() {
       el("span", { class: "meta" },
         el("span", { class: "pill " + (s.built ? "ok" : s.raw_present ? "" : "no") }, s.built ? (data.public ? (s.redistributable ? "examples here" : "in the corpus") : "built") : s.raw_present ? "raw only" : "missing"),
         " ", s.access === "kaggle" ? "kaggle" : "github", " ",
-        st ? `fraud ${fmt.pct(st.fraud_rate, 2)}` : `fraud ≈${fmt.pct(s.label_rate_hint, 2)}`));
+        st ? `fraud ${fmt.pct(st.fraud_rate, 2)} · ${oneIn(st.fraud_rate)}` : `fraud ≈${fmt.pct(s.label_rate_hint, 2)}`));
     host.append(row);
   }
 }
@@ -86,9 +93,9 @@ function showSource(key) {
     return;
   }
   const sp = st.splits;
-  parts.push(`<table class="metric-table"><thead><tr><th>split</th><th>rows</th><th>fraud</th><th>rate</th></tr></thead><tbody>
-    ${["train", "val", "test"].map((k) => `<tr><td>${k}</td><td>${fmt.int(sp[k].rows)}</td><td>${fmt.int(sp[k].fraud)}</td><td>${fmt.pct(sp[k].fraud / Math.max(sp[k].rows, 1), 2)}</td></tr>`).join("")}
-    <tr><td><b>all</b></td><td><b>${fmt.int(st.rows)}</b></td><td><b>${fmt.int(st.fraud)}</b></td><td><b>${fmt.pct(st.fraud_rate, 3)}</b></td></tr></tbody></table>
+  parts.push(`<table class="metric-table"><thead><tr><th>split</th><th>rows</th><th>fraud</th><th>rate</th><th>one in</th></tr></thead><tbody>
+    ${["train", "val", "test"].map((k) => `<tr><td>${k}</td><td>${fmt.int(sp[k].rows)}</td><td>${fmt.int(sp[k].fraud)}</td><td>${fmt.pct(sp[k].fraud / Math.max(sp[k].rows, 1), 2)}</td><td>${oneIn(sp[k].fraud / Math.max(sp[k].rows, 1)).replace("1 in ", "")}</td></tr>`).join("")}
+    <tr><td><b>all</b></td><td><b>${fmt.int(st.rows)}</b></td><td><b>${fmt.int(st.fraud)}</b></td><td><b>${fmt.pct(st.fraud_rate, 3)}</b></td><td><b>${oneIn(st.fraud_rate).replace("1 in ", "")}</b></td></tr></tbody></table>
     <p class="dim small">${st.absolute_time ? `dated ${fmt.date(st.ts_min)} to ${fmt.date(st.ts_max)}` : "relative time only (simulation steps)"}; split is by time, oldest 70% train, next 10% validation, newest 20% test. built in ${st.build_seconds}s${data.stats_from === "packaged" ? " (on the machine that trained the models; statistics only here)" : ""}.</p>`);
   const aq = st.amount;
   parts.push(`<p class="small">Median legit amount ${fmt.num(aq.legit_quantiles["0.5"])}, fraud ${aq.fraud_quantiles["0.5"] != null ? fmt.num(aq.fraud_quantiles["0.5"]) : "–"} (99th pct legit ${fmt.num(aq.legit_quantiles["0.99"])}).</p>`);

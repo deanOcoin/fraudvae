@@ -1,6 +1,6 @@
 // model & training tab: the versions (newest first, one selected), the selected run's record, local training
 import { get, post, pollTask, fmt, el, esc, palette } from "./api.js";
-import { refreshMeta, refreshModels, scoreHref, rememberRun, getSelectedRun, setSelectedRun, state as appState } from "./app.js";
+import { refreshMeta, refreshModels, scoreHref, rememberRun, getSelectedRun, setSelectedRun, picksFraud, state as appState } from "./app.js";
 
 let runs = [];
 let timelineItems = [];
@@ -57,6 +57,10 @@ function card(m, r, { compact = false } = {}) {
   if (m.name === active && !isPublic) tags.push(el("span", { class: "tl-tag outline" }, "default scorer"));
   if (running) tags.push(el("span", { class: "tl-tag running" }, st));
   const n9 = m.mean_shared9 != null ? `AUROC ${fmt.auc(m.mean_shared9)} on the 9 shared datasets` : (m.mean_test_auroc != null ? `AUROC ${fmt.auc(m.mean_test_auroc)} on its datasets` : "");
+  // the same number in words: shown a fraud and an honest payment, how often the fraud scores higher
+  const pf = picksFraud(m.mean_shared9 ?? m.mean_test_auroc);
+  const plain = pf != null ? el("div", { class: "tl-plain" }, "Shown a fraud and an honest payment, it picks the fraud ", el("b", {}, `${pf} times in 100`),
+    m.generic_test_auroc != null ? ` (${picksFraud(m.generic_test_auroc)} for a bank it has never seen)` : "", ".") : null;
   const mins = m.train_minutes != null ? `${m.train_minutes < 90 ? Math.round(m.train_minutes) + " min" : (m.train_minutes / 60).toFixed(1) + " h"} of training` : "";
   const post = m.post_minutes != null ? ` + ${Math.round(m.post_minutes)} min for the booster side` : "";
   const pick = () => selectRun(m.name, { scroll: true });
@@ -69,6 +73,7 @@ function card(m, r, { compact = false } = {}) {
       tags.length ? el("div", { class: "gen-tags" }, ...tags) : null),
     el("div", { class: "gen-body" },
       el("div", { class: "tl-num" }, n9 + (m.generic_test_auroc != null ? ` · generic ${fmt.auc(m.generic_test_auroc)}` : "")),
+      plain,
       el("div", { class: "tl-meta" }, [m.hardware, m.corpus, (mins + post).trim()].filter(Boolean).join(" · ")),
       compact ? null : el("div", { class: "tl-changed" }, m.changed || "")),
     el("div", { class: "gen-actions" },

@@ -59,13 +59,20 @@ b { font-weight: 600; }
 .brand-mark { width: 24px; height: 24px; flex: 0 0 auto; filter: drop-shadow(0 0 4px rgba(95,199,207,0.35)); }
 .brand-word b { font-weight: 700; }
 .brand:hover .brand-mark { filter: drop-shadow(0 0 6px rgba(95,199,207,0.6)); }
-.rail-change { display: block; margin: -0.3rem 0 0.8rem; color: #9fb7cc; }
+.rail-change { display: block; margin: 0 0 0.8rem; color: #9fb7cc; }
 .rail-change:hover { color: #fff; }
 .rail-link { display: block; color: #c9d3de; text-decoration: none; padding: 0.5rem 0.65rem; border-radius: var(--radius); margin-bottom: 2px; }
 .rail-link:hover { background: rgba(255,255,255,0.07); color: #fff; }
 .rail-link.active { background: rgba(255,255,255,0.14); color: #fff; font-weight: 600; }
 .rail-foot { margin-top: auto; font-size: 0.82rem; color: #8ea0b3; }
-.rail-model { white-space: pre-line; margin-bottom: 0.8rem; line-height: 1.4; }
+/* the selected model, said for anyone and then for the record */
+.rail-model { display: flex; flex-direction: column; gap: 0.12rem; margin-bottom: 0.75rem; line-height: 1.35; }
+.rail-model .rm-label { font-size: 0.66rem; letter-spacing: 0.1em; text-transform: uppercase; color: #74889d; margin-bottom: 0.1rem; }
+.rail-model .rm-name { color: #e8eef4; font-weight: 600; font-size: 0.86rem; }
+.rail-model .rm-meta { font-family: var(--mono); font-size: 0.7rem; color: #8ea0b3; word-break: break-word; }
+.rail-model .rm-auc { color: #c9d3de; font-size: 0.8rem; margin-top: 0.3rem; cursor: help; }
+.rail-model .rm-tech { display: block; font-family: var(--mono); font-size: 0.7rem; color: #74889d; }
+.rail-model .rm-warn { color: #ffcf8a; font-size: 0.74rem; margin-top: 0.3rem; }
 .rail-small { display: flex; flex-direction: column; gap: 0.3rem; margin-top: 0.15rem; padding-top: 0.75rem; border-top: 1px solid rgba(255,255,255,0.08); }
 .rail-credit { color: #8ea0b3; font-size: 0.76rem; text-decoration: none; }
 .rail-credit:hover { color: #fff; text-decoration: underline; text-underline-offset: 2px; }
@@ -238,6 +245,8 @@ details.batch summary { cursor: pointer; font-weight: 500; }
 .gen-card .tl-num { font-family: var(--mono); font-size: 0.95rem; }
 .gen-card .tl-meta { color: var(--ink-2); font-size: 0.8rem; margin-top: 0.3rem; line-height: 1.35; }
 .gen-card .tl-changed { font-size: 0.88rem; margin-top: 0.4rem; }
+.gen-card .tl-plain { font-size: 0.86rem; color: var(--ink); margin-top: 0.15rem; }
+.gen-card .tl-plain b { font-variant-numeric: tabular-nums; }
 .gen-tags { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.4rem; }
 .tl-tag { font-size: 0.7rem; padding: 0.1rem 0.45rem; border-radius: 999px; background: var(--accent); color: white; white-space: nowrap; }
 .tl-tag.legacy { background: var(--ink-3, #888); }

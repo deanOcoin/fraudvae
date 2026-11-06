@@ -1,4 +1,4 @@
-import { get, fmt } from "./api.js";
+import { get, fmt, esc } from "./api.js";
 import { initScore } from "./score.js";
 import { initData } from "./data.js";
 import { initModel } from "./model.js";
@@ -70,6 +70,9 @@ function wireSubdomainLinks() {
   document.querySelectorAll('a[href="/api/docs"], a.rail-api').forEach((api) => { api.href = `${location.protocol}//api.${BASE}/`; api.classList.add("rail-api"); });
 }
 
+// AUROC in words: the chance that a fraud, set beside an honest payment, gets the higher score
+export const picksFraud = (auc) => (auc == null || Number.isNaN(auc) ? null : Math.round(100 * auc));
+
 const inited = {};
 const initers = { score: initScore, data: initData, model: initModel, compute: initCompute, explain: initExplain, story: initStory };
 
@@ -112,7 +115,8 @@ export function selectedModel() {
   return state.models.find((m) => m.name === name) || null;
 }
 
-// the rail's corner: the version that scores next, as chosen, not the server's default
+// the rail's corner: the version that scores next, as chosen, not the server's default. The
+// headline number is said twice: in words for anyone, as AUROC for anyone who wants the figure
 function renderRailModel() {
   const box = document.getElementById("rail-model");
   if (!box) return;
@@ -122,15 +126,17 @@ function renderRailModel() {
     box.textContent = state.meta.active_run ? "" : "no trained model loaded yet\n→ Model & training";
     return;
   }
-  const parts = [`selected model: ${m.name}`];
-  if (m.version || m.label) parts.push(`${m.version || ""}${m.version && m.label ? " · " : ""}${m.label || ""}`);
-  parts.push(`${(m.sources || []).length} datasets, ${m.has_booster ? "VAE + booster" : "VAE alone"}`);
-  if (m.mean_shared9 != null) parts.push(`AUROC ${fmt.auc(m.mean_shared9)} on the 9 shared datasets`);
-  else if (m.mean_test_auroc != null) parts.push(`AUROC ${fmt.auc(m.mean_test_auroc)} on unseen data`);
-  if (m.generic_test_auroc != null) parts.push(`unknown bank: ${fmt.auc(m.generic_test_auroc)}`);
+  const name = `${m.version || ""}${m.version && m.label ? " · " : ""}${m.label || ""}` || m.name;
+  const auc = m.mean_shared9 ?? m.mean_test_auroc;
+  const where = m.mean_shared9 != null ? "on the 9 datasets every version shares" : "on data it never saw";
+  const n = picksFraud(auc);
+  const gen = m.generic_test_auroc != null ? `; for a bank it has never seen, ${picksFraud(m.generic_test_auroc)} in 100 (AUROC ${fmt.auc(m.generic_test_auroc)})` : "";
   const a = state.meta.active_run;
-  if (a?.booster_error && a.name === m.name) parts.push(`⚠ booster not loaded, novelty only:\n${a.booster_error}`);
-  box.textContent = parts.join("\n");
+  box.innerHTML = `<span class="rm-label">Selected model</span>
+    <span class="rm-name">${esc(name)}</span>
+    <span class="rm-meta">${esc(m.name)} · ${(m.sources || []).length} datasets · ${m.has_booster ? "VAE + booster" : "VAE alone"}</span>
+    ${n != null ? `<span class="rm-auc" title="${esc(`Shown a fraud and an honest payment, it gives the fraud the higher score ${n} times in 100: AUROC ${fmt.auc(auc)} ${where}${gen}.`)}">Picks the fraud ${n} times in 100 <span class="rm-tech">AUROC ${fmt.auc(auc)}</span></span>` : ""}
+    ${a?.booster_error && a.name === m.name ? `<span class="rm-warn">⚠ booster not loaded, novelty only: ${esc(a.booster_error)}</span>` : ""}`;
 }
 
 export async function refreshMeta() {
