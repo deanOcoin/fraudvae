@@ -23,7 +23,10 @@
     <div class="rail-foot">
       <div id="rail-model" class="rail-model">loading…</div>
       <a href="#model" data-tab="model" class="rail-dim rail-change">change the model version →</a>
-      <a href="/api/docs" class="rail-dim" target="_blank" rel="noopener">API docs</a>
+      <div class="rail-small">
+        <a href="/api/docs" class="rail-dim" target="_blank" rel="noopener">API docs</a>
+        <a href="https://github.com/deanOcoin/fraudvae" class="rail-credit" target="_blank" rel="noopener" title="The repository: code, pretrained models, docs">Maintained by Dean Mostafa</a>
+      </div>
     </div>
   </nav>
 
@@ -31,7 +34,7 @@
     <!-- ================= SCORE ================= -->
     <section id="tab-score" class="tab hidden">
       <header class="page-head">
-        <h1>Score a transaction</h1>
+        <div class="page-title"><h1>Score a transaction</h1><a class="repo-link" href="https://github.com/deanOcoin/fraudvae" target="_blank" rel="noopener" title="The code, the pretrained models and the docs"><svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4 1.5 8 5 12M11 4l3.5 4L11 12M9.4 2.5 6.6 13.5"/></svg><span>Source on GitHub</span><span class="repo-arrow" aria-hidden="true">↗</span></a></div>
         <p class="lede" id="score-lede">Describe one payment and the model says how likely it is to be fraud, with its reasons. Two models look at it: one that learnt what normal payments look like and flags what it cannot explain, and one that learnt what known fraud looks like from labelled examples.</p>
       </header>
       <div class="score-grid">
@@ -274,6 +277,12 @@
     <section id="tab-story" class="tab hidden">
       <article id="story-article" class="explain"></article>
     </section>
+
+    <footer class="site-foot no-terms">
+      <span>FinFraud</span>
+      <a href="https://github.com/deanOcoin/fraudvae" target="_blank" rel="noopener">Maintained by Dean Mostafa</a>
+      <a href="/api/docs" target="_blank" rel="noopener">API docs</a>
+    </footer>
   </main>
 </div>
 

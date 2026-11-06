@@ -67,8 +67,7 @@ function wireSubdomainLinks() {
   document.querySelectorAll(".rail-link, .rail-change").forEach((a) => { if (SUBDOMAIN[a.dataset.tab]) a.href = tabHref(a.dataset.tab); });
   const brand = document.querySelector(".brand");
   if (brand) brand.href = withRun(`${location.protocol}//www.${BASE}/`);
-  const api = document.querySelector('a[href="/api/docs"], a.rail-api');
-  if (api) { api.href = `${location.protocol}//api.${BASE}/`; api.classList.add("rail-api"); }
+  document.querySelectorAll('a[href="/api/docs"], a.rail-api').forEach((api) => { api.href = `${location.protocol}//api.${BASE}/`; api.classList.add("rail-api"); });
 }
 
 const inited = {};
