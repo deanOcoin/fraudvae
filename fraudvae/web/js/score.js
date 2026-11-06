@@ -631,9 +631,11 @@ function readVerdict(r, label) {
   if (away.length) v.why.push(["Pointed away", away.map(phrase).join(", ")]);
   const odd = (r.contributions || []).filter((c) => c.z >= 2).sort((a, b) => b.z - a.z).slice(0, 2);
   const chance = (q) => (q < 0.001 ? "less than a 0.1% chance" : `a ${(100 * q).toFixed(q < 0.1 ? 1 : 0)}% chance`);
+  // "about" takes a round figure: about 646, not about 646.1 (the working keeps the decimals)
+  const about = (c) => (Math.abs(c.expected) >= 10 ? fmt.int(c.expected) : fmtExp(c).replace(/^exp /, ""));
   const oddPhrase = (c) => c.kind === "categorical"
     ? `${inSentence(c.label)} (${fmtVal(c)}, which it gave ${chance(c.prob_observed)})`
-    : `${inSentence(c.label)} (${fmtVal(c)}${c.unit ? " " + c.unit : ""}; it expected about ${fmtExp(c).replace(/^exp /, "")})`;
+    : `${inSentence(c.label)} (${fmtVal(c)}${c.unit ? " " + c.unit : ""}; it expected about ${about(c)})`;
   if (odd.length) v.why.push(["Most out of place", odd.map(oddPhrase).join(", ")]);
 
   // what the line means, as counts: of 10 frauds, of 10 alerts
