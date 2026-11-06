@@ -10,6 +10,12 @@ let showAll = false;
 // the label of the loaded example, while the form has not been edited since: the receipt
 // then says whether the verdict was right
 let pendingLabel = null;
+let lastRequest = null;     // what the shown verdict was computed from ("copy as API call")
+let loadedExample = null;   // the labelled row in the form, if one is
+let mystery = false;        // its label stays hidden until it is scored
+let userSource = false;     // the visitor picked the bank: examples then come from it
+// this visit's record on labelled rows, each row counted once however often it is rescored
+const tally = { right: 0, total: 0, counted: new Set() };
 
 const GROUP_ORDER = ["core", "velocity", "merchant", "account", "ext", "ulb_pca"];
 const GROUP_NOTE = {
@@ -31,6 +37,7 @@ export async function initScore(appState) {
   buildFields();
   wireForm();
   await loadLatentBackground();
+  loadTestRates();
   window.addEventListener("metachanged", () => { loadLatentBackground(); updateLede(); });
   // the version chosen elsewhere (the model tab on a one-host workbench) reaches the picker here
   window.addEventListener("runselected", (e) => {
@@ -40,22 +47,26 @@ export async function initScore(appState) {
   updateLede();
 }
 
-// the introduction describes the version that will score, not the server's default
+// the introduction is said once in plain words; the line under it names the version that will
+// score (not the server's default) and what it is made of, for anyone who wants that
+let ledeText = null;
 function updateLede() {
   const m = selectedModel();
   const lede = document.getElementById("score-lede");
+  const line = document.getElementById("score-model-line");
+  if (ledeText == null) ledeText = lede.textContent;
   if (!m) {
-    lede.textContent = state.meta?.active_run ? "Describe one payment and the model says how likely it is to be fraud, with its reasons."
-      : "No trained model is loaded. Train one in Model & training (a few minutes on the smoke config) and come back.";
+    lede.textContent = state.meta?.active_run ? ledeText : "No trained model is loaded. Train one in Model & training (a few minutes on the smoke config) and come back.";
+    if (line) line.textContent = "";
     return;
   }
-  const dim = m.params ? `${(m.params / 1e6).toFixed(1)}-million-parameter ` : "";
+  lede.textContent = ledeText;
   const n = (m.sources || []).length;
-  const hybrid = m.has_booster
-    ? ` A second model, ${m.booster_trees ? m.booster_trees.toLocaleString() + " decision trees" : "boosted decision trees"} trained on the labelled fraud, adds what known fraud looks like; a small per-bank blend turns the two into the probability the verdict is read from.`
-    : " This version has no second model: the verdict is the novelty score alone, and it knows an older, smaller set of fields.";
-  const who = m.version && m.label ? `${m.version}, ${m.label}: a` : "A";
-  lede.textContent = `Describe one payment and the model says how likely it is to be fraud, with its reasons. ${who} ${dim}VAE trained on legitimate payments from ${n} dataset${n === 1 ? "" : "s"} flags what it cannot explain from what it knows of normal traffic.${hybrid}`;
+  const vae = `${m.params ? `a ${(m.params / 1e6).toFixed(1)}-million-parameter` : "a"} VAE that learnt honest payments from ${n} dataset${n === 1 ? "" : "s"}`;
+  const parts = m.has_booster
+    ? `${vae}, ${m.booster_trees ? m.booster_trees.toLocaleString("en-US") + " decision trees" : "boosted decision trees"} that learnt the labelled fraud, and a per-bank blend of the two that the verdict is read from`
+    : `${vae}, on its own: this version has no fraud-trained model, so the verdict is the novelty score, and it knows an older, smaller set of fields`;
+  if (line) line.textContent = `Judging with ${m.version && m.label ? `${m.version} · ${m.label}` : m.name}: ${parts}.`;
 }
 
 async function buildRunSelect() {
@@ -113,7 +124,8 @@ function buildSourceSelect() {
     if (!s.built) continue;
     sel.append(el("option", { value: s.key }, `${s.key}: ${s.name}`));
   }
-  sel.addEventListener("change", () => { markUnused(); showSourceHint(); });
+  // a bank picked by hand narrows the examples to it; one set by loading an example does not
+  sel.addEventListener("change", () => { userSource = !!sel.value; markUnused(); showSourceHint(); });
   showSourceHint();
 }
 
@@ -274,40 +286,68 @@ function wireForm() {
   const SETTINGS = new Set(["run-select", "compare-all", "fpr-select", "delay-select", "source-select"]);
   const touched = (e) => {
     if (e.target.id === "run-select") return;
-    if (!SETTINGS.has(e.target.id)) pendingLabel = null;   // an edited example is no longer the labelled row
+    if (!SETTINGS.has(e.target.id) && pendingLabel != null) {
+      // an edited example is no longer the labelled row (nor the mystery one)
+      pendingLabel = null; mystery = false;
+      const note = document.getElementById("example-note");
+      if (note && loadedExample) note.innerHTML = `<b>${esc(loadedExample.txn_id)}</b>, edited: now a payment of your own, so the verdict will not be checked against a label.`;
+      loadedExample = null;
+    }
     updateFoldCounts();
     markDirty(SETTINGS.has(e.target.id) ? "settings changed" : "inputs changed");
   };
   form.addEventListener("input", touched);
   form.addEventListener("change", touched);
+  // Ctrl+Enter (⌘+Enter on a Mac) scores from any field, the way a message is sent
+  form.addEventListener("keydown", (ev) => {
+    if (ev.key !== "Enter" || !(ev.metaKey || ev.ctrlKey)) return;
+    ev.preventDefault();
+    if (!document.getElementById("score-btn")?.disabled) score();
+  });
+  if (/Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || "")) {
+    const k = document.querySelector("#kbd-hint kbd");
+    if (k) k.textContent = "⌘";
+  }
   document.getElementById("clear-form").addEventListener("click", () => {
     resetKeepingSettings(form); markUnused(); showSourceHint(); updateFoldCounts();
-    loadedWide = null; loadedEntities = null; pendingLabel = null;
+    loadedWide = null; loadedEntities = null; pendingLabel = null; loadedExample = null; mystery = false; userSource = false;
     document.getElementById("example-note").textContent = "";
     markDirty("the form was cleared");
   });
   document.querySelectorAll("[data-example]").forEach((b) => b.addEventListener("click", async () => {
-    const want = b.dataset.example;
+    const hidden = b.dataset.example === "mystery";
+    const want = hidden ? (Math.random() < 0.5 ? 1 : 0) : Number(b.dataset.example);
     const src = document.getElementById("source-select").value;
     const q = new URLSearchParams({ fraud: want, n: 1 });
-    if (src) q.set("source", src);
+    if (src && userSource) q.set("source", src);
+    const note = document.getElementById("example-note");
+    note.textContent = "fetching a payment…";
     try {
       const [ex] = await get(`/api/examples?${q}`);
       fillForm(ex.features, ex.source);
       loadedWide = ex.wide || null;
       loadedEntities = ex.entities && Object.keys(ex.entities).length ? ex.entities : null;
-      const scen = ex.fraud_scenario ? `, scenario ${ex.fraud_scenario}` : "";
-      const wideNote = (ex.wide ? `, + ${Object.keys(ex.wide).length} raw source columns` : "")
-        + (loadedEntities ? `, entities: ${Object.keys(loadedEntities).join("/")}` : "");
-      document.getElementById("example-note").textContent = `${ex.txn_id} (${ex.split} split, labelled ${ex.is_fraud ? "fraud" : "legitimate"}${scen}${wideNote})`;
+      loadedExample = ex;
       pendingLabel = ex.is_fraud;
+      mystery = hidden;
+      note.innerHTML = exampleNote(ex, hidden);
       markDirty("an example was loaded");
       document.getElementById("score-btn")?.classList.add("attention");
     } catch (e) {
-      document.getElementById("example-note").textContent = e.message;
+      note.textContent = e.message;
     }
   }));
   document.getElementById("batch-form").addEventListener("submit", batchScore);
+}
+
+// what was loaded, in words; a mystery row keeps its label to itself until it is scored
+function exampleNote(ex, hidden) {
+  const label = hidden ? "what it really was stays hidden until it is scored"
+    : `labelled <b>${ex.is_fraud ? "fraud" : "honest"}</b>${ex.fraud_scenario ? ` (fraud scenario ${ex.fraud_scenario})` : ""}`;
+  const extra = [ex.wide ? `${Object.keys(ex.wide).length} of the bank's own columns ride along` : null,
+                 loadedEntities ? `entities known: ${Object.keys(loadedEntities).join(", ")}` : null].filter(Boolean).join(" · ");
+  return `<b>${esc(ex.txn_id)}</b> · ${esc(sourceName(ex.source))} · a real payment from the test data the model never saw: ${label}.`
+    + (extra ? ` <span class="dim">${esc(cap(extra))}.</span>` : "");
 }
 
 
@@ -323,13 +363,25 @@ async function score() {
     const r = await post("/api/score", req);
     r._label = label;
     lastResult = r;
+    lastRequest = req;
     showAll = false;
     clearDirty();
-    renderReceipt(r, label);
+    const ex = label != null ? loadedExample : null;
+    if (ex && r.flag != null && !tally.counted.has(ex.txn_id)) {
+      tally.counted.add(ex.txn_id);
+      tally.total += 1;
+      if (!!label === !!r.flag) tally.right += 1;
+    }
+    const reveal = mystery && ex != null;
+    renderReceipt(r, label, { fresh: true, reveal });
+    if (reveal) {
+      mystery = false;
+      document.getElementById("example-note").innerHTML = exampleNote(ex, false);
+    }
     plotLatent(r);
     // on a phone the receipt sits below the form: bring it up
     if (window.innerWidth < 900) document.getElementById("receipt").scrollIntoView({ behavior: "smooth", block: "start" });
-    status.textContent = `${r.observed_features} fields observed, ${r.n_samples} posterior samples${r.supervised ? ", booster + blend" : ""}${r.sequence ? `, ${r.sequence.n_history} past txns` : ""}`;
+    status.textContent = `scored from ${r.observed_features} known fields · ${r.n_samples} posterior samples${r.supervised ? " · booster + blend" : " · VAE alone"}${r.sequence ? ` · ${r.sequence.n_history} past payments` : ""}`;
   } catch (e) {
     status.textContent = e.message;
   } finally {
@@ -348,6 +400,8 @@ function verdictCall(label, flag) {
   return { ok: true, cls: "call ok", text: "correctly passed" };
 }
 
+// a value that rounds to zero is 0, not "-0"
+const tidy = (v, d) => (Math.abs(v) < 0.5 * 10 ** -d ? 0 : v);
 function fmtVal(c) {
   if (c.kind === "categorical") {
     if (c.feature === "dow") return ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][+c.observed] || c.observed;
@@ -356,17 +410,25 @@ function fmtVal(c) {
   }
   const v = c.observed;
   if (Math.abs(v) >= 1000) return fmt.int(v);
-  return fmt.num(v, Math.abs(v) < 10 ? 2 : 1);
+  const d = Math.abs(v) < 10 ? 2 : 1;
+  return fmt.num(tidy(v, d), d);
 }
 function fmtExp(c) {
   if (c.kind === "categorical") return `p=${(c.prob_observed * 100).toFixed(c.prob_observed < 0.1 ? 1 : 0)}%`;
   const v = c.expected;
-  return "exp " + (Math.abs(v) >= 1000 ? fmt.int(v) : fmt.num(v, Math.abs(v) < 10 ? 2 : 1));
+  const d = Math.abs(v) < 10 ? 2 : 1;
+  return "exp " + (Math.abs(v) >= 1000 ? fmt.int(v) : fmt.num(tidy(v, d), d));
 }
 
+// 99.92 -> "99.92nd", 41 -> "41st", 12 -> "12th"
+function ordinal(s) {
+  const digits = s.replace(/\D/g, "");
+  const two = +digits.slice(-2), one = +digits.slice(-1);
+  return s + (two >= 11 && two <= 13 ? "th" : one === 1 ? "st" : one === 2 ? "nd" : one === 3 ? "rd" : "th");
+}
 function pctText(pct, fallback) {
   if (pct == null) return fallback;
-  return (pct >= 99.99 ? ">99.99" : pct.toFixed(pct > 99 ? 2 : 1)) + "th";
+  return pct >= 99.99 ? ">99.99th" : ordinal(pct.toFixed(pct > 99 ? 2 : 1));
 }
 function opLabel(op) {
   const v = op ? op.replace("fpr_", "") : "";
@@ -381,31 +443,325 @@ function pushVal(c) {
     return String(c.observed).replace(/_/g, " ");
   }
   const v = c.observed;
-  return (Math.abs(v) >= 1000 ? fmt.int(v) : fmt.num(v, Math.abs(v) < 10 ? 2 : 1)) + (c.unit ? " " + c.unit : "");
+  const d = Math.abs(v) < 10 ? 2 : 1;
+  return (Math.abs(v) >= 1000 ? fmt.int(v) : fmt.num(tidy(v, d), d)) + (c.unit ? " " + c.unit : "");
 }
 
-function renderReceipt(r, label) {
+// ---- the verdict in plain numbers -------------------------------------------------------
+// Every alert budget is a line drawn among a bank's honest payments: "1% of legitimate traffic
+// flagged" is the score that 1 in 100 of them exceed. A payment's percentile among the same
+// payments reads the same way round, so the verdict, each model's own reading and the line
+// can all be said in one unit, "1 in N honest payments score this high", and drawn on one
+// ruler. Nothing here asks the server for anything new: thresholds for every budget, the
+// percentiles and the per-model flags come with every score, from this server and older ones.
+const BUDGETS = ["fpr_0.001", "fpr_0.005", "fpr_0.01", "fpr_0.02", "fpr_0.05"];   // strictest first
+const shareOf = (op) => parseFloat(String(op || "").replace("fpr_", "")) || null;
+function nice(n) {            // 1,284 -> "1,300", 47.3 -> "47", 3.4 -> "3"
+  if (n >= 100) return Number(n.toPrecision(2)).toLocaleString("en-US");
+  return String(Math.max(1, Math.round(n)));
+}
+const xOf = (n) => Math.max(0, Math.min(1, Math.log10(Math.max(1, n)) / 4));   // 1 .. 10,000 on a log scale
+
+// a percentile among honest payments -> how many of them it takes to meet one scoring this high
+function rarity(pct) {
+  if (pct == null || Number.isNaN(pct)) return null;
+  if (pct >= 99.99) return { n: 10000, x: 1, short: "< 1 in 10k", say: "fewer than 1 in 10,000", rare: true };
+  const n = 1 / (1 - pct / 100);
+  if (pct < 50) return { n, x: xOf(n), short: "common", say: "more than half of", common: true };
+  return { n, x: xOf(n), short: `1 in ${nice(n)}`, say: `about 1 in ${nice(n)}` };
+}
+function lineOf(op) {
+  const s = shareOf(op);
+  return s ? { op, s, n: 1 / s, x: xOf(1 / s), say: `1 in ${nice(1 / s)}` } : null;
+}
+
+// keep a dot on the side of each line its score is on (the text and behaviour models move the
+// final score after the percentile is taken, and a percentile is interpolated between stored
+// quantiles): the quantile a threshold sits at bounds where the payment can be
+function placePct(pct, thr, value) {
+  if (!thr || value == null) return pct;
+  let lo = 0, hi = 100;
+  for (const b of BUDGETS) {
+    const t = thr[b]?.threshold;
+    if (t == null) continue;
+    const q = 100 * (1 - shareOf(b));
+    if (value > t) lo = Math.max(lo, q); else hi = Math.min(hi, q);
+  }
+  if (pct == null) return null;
+  return Math.min(Math.max(pct, lo + 1e-4), hi);
+}
+// the same for a model whose thresholds are not sent: its own flag at the chosen line decides
+function placeByFlag(pct, flag, line) {
+  if (pct == null || flag == null || !line) return pct;
+  const q = 100 * (1 - line.s);
+  return flag ? Math.max(pct, q + 1e-4) : Math.min(pct, q);
+}
+
+const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+// "Merchant category" -> "merchant category", "CVV match" stays as it is
+const inSentence = (s) => (s && s.length > 1 && s[1] === s[1].toLowerCase() ? s[0].toLowerCase() + s.slice(1) : s);
+function sourceName(key) {
+  const s = (schema?.sources || []).find((x) => x.key === key);
+  return s ? s.name : key;
+}
+const frac10 = (x) => Math.max(0, Math.min(10, Math.round(10 * x)));
+function inTen(x) {
+  if (x == null) return null;
+  if (x >= 0.995) return "almost every";
+  if (x >= 0.95) return "more than 9 in 10";
+  if (x < 0.05) return "fewer than 1 in 20";
+  return `about ${frac10(x)} in 10`;
+}
+const one = (x) => x >= 0.995;   // "almost every fraud", not "frauds"
+const caught = (x) => `${one(x) ? "fraud" : "frauds"} caught`;
+const real = (x) => `${one(x) ? "alert was" : "alerts were"} real fraud`;
+
+// how common fraud was in the test data a quoted precision was measured on, per bank (all the
+// version's banks together for an unknown one): the data tab's statistics, fetched once
+let testRates = null;
+function loadTestRates() {
+  if (testRates) return;
+  testRates = {};
+  get("/api/datasets").then((d) => {
+    for (const s of d.sources || []) {
+      const t = s.stats?.splits?.test;
+      if (t && t.rows) testRates[s.key] = { rows: t.rows, fraud: t.fraud };
+    }
+  }).catch(() => { /* the clause is left out */ });
+}
+function fraudShare(calibration, run) {
+  if (!testRates) return null;
+  const keys = calibration && calibration !== "generic" ? [calibration] : ((models.find((m) => m.name === run) || {}).sources || []);
+  let rows = 0, fraud = 0;
+  for (const k of keys) { const t = testRates[k]; if (t) { rows += t.rows; fraud += t.fraud; } }
+  return rows && fraud ? fraud / rows : null;
+}
+const dots = (x, cls) => `<span class="dots ${cls}" aria-hidden="true">${Array.from({ length: 10 }, (_, i) => `<i class="${i < frac10(x) ? "on" : ""}"></i>`).join("")}</span>`;
+
+function readVerdict(r, label) {
+  const bl = r.blend, nov = r.novelty || {}, sup = r.supervised;
+  const op = r.operating_point || r.fpr_target;
+  const line = lineOf(op);
+  const thr = (bl && bl.thresholds) || nov.thresholds || null;
+  const value = bl ? (r.p_fraud ?? bl.prob) : nov.score;
+  // the lines this payment clears, strictest first
+  const clears = thr ? BUDGETS.filter((b) => thr[b]?.threshold != null && value > thr[b].threshold) : [];
+  const looser = line ? clears.filter((b) => shareOf(b) > line.s).sort((a, b) => shareOf(a) - shareOf(b))[0] : null;
+  // a close call is one the next budget up would flag; anything further off is simply not flagged
+  const next = line ? BUDGETS[BUDGETS.indexOf(op) + 1] : null;
+  const state = r.flag == null ? "na" : r.flag ? "flag" : looser && looser === next ? "close" : "clear";
+  const verb = bl ? "score this high" : "look this unusual";
+  const overallPct = placePct(r.legit_percentile, thr, value);
+  const ov = rarity(overallPct);
+  const v = { state, line, ov, value, isBlend: !!bl };
+
+  v.word = { flag: "Flag for review", close: "Not flagged · close call", clear: "Not flagged", na: "No alert line" }[state];
+  const B = line ? line.say : "";
+  if (state === "na") {
+    v.say = "This bank has no alert line in this version, so the payment is scored but not judged.";
+  } else if (!ov) {
+    v.say = state === "flag" ? `Over your alert line of ${B}.` : `Under your alert line of ${B}.`;
+  } else if (state === "flag") {
+    v.say = `${ov.rare ? "Fewer than 1 in 10,000" : `Only ${ov.say}`} honest payments ${verb}; your alert line is ${B}.`;
+    if (clears[0] === "fpr_0.001" && op !== "fpr_0.001") v.say += " It would be flagged even at the strictest line, 1 in 1,000.";
+  } else if (state === "close") {
+    v.say = `${cap(ov.say)} honest payments ${verb}: short of your alert line of ${B}, but it would be flagged at ${lineOf(looser).say}.`;
+  } else {
+    v.say = ov.common ? `More than half of honest payments ${verb}; your alert line is ${B}.` : `${cap(ov.say)} honest payments ${verb}, short of your alert line of ${B}.`;
+    if (looser) v.say += ` It would take a budget of ${lineOf(looser).say} to flag it.`;
+  }
+  // the same sentence for a data scientist
+  const tParts = [];
+  if (overallPct != null) tParts.push(`${pctText(overallPct, "")} percentile among legitimate validation payments`);
+  if (bl && bl.threshold != null) tParts.push(`flagged above ${(100 * bl.threshold).toFixed(bl.threshold < 0.1 ? 2 : 1)} at ${opLabel(op)} FPR`);
+  else if (!bl && nov.threshold != null) tParts.push(`novelty flagged above ${fmt.num(nov.threshold, 3)} at ${opLabel(op)} FPR`);
+  v.tech = tParts.join(" · ");
+  v.score = bl ? `${(100 * value).toFixed(value < 0.1 ? 2 : 1)}` : null;
+
+  // the ruler: the verdict, then each of the two models on its own
+  v.rows = [];
+  if (bl) v.rows.push({ key: "Overall", note: "every model, blended for this bank", pct: overallPct, flag: r.flag, main: true });
+  if (nov.legit_percentile != null || !bl) v.rows.push({ key: "How unusual", note: "the model that learnt honest payments", pct: bl ? placeByFlag(nov.legit_percentile, nov.flag, line) : overallPct, flag: bl ? nov.flag : r.flag, main: !bl });
+  if (sup && sup.legit_percentile != null) v.rows.push({ key: "How fraud-like", note: "the model that learnt known fraud", pct: placeByFlag(sup.legit_percentile, sup.flag, line), flag: sup.flag });
+
+  // two models, two questions: what their answers mean together
+  if (sup && nov.flag != null && sup.flag != null) {
+    v.opinion = nov.flag && sup.flag ? "Both models see it: unusual for this bank, and shaped like known fraud."
+      : nov.flag ? "Unusual, but not shaped like the fraud the models were trained on: a rare honest payment, or a new kind of fraud."
+      : sup.flag ? "Ordinary-looking, yet shaped like known fraud: the kind that hides in plain sight."
+      : "Neither model is alarmed: ordinary for this bank, and unlike known fraud.";
+    // the verdict is the blend's, and the blend weighs more than these two
+    const also = [r.sequence?.prob != null ? "the customer's history" : null, r.local?.present ? "this bank's own model" : null,
+                  r.device?.present ? "the device" : null, r.graph?.present ? "the network around the payment" : null].filter(Boolean);
+    const weighs = also.length ? `the blend, which also weighs ${also.length > 1 ? also.slice(0, -1).join(", ") + " and " + also[also.length - 1] : also[0]},` : "the blend, weighting the two for this bank,";
+    if (bl && r.flag === false && sup.flag) v.opinion += ` Even so, ${weighs} keeps it under your line.`;
+    else if (bl && r.flag === true && !nov.flag && !sup.flag) v.opinion += ` Even so, ${weighs} puts it over your line.`;
+  }
+
+  // the reasons, in words: the booster's largest pushes either way, the VAE's largest surprises
+  v.why = [];
+  const pushes = ((sup && sup.pushes) || []).filter((c) => c.is_observed && c.observed != null && c.kind !== "history" && !/\(raw\)$/.test(c.label));
+  const phrase = (c) => `${inSentence(c.label)} (${pushVal(c)})`;
+  const toward = pushes.filter((c) => c.contribution > 0.15).slice(0, 2);
+  const away = pushes.filter((c) => c.contribution < -0.15).slice(0, 2);
+  if (toward.length) v.why.push(["Pointed to fraud", toward.map(phrase).join(", ")]);
+  if (away.length) v.why.push(["Pointed away", away.map(phrase).join(", ")]);
+  const odd = (r.contributions || []).filter((c) => c.z >= 2).sort((a, b) => b.z - a.z).slice(0, 2);
+  const chance = (q) => (q < 0.001 ? "less than a 0.1% chance" : `a ${(100 * q).toFixed(q < 0.1 ? 1 : 0)}% chance`);
+  const oddPhrase = (c) => c.kind === "categorical"
+    ? `${inSentence(c.label)} (${fmtVal(c)}, which it gave ${chance(c.prob_observed)})`
+    : `${inSentence(c.label)} (${fmtVal(c)}${c.unit ? " " + c.unit : ""}; it expected about ${fmtExp(c).replace(/^exp /, "")})`;
+  if (odd.length) v.why.push(["Most out of place", odd.map(oddPhrase).join(", ")]);
+
+  // what the line means, as counts: of 10 frauds, of 10 alerts
+  const vb = bl || nov;
+  const rec = vb.test_recall ?? vb.expected_recall, prec = vb.test_precision ?? vb.expected_precision;
+  if (line && rec != null) {
+    // precision depends on how common fraud is: say how common it was where it was measured.
+    // held-out figures come with the test split's rate; in-sample ones with the validation
+    // rate, recovered from what the line flagged there (share flagged = fpr·(1−π) + recall·π)
+    const held = vb.test_recall != null;
+    const t = thr?.[op];
+    let base = null;
+    if (held) base = fraudShare(r.calibration, r.model?.run);
+    else if (t && t.flagged_share != null && t.recall != null && t.recall > line.s) base = (t.flagged_share - line.s) / (t.recall - line.s);
+    v.budget = { rec, prec, held, base: base > 0 && base < 0.5 ? base : null };
+  }
+
+  if (label != null) {
+    const call = verdictCall(label, r.flag);
+    if (call) v.truth = { ok: call.ok, label, text: call.text };
+  }
+  v.verb = verb;
+  return v;
+}
+
+const TRUTH_SAID = { caught: "caught", missed: "missed", "false alarm": "a false alarm", "correctly passed": "correctly let through" };
+
+function rulerHtml(v) {
+  const rows = v.rows.filter((row) => row.pct != null);
+  if (!rows.length || !v.line) return "";
+  const pos = (x) => `${(100 * x).toFixed(2)}%`;
+  const N = rows.length;
+  const cells = rows.map((row, i) => {
+    const rr = rarity(row.pct);
+    const hot = row.flag ? " hot" : "";
+    return `<span class="ru-lab${row.main ? " main" : ""}" style="grid-area:${i + 1} / 1" title="${esc(row.note)}">${esc(row.key)}</span>
+      <span class="ru-track${row.main ? " main" : ""}" style="grid-area:${i + 1} / 2"><i class="ru-dot${hot}" style="left:${pos(rr.x)}"></i></span>
+      <span class="ru-val${hot}${row.main ? " main" : ""}" style="grid-area:${i + 1} / 3">${esc(rr.short)}</span>`;
+  }).join("");
+  const ticks = BUDGETS.map((b) => lineOf(b)).map((l) => `<i class="ru-tick${l.op === v.line.op ? " on" : ""}" style="left:${pos(l.x)}" title="${esc(l.say)}"></i>`).join("");
+  const axis = [[0, "common", "edge-l"], [0.25, "1 in 10", "minor"], [0.5, "1 in 100", "mid"], [0.75, "1 in 1k", "minor"], [1, "1 in 10k", "edge-r"]]
+    .map(([x, t, c]) => `<span class="${c}" style="left:${pos(x)}">${t}</span>`).join("");
+  const aria = rows.map((row) => `${row.key}: ${rarity(row.pct).short}`).join("; ") + `; your alert line: ${v.line.say}`;
+  return `<div class="ruler no-terms" role="img" aria-label="${esc(aria)}">
+    <div class="ru-head"><span>How rare among honest payments</span><span class="ru-key"><i></i>your line: ${esc(v.line.say)}</span></div>
+    <div class="ru-grid">${cells}
+      <span class="ru-over" style="grid-area:1 / 2 / ${N + 1} / 3"><i class="ru-zone" style="left:${pos(v.line.x)}"></i><i class="ru-line" style="left:${pos(v.line.x)}"></i></span>
+      <span class="ru-axis" style="grid-area:${N + 1} / 2">${ticks}${axis}</span>
+    </div>
+    <p class="ru-legend">${rows.map((row) => `<b>${esc(row.key)}</b>: ${esc(row.note)}`).join(". ")}.</p>
+  </div>`;
+}
+
+function summaryHtml(v, reveal) {
+  const p = [];
+  p.push(`<section class="rs" aria-label="The verdict in plain words">`);
+  p.push(`<div class="rs-verdict ${v.state}"><span class="rs-word">${esc(v.word)}</span>${v.score != null ? `<span class="rs-score">fraud score <b>${v.score}</b><small>/100</small></span>` : ""}</div>`);
+  p.push(`<p class="rs-say">${esc(v.say)}</p>`);
+  if (v.tech) p.push(`<p class="rs-tech">${esc(v.tech)}</p>`);
+  p.push(rulerHtml(v));
+  if (v.opinion) p.push(`<p class="rs-opinion">${esc(v.opinion)}</p>`);
+  if (v.why.length) p.push(`<dl class="rs-why">${v.why.map(([k, t]) => `<dt>${esc(k)}</dt><dd>${esc(t)}</dd>`).join("")}</dl>`);
+  if (v.budget) {
+    const b = v.budget;
+    p.push(`<div class="rs-budget"><p class="rs-bhead">At your line, ${esc(v.line.say)} honest payments get flagged. ${b.held ? "On this bank's held-out test data" : "On the data the line was set on"}, that meant:</p>`);
+    p.push(`<div class="rs-brow">${dots(b.rec, "catch")}<span><b>${esc(inTen(b.rec))}</b> ${caught(b.rec)}</span></div>`);
+    if (b.prec != null) p.push(`<div class="rs-brow">${dots(b.prec, "real")}<span><b>${esc(inTen(b.prec))}</b> ${real(b.prec)}</span></div>`);
+    p.push(`<p class="rs-tech">recall ${fmt.pct(b.rec, 1)}${b.prec != null ? ` · precision ${fmt.pct(b.prec, 1)}` : ""} (${b.held ? "held-out test" : "validation, in-sample"})${b.base ? ` · there, 1 in ${nice(1 / b.base)} payments was fraud; where fraud is rarer, fewer alerts are` : ""}</p></div>`);
+  }
+  if (v.truth) {
+    const t = v.truth;
+    const what = t.label ? "fraud" : "honest";
+    const said = TRUTH_SAID[t.text] || t.text;
+    const rec = tally.total >= 2 ? `<span class="rs-tally">This visit: right on ${tally.right} of ${tally.total} real payments.</span>` : "";
+    p.push(`<div class="rs-truth ${t.ok ? "ok" : "bad"}${reveal ? " reveal" : ""}"><span>${reveal ? "The mystery payment was" : "It really was"} <b>${what}</b>: ${esc(said)} <span aria-hidden="true">${t.ok ? "✓" : "✗"}</span></span>${rec}</div>`);
+  }
+  p.push(`<div class="rs-actions"><button type="button" class="rs-copy" data-copy="summary">Copy summary</button><button type="button" class="rs-copy" data-copy="api">Copy as API call</button></div>`);
+  p.push(`</section>`);
+  return p.join("");
+}
+
+// the summary as plain text, for a case note or an e-mail
+function summaryText(v, r) {
+  const L = [];
+  const tl = models.find((m) => m.name === r.model?.run);
+  L.push(`FinFraud: ${v.word.toUpperCase()}`);
+  L.push(v.say);
+  if (v.rows.length) L.push(v.rows.filter((row) => row.pct != null).map((row) => `${row.key}: ${rarity(row.pct).short}`).join(" · ") + (v.line ? ` · alert line: ${v.line.say}` : ""));
+  if (v.opinion) L.push(v.opinion);
+  for (const [k, t] of v.why) L.push(`${k}: ${t}`);
+  if (v.budget) L.push(`At this line: ${inTen(v.budget.rec)} ${caught(v.budget.rec)}${v.budget.prec != null ? `; ${inTen(v.budget.prec)} ${real(v.budget.prec)}` : ""} (${v.budget.held ? "held-out test" : "validation"}${v.budget.base ? `, where 1 in ${nice(1 / v.budget.base)} payments was fraud` : ""}).`);
+  if (v.truth) L.push(`It really was ${v.truth.label ? "fraud" : "honest"}: ${TRUTH_SAID[v.truth.text] || v.truth.text}.`);
+  L.push(`Judged as ${r.calibration === "generic" ? "a bank the model has never seen" : sourceName(r.calibration)}; model ${tl ? `${tl.version} · ${tl.label} (${tl.name})` : r.model?.run || "?"}.`);
+  if (v.tech) L.push(`(${v.tech}${v.score != null ? `; fraud score ${v.score}/100` : ""})`);
+  L.push(`${location.origin}  ${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC`);
+  return L.join("\n");
+}
+
+// the request behind the verdict, as a command anyone can run against the same API
+function apiCall(req) {
+  const body = {};
+  for (const [k, val] of Object.entries(req || {})) if (val != null && !(typeof val === "object" && !Array.isArray(val) && !Object.keys(val).length)) body[k] = val;
+  const json = JSON.stringify(body).replace(/'/g, "'\\''");
+  return `curl -s ${location.origin}/api/score -H 'Content-Type: application/json' -d '${json}'`;
+}
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch (_) { /* not allowed here: fall back */ }
+  const ta = el("textarea", { class: "copy-buffer", "aria-hidden": "true" });
+  ta.value = text;
+  document.body.append(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch (_) { ok = false; }
+  ta.remove();
+  return ok;
+}
+
+function wireCopy(box, v, r) {
+  box.querySelectorAll(".rs-copy").forEach((b) => b.addEventListener("click", async () => {
+    const what = b.dataset.copy;
+    const ok = await copyText(what === "api" ? apiCall(lastRequest) : summaryText(v, r));
+    const was = b.textContent;
+    b.textContent = ok ? "Copied ✓" : "Copy failed";
+    b.classList.toggle("done", ok);
+    setTimeout(() => { b.textContent = was; b.classList.remove("done"); }, 1600);
+  }));
+}
+
+function renderReceipt(r, label, { fresh = false, reveal = false } = {}) {
   const box = document.getElementById("receipt");
   box.classList.remove("empty");
   const bl = r.blend, sup = r.supervised, nov = r.novelty || {};
-  const flagged = r.flag;
-  const verdictClass = r.flag == null ? "na" : flagged ? "flag" : "ok";
-  const verdictText = r.flag == null ? "NO THRESHOLD SET" : flagged ? "FLAG FOR REVIEW" : "LOOKS NORMAL";
   const opPct = opLabel(r.operating_point);
   const items = r.contributions || [];
   const shown = showAll ? items : items.slice(0, 9);
   const maxZ = Math.max(3, ...items.map((c) => c.z));
   const ctxName = r.calibration === "generic" ? "judged as an unknown bank" : `judged as ${r.calibration}`;
-  const pct = r.legit_percentile;
+  const v = readVerdict(r, label);
 
   const lines = [];
   lines.push(`<div class="rc-head"><div class="rc-title">FINFRAUD SCORE</div><div class="dim">${esc(new Date().toISOString().replace("T", " ").slice(0, 19))}  ${esc(ctxName)}</div></div>`);
-  // ---- headline: the blend ----
+  lines.push(summaryHtml(v, reveal));
+  // ---- the working: every number behind the verdict ----
+  lines.push(`<div class="rc-sep"></div>`);
+  lines.push(`<div class="rc-sub">THE WORKING  <span class="dim">every number behind the verdict</span></div>`);
   if (bl) {
-    lines.push(`<div class="rc-verdict ${verdictClass}"><span class="big">${(100 * bl.prob).toFixed(bl.prob < 0.1 ? 2 : 1)}%</span>chance of fraud  ·  above ${pctText(pct, "")} of normal payments<br>${verdictText}</div>`);
+    lines.push(`<div class="rc-line"><span class="k">fraud score (the blend)</span><span class="${r.flag ? "z hot" : ""}">${(100 * bl.prob).toFixed(bl.prob < 0.1 ? 2 : 1)} / 100</span></div>`);
     if (bl.threshold != null) {
+      lines.push(`<div class="rc-line"><span class="k">flagged above</span><span>${(100 * bl.threshold).toFixed(bl.threshold < 0.1 ? 2 : 1)}</span></div>`);
       lines.push(`<div class="rc-line"><span class="k">alert budget</span><span>${esc(opPct)} of legit flagged</span></div>`);
-      lines.push(`<div class="rc-line"><span class="k">flagged above</span><span>${(100 * bl.threshold).toFixed(bl.threshold < 0.1 ? 2 : 1)}%</span></div>`);
       // what this threshold did on the held-out test split when the run recorded it; the
       // validation figure it was set on is in-sample and says so
       const rec = bl.test_recall != null ? [bl.test_recall, "held-out test"] : bl.expected_recall != null ? [bl.expected_recall, "validation, in-sample"] : null;
@@ -414,12 +770,8 @@ function renderReceipt(r, label) {
       if (prec) lines.push(`<div class="rc-line"><span class="k">flags that are fraud (${prec[1]})</span><span>${fmt.pct(prec[0], 1)}</span></div>`);
     }
   } else {
-    lines.push(`<div class="rc-verdict ${verdictClass}"><span class="big">${pct == null ? fmt.num(nov.score, 2) : pctText(pct, "")}</span>${pct == null ? "raw score" : "percentile of legit traffic"}<br>${verdictText}</div>`);
-  }
-  if (label != null) {
-    // an example row carries its label: say in words whether this verdict was right
-    const call = verdictCall(label, flagged);
-    lines.push(`<div class="rc-line"><span class="k">actually was</span><span>${label ? "FRAUD" : "legitimate"}${call ? ` <span class="${call.cls}">· ${esc(call.text)}</span>` : ""}</span></div>`);
+    lines.push(`<div class="rc-line"><span class="k">verdict from</span><span>the novelty score alone (no blend in this version)</span></div>`);
+    if (nov.threshold != null) lines.push(`<div class="rc-line"><span class="k">alert budget</span><span>${esc(opPct)} of legit flagged</span></div>`);
   }
   if (r.model) {
     const tl = models.find((m) => m.name === r.model.run);
@@ -430,12 +782,12 @@ function renderReceipt(r, label) {
   if (r.compare && r.compare.length > 1) {
     lines.push(`<div class="rc-compare">`);
     lines.push(`<div class="rc-sub">EVERY VERSION  <span class="dim">the same payment judged by each</span></div>`);
-    lines.push(`<div class="rc-line head"><span class="k">version</span><span>chance of fraud (v3: how unusual) · verdict</span></div>`);
+    lines.push(`<div class="rc-line head"><span class="k">version</span><span>fraud score (v3: how unusual) · verdict</span></div>`);
     const byOrder = [...r.compare].sort((a, b) => (models.find((m) => m.name === a.run)?.order ?? 99) - (models.find((m) => m.name === b.run)?.order ?? 99));
     for (const c of byOrder) {
       const tl = models.find((m) => m.name === c.run);
       const name = tl ? `${tl.version} ${tl.label}` : c.run;
-      const val = c.p_fraud != null ? `${(100 * c.p_fraud).toFixed(c.p_fraud < 0.1 ? 2 : 1)}%` : (c.novelty_percentile != null ? `${pctText(c.novelty_percentile, "")} pct` : "–");
+      const val = c.p_fraud != null ? `${(100 * c.p_fraud).toFixed(c.p_fraud < 0.1 ? 2 : 1)}` : (c.novelty_percentile != null ? `${pctText(c.novelty_percentile, "")} pct` : "–");
       const fl = c.flag == null ? (c.novelty_flag == null ? "" : (c.novelty_flag ? "  FLAG" : "  ok")) : (c.flag ? "  FLAG" : "  ok");
       const hot = (c.flag ?? c.novelty_flag) ? "z hot" : "";
       const extra = c.bank_known === false ? " (bank unknown)" : "";
@@ -451,7 +803,7 @@ function renderReceipt(r, label) {
     lines.push(`<div class="rc-sep"></div>`);
     lines.push(`<div class="rc-sub">KNOWN FRAUD  <span class="dim">the booster: decision trees trained on labelled fraud</span></div>`);
     const sf = sup.flag == null ? "" : (sup.flag ? "  FLAG" : "  ok");
-    lines.push(`<div class="rc-line"><span class="k">chance of fraud, this model alone</span><span class="${sup.flag ? "z hot" : ""}">${(100 * sup.prob).toFixed(sup.prob < 0.1 ? 2 : 1)}%${sf}</span></div>`);
+    lines.push(`<div class="rc-line"><span class="k">fraud score, this model alone</span><span class="${sup.flag ? "z hot" : ""}">${(100 * sup.prob).toFixed(sup.prob < 0.1 ? 2 : 1)}${sf}</span></div>`);
     if (sup.legit_percentile != null) lines.push(`<div class="rc-line"><span class="k">above this share of normal</span><span>${pctText(sup.legit_percentile, "")}</span></div>`);
     if (r.labels) {
       const lb = r.labels;
@@ -479,7 +831,7 @@ function renderReceipt(r, label) {
     lines.push(`<div class="rc-sub">CUSTOMER HISTORY  <span class="dim">${sq.n_history} of up to ${sq.window} previous payments read${sq.history_from ? ` (${sq.history_from})` : ""}</span></div>`);
     if (sq.prob != null) {
       const qf = sq.flag == null ? "" : (sq.flag ? "  FLAG" : "  ok");
-      lines.push(`<div class="rc-line"><span class="k">chance of fraud, from the history alone</span><span class="${sq.flag ? "z hot" : ""}">${(100 * sq.prob).toFixed(sq.prob < 0.1 ? 2 : 1)}%${qf}</span></div>`);
+      lines.push(`<div class="rc-line"><span class="k">fraud score, from the history alone</span><span class="${sq.flag ? "z hot" : ""}">${(100 * sq.prob).toFixed(sq.prob < 0.1 ? 2 : 1)}${qf}</span></div>`);
       if (sq.legit_percentile != null) lines.push(`<div class="rc-line"><span class="k">above this share of normal</span><span>${pctText(sq.legit_percentile, "")}</span></div>`);
     }
     if (!sq.n_history) lines.push(`<div class="rc-line dim"><span>no history given: scored as a first transaction. add past transactions below, or a customer id so the server remembers them</span></div>`);
@@ -525,7 +877,7 @@ function renderReceipt(r, label) {
     lines.push(`<div class="rc-sub">${name.toUpperCase()}  <span class="dim">${hb.label || name}${name === "local" ? "" : " head"}${hb.present && hb.fields.length ? `, ${hb.fields.length} field${hb.fields.length === 1 ? "" : "s"}` : ""}</span></div>`);
     if (hb.present && hb.prob != null) {
       const hf = hb.flag == null ? "" : (hb.flag ? "  FLAG" : "  ok");
-      lines.push(`<div class="rc-line"><span class="k">chance of fraud, ${name === "local" ? "this bank's own model" : name + " model"} alone</span><span class="${hb.flag ? "z hot" : ""}">${(100 * hb.prob).toFixed(hb.prob < 0.1 ? 2 : 1)}%${hf}</span></div>`);
+      lines.push(`<div class="rc-line"><span class="k">fraud score, ${name === "local" ? "this bank's own model" : name + " model"} alone</span><span class="${hb.flag ? "z hot" : ""}">${(100 * hb.prob).toFixed(hb.prob < 0.1 ? 2 : 1)}${hf}</span></div>`);
       if (hb.legit_percentile != null) lines.push(`<div class="rc-line"><span class="k">above this share of normal</span><span>${pctText(hb.legit_percentile, "")}</span></div>`);
       if (hb.fields.length) lines.push(`<div class="rc-line dim"><span>${hb.fields.join(", ")}</span></div>`);
     } else if (name === "local") {
@@ -561,10 +913,19 @@ function renderReceipt(r, label) {
     lines.push(`<div class="rc-more"><button type="button" id="rc-toggle">${showAll ? "show fewer" : "show everything"}</button></div>`);
   }
   lines.push(`<div class="rc-sep"></div>`);
-  lines.push(`<div class="rc-foot">${bl ? "the verdict comes from the blend: every model's score, weighted per bank.<br>" : "the verdict is the novelty score alone (no blend in this version).<br>"}surprise = how much worse than usual the VAE predicted a field, compared with normal ${esc(r.source === "generic" ? "traffic" : r.source + " traffic")}, in standard deviations; "exp" is what it expected.${sup ? "<br>pushes are the booster's SHAP contributions, in log-odds; a field that is unknown can still push, because a missing value tells a decision tree something too." : ""}</div>`);
+  lines.push(`<div class="rc-foot">${bl ? "the verdict comes from the blend: every model's score, weighted per bank. a fraud score is the blend's probability, fit with fraud and honest payments weighted equally: read it against the line, not against 50.<br>" : "the verdict is the novelty score alone (no blend in this version).<br>"}surprise = how much worse than usual the VAE predicted a field, compared with normal ${esc(r.source === "generic" ? "traffic" : r.source + " traffic")}, in standard deviations; "exp" is what it expected.${sup ? "<br>pushes are the booster's SHAP contributions, in log-odds; a field that is unknown can still push, because a missing value tells a decision tree something too." : ""}</div>`);
   box.innerHTML = lines.join("");
+  wireCopy(box, v, r);
   const tog = document.getElementById("rc-toggle");
   if (tog) tog.addEventListener("click", () => { showAll = !showAll; renderReceipt(r, label); });
+  if (fresh) {
+    // the paper feeds out of the printer once per new verdict (not on "show everything")
+    box.classList.remove("printing");
+    void box.offsetWidth;
+    box.classList.add("printing");
+    const live = document.getElementById("verdict-live");
+    if (live) live.textContent = `${v.word}. ${v.say}`;
+  }
 }
 
 // ---- latent map -----------------------------------------------------------------
@@ -575,7 +936,7 @@ async function loadLatentBackground() {
   if (!run) { drawLatent(); return; }
   try {
     latentBackground = await get(`/api/runs/${encodeURIComponent(run)}/latent`);
-    document.getElementById("latent-note").textContent = `${latentBackground.y.length.toLocaleString()} validation rows, PCA of posterior means`;
+    document.getElementById("latent-note").textContent = `${latentBackground.y.length.toLocaleString("en-US")} payments from the validation data, laid out so that payments the VAE finds alike sit close together (PCA of its posterior means)`;
   } catch (e) {
     document.getElementById("latent-note").textContent = "no latent map for this run";
   }

@@ -17,6 +17,9 @@ const GLOSSARY = {
   "false-positive": "false positive: a legitimate payment the model flagged as fraud. The alert budget is the share of legitimate traffic you are willing to flag by mistake.",
   "FPR": "FPR, false-positive rate: the share of legitimate payments wrongly flagged. 1% FPR = 1 in 100 honest payments gets reviewed. Fraud teams pick this budget first and read recall at it.",
   "alert budget": "alert budget: how many legitimate payments you accept flagging by mistake, as a share of all legitimate traffic (0.1% to 5% here). The threshold is set so that exactly this share of validation traffic gets flagged; recall is then whatever the model achieves at that cost.",
+  "alert line": "alert line: the fraud score above which a payment is flagged, drawn separately for every bank so that the alert budget's share of its honest payments lands above it (1 in 100 of them at a 1% budget). On the receipt's ruler it is the dashed line; a payment to the right of it is flagged.",
+  "fraud score": "fraud score: the blend's probability of fraud, written from 0 to 100. The blend was fit with fraud and honest payments weighted equally, so the number is not the real-world chance of fraud and 50 is not the dividing line: what decides is whether it clears the alert line drawn for that bank, which can sit at 14 for one bank and 95 for another.",
+  "close call": "close call: not flagged at the chosen alert budget, but it would be at a looser one. The ruler shows how far short of the line it fell.",
   "threshold": "threshold: the score above which a payment is flagged. Chosen on the validation split so that a given share of legitimate payments (the alert budget) lands above it; frozen before the test split is scored.",
   "calibration": "calibration: the step after training that turns raw scores into probabilities you can act on, picks thresholds per bank for each alert budget, and records what recall to expect at them. Done on the validation split, never on test data.",
   "calibrated": "calibrated: a score that behaves like a probability. 'p(fraud) 0.3' from a calibrated model means roughly 3 in 10 payments with that score are fraud.",
@@ -182,7 +185,7 @@ export function annotate(root) {
     acceptNode(n) {
       let p = n.parentNode;
       while (p && p !== root) {
-        if (SKIP.has(p.nodeName) || (p.classList && (p.classList.contains("term") || p.classList.contains("no-terms") || p.classList.contains("rc-verdict")))) return NodeFilter.FILTER_REJECT;
+        if (SKIP.has(p.nodeName) || (p.classList && (p.classList.contains("term") || p.classList.contains("no-terms") || p.classList.contains("rc-verdict") || p.classList.contains("rs-word")))) return NodeFilter.FILTER_REJECT;
         p = p.parentNode;
       }
       return NodeFilter.FILTER_ACCEPT;

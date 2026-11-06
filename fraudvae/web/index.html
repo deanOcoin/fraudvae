@@ -35,10 +35,22 @@
     <section id="tab-score" class="tab hidden">
       <header class="page-head">
         <div class="page-title"><h1>Score a transaction</h1><a class="repo-link" href="https://github.com/deanOcoin/fraudvae" target="_blank" rel="noopener" title="The code, the pretrained models and the docs"><svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4 1.5 8 5 12M11 4l3.5 4L11 12M9.4 2.5 6.6 13.5"/></svg><span>Source on GitHub</span><span class="repo-arrow" aria-hidden="true">↗</span></a></div>
-        <p class="lede" id="score-lede">Describe one payment and the model says how likely it is to be fraud, with its reasons. Two models look at it: one that learnt what normal payments look like and flags what it cannot explain, and one that learnt what known fraud looks like from labelled examples.</p>
+        <p class="lede" id="score-lede">Describe a payment, or load a real one, and FinFraud says whether it should be flagged for review, and why. Two kinds of model judge it: one that learnt what honest payments look like and notices what it cannot explain, and one that learnt what known fraud looks like from labelled cases.</p>
+        <p class="model-line" id="score-model-line"></p>
       </header>
       <div class="score-grid">
         <form id="score-form" class="score-form" autocomplete="off">
+          <div class="try-row">
+            <span class="try-label">Start with a real payment the model never trained on</span>
+            <div class="try-buttons">
+              <button type="button" class="chip" data-example="0"><i class="chip-dot ok" aria-hidden="true"></i>An honest one</button>
+              <button type="button" class="chip" data-example="1"><i class="chip-dot bad" aria-hidden="true"></i>A fraud</button>
+              <button type="button" class="chip" data-example="mystery" title="A real payment whose label stays hidden until it is scored"><i class="chip-dot q" aria-hidden="true">?</i>A mystery one</button>
+              <button type="button" class="chip plain" id="clear-form">Clear</button>
+            </div>
+            <p id="example-note" class="example-note" aria-live="polite"></p>
+          </div>
+          <div class="form-sec"><h2 class="form-sec-title">How to judge it</h2></div>
           <div class="form-top">
             <label class="field">
               <span>Which bank's idea of normal</span>
@@ -48,13 +60,13 @@
             <label class="field">
               <span>Alert budget</span>
               <select name="fpr_target" id="fpr-select">
-                <option value="fpr_0.001">0.1% of legitimate payments may be flagged</option>
-                <option value="fpr_0.005">0.5%</option>
-                <option value="fpr_0.01" selected>1%</option>
-                <option value="fpr_0.02">2%</option>
-                <option value="fpr_0.05">5%</option>
+                <option value="fpr_0.001">flag 1 in 1,000 honest payments (0.1%)</option>
+                <option value="fpr_0.005">flag 1 in 200 honest payments (0.5%)</option>
+                <option value="fpr_0.01" selected>flag 1 in 100 honest payments (1%)</option>
+                <option value="fpr_0.02">flag 1 in 50 honest payments (2%)</option>
+                <option value="fpr_0.05">flag 1 in 20 honest payments (5%)</option>
               </select>
-              <small>How many honest payments you accept flagging by mistake. The flagging threshold is set so that exactly this share of legitimate traffic lands above it; a bigger budget catches more fraud at the price of more false alarms.</small>
+              <small>How many honest payments you are willing to flag by mistake. The alert line is drawn so that exactly this share of honest payments lands above it: a looser budget catches more fraud and bothers more customers.</small>
             </label>
             <label class="field">
               <span>Model version</span>
@@ -72,16 +84,10 @@
                 <option value="7" selected>a week (fresh fraud history is used)</option>
                 <option value="30">a month (only month-old fraud history is used)</option>
               </select>
-              <small>What the verdict may draw on. A week: the model may count fraud confirmed in the last seven days at this merchant, card or device, so a payment that follows a fresh run of fraud scores higher. A month: that week is hidden, as it is for a bank whose chargebacks take weeks to arrive, and the verdict rests on the payment itself and older history - typically a lower score for fraud that is part of a recent wave.</small>
+              <small>What the verdict may draw on. A week: fraud confirmed in the last seven days at this merchant, card or device counts, so a payment that follows a fresh run of fraud scores higher. A month: that week is hidden, as at a bank whose chargebacks take weeks to arrive, and the verdict rests on the payment and older history.</small>
             </label>
           </div>
-          <div class="example-row">
-            <span>Load a real example the model never trained on:</span>
-            <button type="button" class="btn ghost" data-example="0">legitimate</button>
-            <button type="button" class="btn ghost" data-example="1">fraud</button>
-            <button type="button" class="btn ghost" id="clear-form">clear</button>
-            <span id="example-note" class="dim"></span>
-          </div>
+          <div class="form-sec"><h2 class="form-sec-title">The payment</h2><span class="dim">blank means unknown, not zero</span></div>
           <div id="field-groups"></div>
           <details class="history-box">
             <summary>Customer history <span class="dim">(the customer's previous payments)</span></summary>
@@ -113,15 +119,22 @@
           <div class="form-actions">
             <button type="submit" class="btn primary" id="score-btn">Score transaction</button>
             <span id="score-status" class="dim"></span>
-            <span class="dim actions-note">nothing scores until this is pressed</span>
+            <span class="dim actions-note">nothing scores until this is pressed<span class="kbd-hint" id="kbd-hint" aria-hidden="true"> · or <kbd>Ctrl</kbd> <kbd>Enter</kbd></span></span>
           </div>
         </form>
 
-        <aside class="receipt-col">
+        <aside class="receipt-col" aria-label="The verdict">
+          <div id="verdict-live" class="sr-only" aria-live="polite"></div>
           <div id="receipt" class="receipt empty">
             <div class="receipt-empty">
-              <p>No transaction scored yet.</p>
-              <p class="dim">Fill in what you know and press <b>Score transaction</b>, or load an example. Fields you leave blank count as unknown, not as zero; the model was trained to cope with missing fields.</p>
+              <p class="re-title">How to read a verdict</p>
+              <ol class="re-steps">
+                <li><b>Load a payment.</b> One of the real ones at the top of the form, or type in what you know.</li>
+                <li><b>Press Score transaction.</b> Nothing is scored before that.</li>
+                <li><b>Read the ruler.</b> It shows how rare the payment is among honest ones. Past your alert line, it is flagged for review.</li>
+              </ol>
+              <div class="re-demo" aria-hidden="true"><span class="re-track"><i class="re-zone"></i><i class="re-line"></i><i class="re-dot"></i></span><span class="re-axis"><span>common</span><span>your line</span><span>rare</span></span></div>
+              <p class="dim">Blank fields count as unknown, not as zero; the model was trained to cope with missing fields.</p>
             </div>
           </div>
           <div class="latent-card">
