@@ -408,7 +408,7 @@ fraudvae/
                public (the demonstration-site mode), entity_store, payloads
   web/         the ui: index.html, css/, js/, explain.html, story.html + story_plain.html, vendored libs
   configs/     base, cpu_small, gpu_full, gpu_hist, gpu_long, smoke (yaml; `train --config NAME`);
-               v6: txfm_small, txfm_base (`pretrain --config NAME`), v6_full
+               v6: txfm_small, txfm_base (`pretrain --config NAME`), v6_full; v7: v7a-v7d (the Session A variants, `post --config NAME`)
 data/examples/ labelled example rows for the six sources whose licences allow it
 deploy/        install.sh, update.sh, the systemd unit, nginx, env.example, relay_bootstrap.sh
 scripts/       kaggle_manual_download.md, macos_openmp.sh, make_data_docs.py, story_pdf.py, bootstrap_remote.sh, relay_agent.sh

@@ -1,0 +1,41 @@
+# v7a: v6_full with the encoder's block routed to tabformer and fdh only (NaN elsewhere), the two sources whose
+# validation earned it in the node run. Session A (v7), one of the post-stage variants
+# built from the v5-h200-e checkpoint on the `full` set; see docs/TRAINING_NOTES.md (v7).
+#   fraudvae post v7-a --config v7a --prepared full --device cuda:0    (from a copy of v5-h200-e)
+name: v7a
+device: cuda
+model:
+  latent_dim: 24
+  hidden: [768, 768, 384]
+  cat_embed_dim: 10
+  source_embed_dim: 8
+  dropout: 0.05
+  history:
+    enabled: true
+    window: 32
+    d_model: 128
+    layers: 2
+    heads: 4
+train:
+  epochs: 30
+  batch_size: 8192
+  lr: 0.0015
+  beta_warmup_epochs: 5
+  patience: 8
+  select_by: elbo
+  score_samples: 16
+  amp: false
+boost:
+  max_legit_per_source: 200000
+  val_legit_per_source: 100000
+  legit_weight_cap: 3.0
+  learning_rate: 0.03
+  max_rounds: 3000
+  early_stopping: 200
+  num_threads: 32       # two post stages share the box's cores
+  txfm_features: true
+txfm:
+  run: txfm-base-last   # the 60k encoder of the node run (runs/txfm-base-last/txfm.pt)
+  window: 128
+  sources: [tabformer, fdh]   # the block for these sources only, NaN for the rest
+notes: Session A variant v7a; the v6 base is v6_full, the comparison is fraudvae compare against v5-h200-h and v6-base-e
