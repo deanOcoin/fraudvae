@@ -905,3 +905,144 @@ fall below. The branch merges when a variant exists with no source worse than v5
 paired interval under either label setting and at least one better. The headline moves from
 the mean AUROC, which three saturated sources and one at a ceiling hold still, to the recall at
 1% FPR under 30-day labels, per source and mean.
+
+### Session A: the round on the box (2026-11-06/07)
+
+One box (2x H200 NVL, 350 GB, $9.02/h), under a day, the `full` set prepared with v5-h200-e's standardisation and
+checked against the node run's counts (29,989,316 / 4,284,187 / 8,568,376 rows; 93,111 / 13,017 / 27,303 fraud), the
+60k encoder's block cached over every row (train 106.5 GB), then the post stage from the v5-h200-e checkpoint, two
+variants at a time, each judged by `fraudvae compare` against v5-h200-h and v6-base-e on the same 8,568,376 test
+rows (1,000 Poisson replicates, both label settings). The two baselines reproduce on this box's rows to the published
+numbers (v5-h200-h mean blend AUROC 0.9277 / 0.9045, v6-base-e 0.9281 / 0.9057). A source's verdict reads the recall
+at 1% FPR, then the AUROC; `+` better, `-` worse, `=` undecided. Every number below is read from the compare files
+under `runs/_node_logs/sessionA/`.
+
+**The variants.** v7-a: block routed to tabformer, fdh; v7-b: routed to tabformer, fdh, ieee; v7-c: 64 components, every source; v7-d: the control: block shuffled within each source; v7-e: v7-a plus the supervised head (txsup); v7-f: v7-e, blender without the VAE; v7-g: v7-e on the fine-tuned encoder.
+
+Recall at 1% FPR, v5-h200-h to each variant (labels as published):
+
+| source | v5-h200-h | v7-a | v7-b | v7-c | v7-d | v7-e | v7-f | v7-g |
+|---|---|---|---|---|---|---|---|---|
+| fdh | 0.777 | 0.787 (+0.010 [+0.006, +0.015]) + | 0.787 (+0.010 [+0.006, +0.015]) + | 0.779 (+0.002 [-0.001, +0.004]) = | 0.773 (-0.003 [-0.006, -0.001]) - | 0.790 (+0.013 [+0.008, +0.017]) + | 0.790 (+0.013 [+0.008, +0.018]) + | 0.786 (+0.009 [+0.004, +0.014]) + |
+| capone | 0.209 | 0.208 (-0.001 [-0.009, +0.006]) = | 0.208 (-0.002 [-0.010, +0.005]) = | 0.201 (-0.008 [-0.018, +0.002]) - | 0.198 (-0.011 [-0.021, -0.002]) - | 0.208 (-0.002 [-0.010, +0.005]) = | 0.209 (-0.000 [-0.009, +0.008]) = | 0.208 (-0.002 [-0.010, +0.005]) = |
+| tabformer | 0.859 | 0.939 (+0.081 [+0.072, +0.089]) + | 0.939 (+0.080 [+0.071, +0.088]) + | 0.890 (+0.031 [+0.025, +0.037]) + | 0.871 (+0.012 [+0.007, +0.018]) + | 0.946 (+0.087 [+0.078, +0.096]) + | 0.954 (+0.096 [+0.087, +0.105]) + | 0.944 (+0.085 [+0.076, +0.094]) + |
+| ulb | 0.893 | 0.893 (+0.000 [+0.000, +0.012]) = | 0.893 (+0.000 [+0.000, +0.000]) = | 0.880 (-0.013 [-0.045, +0.000]) = | 0.867 (-0.027 [-0.069, +0.000]) = | 0.893 (+0.000 [+0.000, +0.012]) = | 0.893 (+0.000 [+0.000, +0.012]) = | 0.893 (+0.000 [+0.000, +0.012]) = |
+| paysim | 1.000 | 1.000 (+0.000 [+0.000, +0.000]) - | 1.000 (-0.000 [-0.001, +0.000]) - | 0.999 (-0.001 [-0.002, -0.000]) - | 1.000 (-0.000 [-0.001, +0.000]) - | 1.000 (+0.000 [+0.000, +0.000]) - | 1.000 (+0.000 [+0.000, +0.000]) - | 1.000 (-0.000 [-0.001, +0.000]) - |
+| sparkov | 0.998 | 0.999 (+0.001 [-0.002, +0.003]) = | 0.998 (+0.000 [-0.002, +0.001]) - | 0.996 (-0.002 [-0.006, +0.001]) - | 0.996 (-0.002 [-0.006, +0.000]) - | 1.000 (+0.002 [+0.000, +0.005]) + | 1.000 (+0.002 [+0.000, +0.005]) + | 0.999 (+0.001 [-0.002, +0.002]) - |
+| banksim | 0.992 | 0.992 (+0.000 [-0.002, +0.004]) = | 0.993 (+0.001 [-0.002, +0.004]) = | 0.991 (-0.002 [-0.007, +0.002]) = | 0.993 (+0.001 [-0.003, +0.004]) - | 0.992 (+0.000 [-0.003, +0.003]) = | 0.993 (+0.001 [-0.002, +0.002]) + | 0.992 (+0.000 [-0.004, +0.003]) - |
+| ieee | 0.627 | 0.628 (+0.001 [-0.006, +0.006]) = | 0.617 (-0.010 [-0.017, -0.002]) - | 0.622 (-0.006 [-0.012, +0.001]) - | 0.620 (-0.008 [-0.015, -0.001]) - | 0.626 (-0.001 [-0.006, +0.006]) - | 0.628 (+0.001 [-0.006, +0.007]) = | 0.618 (-0.010 [-0.015, -0.003]) - |
+| amlworld | 0.851 | 0.849 (-0.002 [-0.007, +0.002]) + | 0.849 (-0.002 [-0.007, +0.002]) = | 0.861 (+0.009 [-0.001, +0.019]) = | 0.827 (-0.024 [-0.033, -0.015]) - | 0.851 (+0.000 [-0.004, +0.006]) + | 0.860 (+0.009 [+0.003, +0.016]) + | 0.851 (+0.000 [-0.006, +0.005]) + |
+| baf | 0.255 | 0.258 (+0.004 [-0.004, +0.010]) = | 0.259 (+0.004 [-0.003, +0.012]) = | 0.258 (+0.003 [-0.005, +0.014]) = | 0.260 (+0.005 [-0.004, +0.016]) - | 0.255 (+0.001 [-0.005, +0.008]) = | 0.255 (+0.000 [-0.006, +0.009]) = | 0.255 (+0.000 [-0.005, +0.008]) = |
+| fraudecom | 0.096 | 0.094 (-0.003 [-0.008, +0.003]) = | 0.103 (+0.006 [-0.005, +0.015]) = | 0.068 (-0.029 [-0.048, -0.012]) - | 0.084 (-0.012 [-0.029, +0.002]) = | 0.102 (+0.006 [-0.003, +0.016]) = | 0.099 (+0.003 [-0.008, +0.014]) = | 0.106 (+0.009 [+0.001, +0.017]) + |
+| mean | 0.687 | 0.695 (+0.008 [+0.006, +0.010]) + | 0.695 (+0.008 [+0.006, +0.010]) + | 0.686 (-0.001 [-0.005, +0.002]) = | 0.681 (-0.006 [-0.011, -0.003]) - | 0.697 (+0.010 [+0.008, +0.012]) + | 0.698 (+0.011 [+0.009, +0.013]) + | 0.696 (+0.008 [+0.007, +0.010]) + |
+
+Recall at 1% FPR, v5-h200-h to each variant (30-day label latency):
+
+| source | v5-h200-h | v7-a | v7-b | v7-c | v7-d | v7-e | v7-f | v7-g |
+|---|---|---|---|---|---|---|---|---|
+| fdh | 0.343 | 0.352 (+0.010 [+0.004, +0.015]) + | 0.355 (+0.012 [+0.006, +0.018]) + | 0.346 (+0.003 [-0.001, +0.008]) = | 0.337 (-0.006 [-0.010, -0.001]) - | 0.355 (+0.012 [+0.006, +0.018]) + | 0.355 (+0.012 [+0.006, +0.018]) + | 0.353 (+0.010 [+0.005, +0.016]) + |
+| capone | 0.194 | 0.198 (+0.003 [-0.004, +0.012]) + | 0.199 (+0.005 [-0.003, +0.011]) = | 0.196 (+0.002 [-0.009, +0.011]) - | 0.185 (-0.009 [-0.020, +0.002]) - | 0.198 (+0.004 [-0.003, +0.012]) + | 0.199 (+0.005 [-0.002, +0.013]) + | 0.195 (+0.000 [-0.008, +0.008]) = |
+| tabformer | 0.734 | 0.879 (+0.144 [+0.134, +0.156]) + | 0.875 (+0.141 [+0.131, +0.153]) + | 0.749 (+0.015 [+0.007, +0.023]) + | 0.705 (-0.029 [-0.036, -0.022]) - | 0.891 (+0.157 [+0.146, +0.169]) + | 0.906 (+0.172 [+0.161, +0.184]) + | 0.910 (+0.176 [+0.165, +0.188]) + |
+| ulb | 0.893 | 0.893 (+0.000 [+0.000, +0.012]) = | 0.893 (+0.000 [+0.000, +0.000]) = | 0.880 (-0.013 [-0.045, +0.000]) = | 0.867 (-0.027 [-0.069, +0.000]) = | 0.893 (+0.000 [+0.000, +0.012]) = | 0.893 (+0.000 [+0.000, +0.012]) = | 0.893 (+0.000 [+0.000, +0.012]) = |
+| paysim | 1.000 | 1.000 (+0.000 [+0.000, +0.000]) - | 1.000 (-0.000 [-0.001, +0.000]) - | 0.999 (-0.001 [-0.002, -0.000]) - | 1.000 (-0.000 [-0.001, +0.000]) - | 1.000 (+0.000 [+0.000, +0.000]) - | 1.000 (+0.000 [+0.000, +0.000]) - | 1.000 (-0.000 [-0.001, +0.000]) - |
+| sparkov | 0.996 | 0.996 (+0.000 [+0.000, +0.000]) = | 0.996 (+0.000 [+0.000, +0.000]) - | 0.994 (-0.002 [-0.005, +0.000]) - | 0.992 (-0.004 [-0.008, -0.001]) - | 0.999 (+0.002 [+0.000, +0.005]) + | 0.998 (+0.001 [-0.001, +0.005]) = | 0.996 (+0.000 [+0.000, +0.000]) = |
+| banksim | 0.987 | 0.989 (+0.002 [+0.000, +0.006]) = | 0.988 (+0.002 [-0.002, +0.005]) = | 0.987 (+0.000 [-0.005, +0.005]) = | 0.985 (-0.002 [-0.007, +0.003]) - | 0.991 (+0.004 [+0.000, +0.007]) = | 0.988 (+0.001 [-0.003, +0.005]) + | 0.987 (+0.000 [-0.003, +0.003]) - |
+| ieee | 0.557 | 0.553 (-0.004 [-0.009, +0.002]) = | 0.546 (-0.011 [-0.018, -0.003]) - | 0.551 (-0.005 [-0.012, +0.001]) - | 0.547 (-0.009 [-0.017, -0.002]) - | 0.553 (-0.003 [-0.009, +0.002]) = | 0.557 (+0.000 [-0.007, +0.006]) = | 0.547 (-0.010 [-0.016, -0.003]) - |
+| amlworld | 0.852 | 0.850 (-0.002 [-0.008, +0.002]) + | 0.849 (-0.003 [-0.007, +0.002]) = | 0.859 (+0.007 [-0.004, +0.017]) = | 0.827 (-0.025 [-0.034, -0.016]) - | 0.854 (+0.002 [-0.003, +0.006]) + | 0.861 (+0.009 [+0.002, +0.016]) + | 0.849 (-0.003 [-0.008, +0.002]) = |
+| baf | 0.254 | 0.257 (+0.003 [-0.004, +0.010]) = | 0.259 (+0.005 [-0.003, +0.012]) = | 0.259 (+0.004 [-0.005, +0.013]) = | 0.260 (+0.006 [-0.004, +0.016]) - | 0.255 (+0.001 [-0.005, +0.008]) = | 0.255 (+0.001 [-0.005, +0.009]) = | 0.255 (+0.001 [-0.005, +0.008]) = |
+| fraudecom | 0.089 | 0.090 (+0.001 [-0.004, +0.006]) = | 0.099 (+0.011 [-0.002, +0.019]) = | 0.066 (-0.023 [-0.039, -0.007]) - | 0.084 (-0.005 [-0.023, +0.008]) = | 0.096 (+0.007 [-0.004, +0.019]) = | 0.089 (+0.001 [-0.011, +0.016]) = | 0.098 (+0.009 [-0.002, +0.017]) = |
+| mean | 0.627 | 0.642 (+0.014 [+0.013, +0.016]) + | 0.642 (+0.015 [+0.012, +0.016]) + | 0.626 (-0.001 [-0.005, +0.002]) = | 0.617 (-0.010 [-0.015, -0.007]) - | 0.644 (+0.017 [+0.015, +0.019]) + | 0.646 (+0.018 [+0.016, +0.021]) + | 0.644 (+0.017 [+0.015, +0.019]) + |
+
+AUROC, v5-h200-h to each variant (labels as published):
+
+| source | v5-h200-h | v7-a | v7-b | v7-c | v7-d | v7-e | v7-f | v7-g |
+|---|---|---|---|---|---|---|---|---|
+| fdh | 0.9054 | 0.9072 (+0.0019 [-0.0027, +0.0067]) + | 0.9068 (+0.0014 [-0.0029, +0.0060]) + | 0.9063 (+0.0010 [-0.0026, +0.0046]) = | 0.9051 (-0.0003 [-0.0038, +0.0033]) - | 0.9074 (+0.0020 [-0.0026, +0.0070]) + | 0.9072 (+0.0019 [-0.0027, +0.0069]) + | 0.9075 (+0.0021 [-0.0026, +0.0068]) + |
+| capone | 0.8407 | 0.8401 (-0.0005 [-0.0016, +0.0007]) = | 0.8405 (-0.0002 [-0.0013, +0.0010]) = | 0.8368 (-0.0039 [-0.0057, -0.0019]) - | 0.8354 (-0.0052 [-0.0073, -0.0031]) - | 0.8403 (-0.0004 [-0.0016, +0.0008]) = | 0.8405 (-0.0001 [-0.0013, +0.0012]) = | 0.8404 (-0.0003 [-0.0015, +0.0010]) = |
+| tabformer | 0.9940 | 0.9977 (+0.0037 [+0.0032, +0.0044]) + | 0.9976 (+0.0036 [+0.0031, +0.0042]) + | 0.9950 (+0.0011 [+0.0007, +0.0014]) + | 0.9943 (+0.0003 [+0.0001, +0.0006]) + | 0.9977 (+0.0037 [+0.0032, +0.0044]) + | 0.9980 (+0.0041 [+0.0035, +0.0047]) + | 0.9977 (+0.0037 [+0.0032, +0.0043]) + |
+| ulb | 0.9840 | 0.9844 (+0.0004 [-0.0019, +0.0030]) = | 0.9843 (+0.0003 [-0.0020, +0.0030]) = | 0.9833 (-0.0007 [-0.0024, +0.0011]) = | 0.9829 (-0.0011 [-0.0072, +0.0041]) = | 0.9844 (+0.0004 [-0.0019, +0.0030]) = | 0.9849 (+0.0009 [-0.0017, +0.0042]) = | 0.9848 (+0.0008 [-0.0023, +0.0040]) = |
+| paysim | 0.9999 | 0.9999 (-0.0000 [-0.0000, -0.0000]) - | 0.9999 (-0.0000 [-0.0000, -0.0000]) - | 0.9998 (-0.0000 [-0.0001, -0.0000]) - | 0.9998 (-0.0001 [-0.0001, -0.0001]) - | 0.9999 (-0.0000 [-0.0000, -0.0000]) - | 0.9999 (-0.0000 [-0.0000, -0.0000]) - | 0.9999 (-0.0000 [-0.0000, -0.0000]) - |
+| sparkov | 0.9999 | 0.9999 (-0.0000 [-0.0000, +0.0000]) = | 0.9999 (-0.0000 [-0.0001, -0.0000]) - | 0.9998 (-0.0001 [-0.0001, -0.0000]) - | 0.9998 (-0.0001 [-0.0002, -0.0000]) - | 0.9999 (+0.0000 [+0.0000, +0.0001]) + | 0.9999 (+0.0000 [+0.0000, +0.0001]) + | 0.9999 (-0.0000 [-0.0000, -0.0000]) - |
+| banksim | 0.9995 | 0.9995 (+0.0000 [-0.0000, +0.0000]) = | 0.9995 (-0.0000 [-0.0000, +0.0000]) = | 0.9995 (-0.0000 [-0.0001, +0.0000]) = | 0.9994 (-0.0001 [-0.0002, -0.0001]) - | 0.9995 (+0.0000 [-0.0000, +0.0000]) = | 0.9996 (+0.0000 [+0.0000, +0.0001]) + | 0.9995 (-0.0000 [-0.0000, -0.0000]) - |
+| ieee | 0.9578 | 0.9575 (-0.0004 [-0.0008, +0.0001]) = | 0.9549 (-0.0029 [-0.0038, -0.0021]) - | 0.9572 (-0.0006 [-0.0012, -0.0001]) - | 0.9565 (-0.0013 [-0.0019, -0.0007]) - | 0.9573 (-0.0005 [-0.0009, -0.0001]) - | 0.9578 (-0.0001 [-0.0005, +0.0004]) = | 0.9572 (-0.0007 [-0.0012, -0.0002]) - |
+| amlworld | 0.9897 | 0.9899 (+0.0002 [+0.0000, +0.0003]) + | 0.9897 (+0.0000 [-0.0002, +0.0002]) = | 0.9901 (+0.0004 [-0.0004, +0.0012]) = | 0.9890 (-0.0007 [-0.0015, +0.0001]) - | 0.9900 (+0.0003 [+0.0001, +0.0004]) + | 0.9901 (+0.0004 [+0.0001, +0.0007]) + | 0.9899 (+0.0002 [+0.0000, +0.0004]) + |
+| baf | 0.8930 | 0.8927 (-0.0003 [-0.0011, +0.0005]) = | 0.8929 (-0.0002 [-0.0009, +0.0005]) = | 0.8933 (+0.0003 [-0.0010, +0.0015]) = | 0.8907 (-0.0023 [-0.0037, -0.0009]) - | 0.8928 (-0.0003 [-0.0010, +0.0005]) = | 0.8925 (-0.0006 [-0.0014, +0.0003]) = | 0.8931 (+0.0001 [-0.0007, +0.0009]) = |
+| fraudecom | 0.6410 | 0.6413 (+0.0003 [-0.0028, +0.0034]) = | 0.6427 (+0.0016 [-0.0055, +0.0086]) = | 0.6427 (+0.0017 [-0.0097, +0.0150]) - | 0.6449 (+0.0039 [-0.0085, +0.0164]) = | 0.6415 (+0.0005 [-0.0025, +0.0036]) = | 0.6409 (-0.0001 [-0.0054, +0.0048]) = | 0.6427 (+0.0017 [-0.0031, +0.0062]) + |
+| mean | 0.9277 | 0.9282 (+0.0005 [-0.0001, +0.0010]) + | 0.9280 (+0.0003 [-0.0005, +0.0012]) + | 0.9276 (-0.0001 [-0.0012, +0.0011]) = | 0.9271 (-0.0006 [-0.0020, +0.0007]) - | 0.9282 (+0.0005 [-0.0000, +0.0011]) + | 0.9283 (+0.0006 [-0.0001, +0.0013]) + | 0.9284 (+0.0007 [-0.0000, +0.0014]) + |
+
+Recall at 1% FPR, v6-base-e (the node run's 60k round, the block for every source) to each variant (30-day label latency):
+
+| source | v6-base-e | v7-a | v7-b | v7-c | v7-d | v7-e | v7-f | v7-g |
+|---|---|---|---|---|---|---|---|---|
+| fdh | 0.353 | 0.352 (-0.000 [-0.004, +0.003]) = | 0.355 (+0.002 [-0.002, +0.005]) = | 0.346 (-0.007 [-0.012, -0.001]) - | 0.337 (-0.016 [-0.022, -0.009]) - | 0.355 (+0.003 [-0.001, +0.006]) = | 0.355 (+0.002 [-0.002, +0.006]) = | 0.353 (+0.001 [-0.004, +0.005]) = |
+| capone | 0.191 | 0.198 (+0.007 [-0.003, +0.019]) + | 0.199 (+0.009 [-0.003, +0.019]) + | 0.196 (+0.006 [-0.005, +0.016]) = | 0.185 (-0.006 [-0.016, +0.005]) = | 0.198 (+0.007 [-0.003, +0.018]) + | 0.199 (+0.008 [-0.001, +0.020]) + | 0.195 (+0.004 [-0.006, +0.015]) + |
+| tabformer | 0.877 | 0.879 (+0.002 [-0.002, +0.006]) - | 0.875 (-0.001 [-0.006, +0.003]) - | 0.749 (-0.128 [-0.139, -0.117]) - | 0.705 (-0.172 [-0.183, -0.160]) - | 0.891 (+0.014 [+0.009, +0.019]) + | 0.906 (+0.029 [+0.024, +0.035]) + | 0.910 (+0.034 [+0.025, +0.043]) + |
+| ulb | 0.867 | 0.893 (+0.027 [+0.000, +0.069]) = | 0.893 (+0.027 [+0.000, +0.069]) = | 0.880 (+0.013 [+0.000, +0.048]) = | 0.867 (+0.000 [+0.000, +0.000]) = | 0.893 (+0.027 [+0.000, +0.069]) = | 0.893 (+0.027 [+0.000, +0.069]) = | 0.893 (+0.027 [+0.000, +0.069]) = |
+| paysim | 0.998 | 1.000 (+0.002 [+0.000, +0.003]) + | 1.000 (+0.001 [+0.000, +0.003]) + | 0.999 (+0.000 [+0.000, +0.001]) + | 1.000 (+0.001 [+0.000, +0.002]) + | 1.000 (+0.002 [+0.000, +0.003]) + | 1.000 (+0.002 [+0.000, +0.003]) + | 1.000 (+0.001 [+0.000, +0.003]) + |
+| sparkov | 0.994 | 0.996 (+0.002 [-0.002, +0.007]) = | 0.996 (+0.002 [-0.002, +0.007]) = | 0.994 (+0.000 [-0.004, +0.004]) = | 0.992 (-0.002 [-0.006, +0.001]) = | 0.999 (+0.004 [+0.001, +0.008]) + | 0.998 (+0.004 [+0.001, +0.007]) + | 0.996 (+0.002 [-0.002, +0.007]) = |
+| banksim | 0.989 | 0.989 (+0.000 [-0.004, +0.006]) = | 0.988 (-0.001 [-0.005, +0.004]) = | 0.987 (-0.002 [-0.007, +0.002]) = | 0.985 (-0.004 [-0.008, +0.001]) - | 0.991 (+0.002 [-0.003, +0.006]) = | 0.988 (-0.002 [-0.006, +0.003]) + | 0.987 (-0.002 [-0.008, +0.003]) = |
+| ieee | 0.544 | 0.553 (+0.009 [+0.002, +0.017]) + | 0.546 (+0.002 [-0.004, +0.009]) - | 0.551 (+0.008 [-0.000, +0.014]) + | 0.547 (+0.003 [-0.004, +0.011]) = | 0.553 (+0.009 [+0.002, +0.017]) + | 0.557 (+0.013 [+0.004, +0.020]) + | 0.547 (+0.003 [-0.005, +0.012]) + |
+| amlworld | 0.875 | 0.850 (-0.026 [-0.037, -0.016]) - | 0.849 (-0.026 [-0.036, -0.016]) - | 0.859 (-0.016 [-0.025, -0.007]) - | 0.827 (-0.048 [-0.061, -0.037]) - | 0.854 (-0.022 [-0.032, -0.013]) - | 0.861 (-0.014 [-0.024, -0.004]) - | 0.849 (-0.026 [-0.037, -0.016]) - |
+| baf | 0.255 | 0.257 (+0.003 [-0.007, +0.012]) = | 0.259 (+0.004 [-0.006, +0.013]) = | 0.259 (+0.004 [-0.006, +0.012]) = | 0.260 (+0.005 [-0.005, +0.014]) - | 0.255 (+0.000 [-0.009, +0.010]) = | 0.255 (+0.000 [-0.009, +0.010]) = | 0.255 (+0.000 [-0.009, +0.010]) = |
+| fraudecom | 0.073 | 0.090 (+0.017 [+0.003, +0.033]) + | 0.099 (+0.027 [+0.009, +0.042]) + | 0.066 (-0.009 [-0.019, +0.003]) = | 0.084 (+0.009 [-0.009, +0.025]) = | 0.096 (+0.021 [+0.004, +0.042]) + | 0.089 (+0.014 [+0.001, +0.035]) + | 0.098 (+0.023 [+0.005, +0.040]) + |
+| mean | 0.638 | 0.642 (+0.004 [+0.000, +0.009]) + | 0.642 (+0.004 [+0.000, +0.009]) + | 0.626 (-0.012 [-0.015, -0.008]) - | 0.617 (-0.021 [-0.024, -0.018]) - | 0.644 (+0.006 [+0.002, +0.011]) + | 0.646 (+0.008 [+0.004, +0.013]) + | 0.644 (+0.006 [+0.002, +0.011]) + |
+
+**The probes** (phase 3): 4,096 tabformer val rows, the same for every encoder, a logistic probe on the cached
+state (fit on one stratified half, scored on the other): 10k 0.9662, 32k 0.9661, 60k 0.9725 AUROC; paired 60k - 10k +0.0063 [-0.0003, +0.0126] (undecided), 60k - 32k +0.0064 [+0.0038, +0.0091] (better). The supervised head on the 10k state against the 60k state, validation AUROC: tabformer 0.9842 -> 0.9890, ieee 0.9208 -> 0.9237, capone 0.7845 -> 0.7811, fdh 0.6951 -> 0.6979. The gate for a re-spent pretraining asked for both halves; the head half holds, the representation half misses by the interval's lower bound (-0.0003): Session C does not run under the rule as written.
+
+**What the round settled.** The node run's reading holds and sharpens. Against v5-h200-h on the same rows, the 60k
+round's block for every source (v6-base-e) was better on tabformer, fdh and amlworld by an interval and worse on
+capone, ieee and fraudecom by an interval; the amlworld gain and the fraudecom loss the AUROC tables had not shown.
+The dilution control (v7-d: the same block with its rows shuffled within each source, the same marginals and no
+information) loses on capone -0.0052 AUROC and on ieee -0.0014, the losses the real block gave them (-0.0046,
+-0.0019), and under 30-day labels it costs tabformer too, so the losses were the 888 columns' weight on the trees and
+not the encoder's reading of those sources. Compression to 64 components (v7-c) does not escape it (capone -0.0039,
+ieee, fraudecom worse) and keeps little of tabformer's gain (+0.031 recall at 1% FPR against +0.080 for the raw
+block). Routing is the permanent fix: with the block on tabformer and fdh only (v7-a) tabformer gains +0.080 recall
+at 1% FPR under the published labels and +0.145 under 30-day labels (0.734 -> 0.879), fdh +0.010, capone and ieee
+are level with the shipped generation, and the mean recall at 1% FPR is better by an interval under both settings.
+Adding ieee to the routing (v7-b) costs ieee -0.010 recall by an interval: the encoder has nothing for it. Routing
+away from amlworld gives back the +0.024 recall the block had earned there; a routing that keeps amlworld is the
+next variant to run.
+
+**The head, and the blend without the VAE.** The supervised head on the cached block (v7-e, the `txsup` signal on the
+two routed sources) adds to v7-a by a paired interval on tabformer under both settings (recall at 1% FPR 0.939 ->
+0.946; 0.879 -> 0.891 under 30-day labels) and on fdh by AUROC under 30-day labels, and moves nothing else beyond
+ceiling-sized intervals. Fitting the blender without the VAE's two columns on top of it (v7-f) adds another step on
+tabformer (0.954; 0.906 under 30-day labels, past the 0.90 the plan hoped for) and on amlworld, and leaves the mean
+AUROC under 30-day labels better by an interval (+0.0018 [+0.0007, +0.0028]) against v5-h200-h with no decided loss
+on any source but a four-millionth of AUROC on paysim at the 0.9999 ceiling, where the recall at 1% FPR is 1.000 in
+both runs. At the operating point, once the booster carries the encoder's block and the head, the novelty side's two
+blend columns cost a little more than they add; the VAE stays as the receipt's explanation and as a signal the
+blender may weight at zero, not as the thing the blend leans on.
+
+**The rule and the ceiling.** The plan's rule for keeping a change (no source worse by a paired interval under either
+setting) was written without a minimum effect size. Three sources sit at 0.9995-0.9999 AUROC, where a difference of
+a few millionths is a decided interval of no consequence: read literally, paysim makes every variant with the block
+"worse" and no variant wins; with such cells set aside (an AUROC difference below 0.0001 with the recall call
+undecided), v7-a and v7-f have no source worse than v5-h200-h under either setting and v7-f has the largest gain;
+v7-e loses ieee by a small AUROC interval under the published labels. The merge follows the owner's choice between
+the two readings, and the rule should gain a minimum effect size before the next round.
+
+**Session B, on the same box.** The head's gain opened the plan's gate for the fine-tune, so it ran: the last two
+history layers and their norm unfrozen, one pass over 1.12M labelled windows of tabformer, fdh, ieee and capone,
+48 minutes on one gpu, the checkpoint picked by the mean validation recall at 1% FPR of the fine-tune's own head
+(step 14,000 of 17,552). Its own head improved on all four sources; the stack built on the exported state (v7-g,
+v7-e's recipe on `txfm-ft`) did not: against v7-e it lifts tabformer under 30-day labels by an interval (0.891 ->
+0.910 recall at 1% FPR) and costs ieee under both settings, fdh under the published labels and amlworld under
+late labels, with the mean recall unmoved. One pass over the labels pulled the top layers toward the source with
+most of the labelled windows and away from the others; the fine-tuned encoder is not kept.
+
+**The gate for a re-spent pretraining.** The 60k state probes 0.9725 against the 10k state's 0.9662 on the same
+2,048 held-out tabformer rows, +0.0063 with a paired interval of [-0.0003, +0.0126]; the 32k snapshot sits where
+the 10k gate run sits (-0.0001). The head on the 60k state beats the head on the 10k state on tabformer (0.9890
+against 0.9842). The rule asked for both halves; the representation half misses by the interval's lower bound, so
+Session C does not run and the pretraining budget stays unspent. The representation is not clearly the limit:
+the head on the frozen state and the routing of its block are where the round's gains came from.
+
+**What it cost.** One box, 2x H200 NVL at $9.02 an hour, from the owner's start at 20:19 UTC on 2026-11-06 to the
+destroy at 07:19 UTC on 2026-11-07: eleven hours and $100.84 of credit for seven post stages, four baseline
+evaluations, the caches of two encoders, the probes, the fine-tune and nineteen paired comparisons of two label
+settings each; the plan's estimate was nine to eleven hours and $80-100. About an hour and a half of it went to
+shared gpus, one evaluation lost to memory pressure and run again alone, and two scripting faults. Every result is
+under `runs/` on the Mac and on the storage VPS, verified by sha256 lists on both sides, and the box is gone.
