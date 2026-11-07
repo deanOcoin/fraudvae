@@ -366,7 +366,7 @@ function wireForm() {
 // what was loaded, in words; a mystery row keeps its label to itself until it is scored
 function exampleNote(ex, hidden) {
   const label = hidden ? "what it really was stays hidden until it is scored"
-    : `labelled <b>${ex.is_fraud ? "fraud" : "honest"}</b>${ex.fraud_scenario ? ` (fraud scenario ${ex.fraud_scenario})` : ""}`;
+    : `labelled <b>${ex.is_fraud ? "fraud" : "honest"}</b>${ex.fraud_scenario ? ` (fraud scenario ${esc(ex.fraud_scenario)})` : ""}`;
   const extra = [ex.wide ? `${Object.keys(ex.wide).length} of the bank's own columns ride along` : null,
                  loadedEntities ? `entities known: ${Object.keys(loadedEntities).join(", ")}` : null].filter(Boolean).join(" · ");
   return `<b>${esc(ex.txn_id)}</b> · ${esc(sourceName(ex.source))} · a real payment from the test data the model never saw: ${label}.`
@@ -739,7 +739,7 @@ function apiCall(req) {
   const body = {};
   for (const [k, val] of Object.entries(req || {})) if (val != null && !(typeof val === "object" && !Array.isArray(val) && !Object.keys(val).length)) body[k] = val;
   const json = JSON.stringify(body).replace(/'/g, "'\\''");
-  return `curl -s ${location.origin}/api/score -H 'Content-Type: application/json' -d '${json}'`;
+  return `curl -s '${location.origin}/api/score' -H 'Content-Type: application/json' -d '${json}'`;
 }
 
 async function copyText(text) {
@@ -860,7 +860,7 @@ function renderReceipt(r, label, { fresh = false, reveal = false } = {}) {
   const sq = r.sequence;
   if (sq) {
     lines.push(`<div class="rc-sep"></div>`);
-    lines.push(`<div class="rc-sub">CUSTOMER HISTORY  <span class="dim">${sq.n_history} of up to ${sq.window} previous payments read${sq.history_from ? ` (${sq.history_from})` : ""}</span></div>`);
+    lines.push(`<div class="rc-sub">CUSTOMER HISTORY  <span class="dim">${sq.n_history} of up to ${sq.window} previous payments read${sq.history_from ? ` (${esc(sq.history_from)})` : ""}</span></div>`);
     if (sq.prob != null) {
       const qf = sq.flag == null ? "" : (sq.flag ? "  FLAG" : "  ok");
       lines.push(`<div class="rc-line"><span class="k">fraud score, from the history alone</span><span class="${sq.flag ? "z hot" : ""}">${(100 * sq.prob).toFixed(sq.prob < 0.1 ? 2 : 1)}${qf}</span></div>`);
@@ -879,11 +879,11 @@ function renderReceipt(r, label, { fresh = false, reveal = false } = {}) {
       const t = tf[k];
       lines.push(`<div class="rc-line"><span class="k">${esc(k)} → ${esc(t.label)}</span><span class="${t.llr > 1 ? "z hot" : ""}">p ${(100 * t.prob).toFixed(1)}%, LR ${t.llr >= 0 ? "+" : ""}${t.llr.toFixed(2)}</span></div>`);
     }
-    if (!keys.length && r.text.sent && r.text.sent.length) lines.push(`<div class="rc-line dim"><span>sent ${r.text.sent.join(", ")}: no head reads those keys (url, description, memo, message, profile, bio)</span></div>`);
+    if (!keys.length && r.text.sent && r.text.sent.length) lines.push(`<div class="rc-line dim"><span>sent ${esc(r.text.sent.join(", "))}: no head reads those keys (url, description, memo, message, profile, bio)</span></div>`);
   }
   if (r.fusion) {
     lines.push(`<div class="rc-sep"></div>`);
-    lines.push(`<div class="rc-line"><span class="k">blend ⊕ ${Object.keys(r.fusion.terms).join(" ⊕ ")}</span><span class="${r.flag ? "z hot" : ""}">${(100 * r.fusion.prob).toFixed(r.fusion.prob < 0.1 ? 2 : 1)}% (blend alone ${(100 * r.blend.prob).toFixed(r.blend.prob < 0.1 ? 2 : 1)}%)${r.flag == null ? "" : (r.flag ? "  FLAG" : "  ok")}</span></div>`);
+    lines.push(`<div class="rc-line"><span class="k">blend ⊕ ${esc(Object.keys(r.fusion.terms).join(" ⊕ "))}</span><span class="${r.flag ? "z hot" : ""}">${(100 * r.fusion.prob).toFixed(r.fusion.prob < 0.1 ? 2 : 1)}% (blend alone ${(100 * r.blend.prob).toFixed(r.blend.prob < 0.1 ? 2 : 1)}%)${r.flag == null ? "" : (r.flag ? "  FLAG" : "  ok")}</span></div>`);
   }
 
   // ---- v5 behaviour: the session against the customer's enrolled profile ----
@@ -891,13 +891,13 @@ function renderReceipt(r, label, { fresh = false, reveal = false } = {}) {
     lines.push(`<div class="rc-sep"></div>`);
     const bf = r.behaviour.fields || {};
     const mods = Object.keys(bf);
-    lines.push(`<div class="rc-sub">HOW THE DEVICE WAS USED  <span class="dim">${mods.length ? `${mods.join(", ")} session` : "no session sent"}${r.behaviour.enrolled_sessions ? `, profile from ${r.behaviour.enrolled_sessions} earlier session${r.behaviour.enrolled_sessions === 1 ? "" : "s"}` : ""}</span></div>`);
+    lines.push(`<div class="rc-sub">HOW THE DEVICE WAS USED  <span class="dim">${mods.length ? `${esc(mods.join(", "))} session` : "no session sent"}${r.behaviour.enrolled_sessions ? `, profile from ${r.behaviour.enrolled_sessions} earlier session${r.behaviour.enrolled_sessions === 1 ? "" : "s"}` : ""}</span></div>`);
     for (const m of mods) {
       const v = bf[m];
       if (v.llr == null) lines.push(`<div class="rc-line dim"><span>${esc(v.label)}: ${v.windows} window${v.windows === 1 ? "" : "s"} read, no enrolment for this customer yet${r.behaviour.enrolled_now ? " — enrolled now" : ""}</span></div>`);
       else lines.push(`<div class="rc-line"><span class="k">${esc(v.label)}</span><span class="${v.llr < -1 ? "z hot" : ""}">cosine ${v.cosine.toFixed(2)}, LR ${v.llr >= 0 ? "+" : ""}${v.llr.toFixed(2)}${v.llr < 0 ? " (not like the account holder)" : ""}</span></div>`);
     }
-    if (!mods.length && r.behaviour.sent && r.behaviour.sent.length) lines.push(`<div class="rc-line dim"><span>sent ${r.behaviour.sent.join(", ")}: too few events for a window, or no verifier for that modality</span></div>`);
+    if (!mods.length && r.behaviour.sent && r.behaviour.sent.length) lines.push(`<div class="rc-line dim"><span>sent ${esc(r.behaviour.sent.join(", "))}: too few events for a window, or no verifier for that modality</span></div>`);
     if (!r.behaviour.sent || !r.behaviour.sent.length) lines.push(`<div class="rc-line dim"><span>add session events below and a customer id; the second session is compared with the first</span></div>`);
   }
 
@@ -906,16 +906,16 @@ function renderReceipt(r, label, { fresh = false, reveal = false } = {}) {
     const hb = r[name];
     if (!hb) continue;
     lines.push(`<div class="rc-sep"></div>`);
-    lines.push(`<div class="rc-sub">${name.toUpperCase()}  <span class="dim">${hb.label || name}${name === "local" ? "" : " head"}${hb.present && hb.fields.length ? `, ${hb.fields.length} field${hb.fields.length === 1 ? "" : "s"}` : ""}</span></div>`);
+    lines.push(`<div class="rc-sub">${name.toUpperCase()}  <span class="dim">${esc(hb.label || name)}${name === "local" ? "" : " head"}${hb.present && hb.fields.length ? `, ${hb.fields.length} field${hb.fields.length === 1 ? "" : "s"}` : ""}</span></div>`);
     if (hb.present && hb.prob != null) {
       const hf = hb.flag == null ? "" : (hb.flag ? "  FLAG" : "  ok");
       lines.push(`<div class="rc-line"><span class="k">fraud score, ${name === "local" ? "this bank's own model" : name + " model"} alone</span><span class="${hb.flag ? "z hot" : ""}">${(100 * hb.prob).toFixed(hb.prob < 0.1 ? 2 : 1)}${hf}</span></div>`);
       if (hb.legit_percentile != null) lines.push(`<div class="rc-line"><span class="k">above this share of normal</span><span>${pctText(hb.legit_percentile, "")}</span></div>`);
-      if (hb.fields.length) lines.push(`<div class="rc-line dim"><span>${hb.fields.join(", ")}</span></div>`);
+      if (hb.fields.length) lines.push(`<div class="rc-line dim"><span>${esc(hb.fields.join(", "))}</span></div>`);
     } else if (name === "local") {
       lines.push(`<div class="rc-line dim"><span>this bank has no specialist booster (too little labelled fraud, or the generic context): the shared booster carries it</span></div>`);
     } else if (name === "graph") {
-      lines.push(`<div class="rc-line dim"><span>${hb.available === false ? "this bank has no entity graph" : (hb.sent && hb.sent.length ? `none of the entities sent (${hb.sent.join(", ")}) is known to the graph` : "no entity ids sent (load an example row, or pass entities in the API)")}: signal absent, the blend goes without it</span></div>`);
+      lines.push(`<div class="rc-line dim"><span>${hb.available === false ? "this bank has no entity graph" : (hb.sent && hb.sent.length ? `none of the entities sent (${esc(hb.sent.join(", "))}) is known to the graph` : "no entity ids sent (load an example row, or pass entities in the API)")}: signal absent, the blend goes without it</span></div>`);
     } else {
       lines.push(`<div class="rc-line dim"><span>no ${name} fields on this transaction: signal absent, the blend goes without it</span></div>`);
     }
