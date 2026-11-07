@@ -1,0 +1,42 @@
+# v7g: v7e (the best of a-c plus the supervised head) on the encoder fine-tuned on the fraud labels of tabformer, fdh,
+# ieee and capone (`fraudvae txfm-finetune txfm-base-last ... --name txfm-ft`): Session B of the v7 plan, run on the
+# Session A box behind its gate. Built from v5-h200-e on `full`; the caches of txfm-ft first.
+#   fraudvae post v7-g --config v7g --prepared full --device cuda:0    (from a copy of v5-h200-e)
+name: v7g
+device: cuda
+model:
+  latent_dim: 24
+  hidden: [768, 768, 384]
+  cat_embed_dim: 10
+  source_embed_dim: 8
+  dropout: 0.05
+  history:
+    enabled: true
+    window: 32
+    d_model: 128
+    layers: 2
+    heads: 4
+train:
+  epochs: 30
+  batch_size: 8192
+  lr: 0.0015
+  beta_warmup_epochs: 5
+  patience: 8
+  select_by: elbo
+  score_samples: 16
+  amp: false
+boost:
+  max_legit_per_source: 200000
+  val_legit_per_source: 100000
+  legit_weight_cap: 3.0
+  learning_rate: 0.03
+  max_rounds: 3000
+  early_stopping: 200
+  num_threads: 32       # two post stages share the box's cores
+  txfm_features: true
+  txfm_head: true       # the supervised head on the block, the txsup blend signal
+txfm:
+  run: txfm-ft          # the 60k encoder fine-tuned on the labels of tabformer, fdh, ieee, capone (fraudvae txfm-finetune)
+  window: 128
+  sources: [tabformer, fdh]   # the block for these sources only, NaN for the rest
+notes: Session A / B variant v7g, v7e's recipe on the fine-tuned encoder txfm-ft; compared against v5-h200-h, v6-base-e and v7-e
