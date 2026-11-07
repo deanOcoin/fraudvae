@@ -626,3 +626,31 @@ def test_finetune_exports_an_encoder_with_only_its_top_layers_changed(pretrained
     data = PreparedSet(prepared_set, splits=("val",))
     f = sc.features_split(data["val"], np.arange(50), data.seq, "val")
     assert f.shape == (50, sc.dim) and np.isfinite(f[:, : sc.d_model]).all()
+    # the post stage's loader reads the fine-tuned checkpoint like any other and says what it is
+    from fraudvae.train import _load_txfm
+
+    lines = []
+    post_dir = tmp_path / "post"
+    post_dir.mkdir()
+    loaded = _load_txfm(post_dir, out, "cpu", lines.append)
+    assert loaded is not None and (post_dir / "txfm.pt").exists()
+    assert any("fine-tuned on fdh, capone" in line and "val next-event nll" in line for line in lines), lines
+
+
+def test_post_loader_tolerates_a_checkpoint_without_a_validation_nll(pretrained_txfm, tmp_path):
+    """a checkpoint whose record holds no next-event nll (or None, as the first fine-tuned export did) must not
+    crash the post stage's log line: the Session A box lost a post stage to a None under a .4f format"""
+    from fraudvae.model.txfm import load_txfm, save_checkpoint
+    from fraudvae.train import _load_txfm
+
+    model, tok, ck = load_txfm(pretrained_txfm / "txfm.pt", "cpu")
+    for extra in ({"best_val_next_nll": None, "step": 7}, {"step": 8}, {"val_next_nll": 1.25, "step": 9}):
+        src = tmp_path / f"enc{extra['step']}"
+        src.mkdir()
+        save_checkpoint(src / "txfm.pt", model, tok, ck.get("prepared_meta", {}), ck.get("train_config", {}), extra=extra)
+        post_dir = tmp_path / f"post{extra['step']}"
+        post_dir.mkdir()
+        lines = []
+        assert _load_txfm(post_dir, src, "cpu", lines.append) is not None
+        line = next(ln for ln in lines if "val next-event nll" in ln)
+        assert (f"at step {extra['step']}" in line) and (("1.2500" in line) if "val_next_nll" in extra else ("nan" in line))

@@ -252,10 +252,13 @@ def finetune(run, prepared: str, sources: list[str], name: str | None = None, ru
             break
     if best_state is not None:
         model.load_state_dict(best_state)
+    base_extra = ck.get("extra", {})
+    base_nll = base_extra.get("best_val_next_nll", base_extra.get("val_next_nll"))
     extra = {"finetuned": True, "finetuned_sources": list(sources), "step": best_step, "steps": n_steps, "unfrozen_history_layers": len(top) - 1,
              "val": best_res, "mean_val_recall_at_1pct_fpr": best if best > float("-inf") else None, "base_checkpoint": str(src_path),
-             "base_checkpoint_sha256": base_sha, "base_step": ck.get("extra", {}).get("step"),
-             "best_val_next_nll": ck.get("extra", {}).get("best_val_next_nll")}
+             "base_checkpoint_sha256": base_sha, "base_step": base_extra.get("step")}
+    if base_nll is not None:   # the base's validation next-event nll, when its record has one (a snapshot's or an export's)
+        extra["base_val_next_nll"] = float(base_nll)
     save_checkpoint(run_dir / "txfm.pt", model, tok, ck.get("prepared_meta", data.meta), ck.get("train_config", {}), extra=extra)
     summary = {"created": time.strftime("%Y-%m-%dT%H:%M:%S"), "prepared": prepared, "base": str(src_path), "base_sha256": base_sha,
                "sources": best_res, "mean_val_recall_at_1pct_fpr": extra["mean_val_recall_at_1pct_fpr"], "best_step": best_step, "steps": n_steps,

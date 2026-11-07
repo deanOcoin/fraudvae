@@ -457,8 +457,13 @@ def _load_txfm(run_dir: Path, run, device, log, prepared=None, gate_first=False,
     if scorer.permute:
         log("  transaction encoder: the block is shuffled within each source, the dilution control (txfm.permute_block)")
     extra = scorer.info.get("extra", {})
+    # a snapshot carries val_next_nll, a best-val export best_val_next_nll, a fine-tuned checkpoint whichever its
+    # base had or neither: the line reads what is there and says nan for the rest
+    nll = extra.get("best_val_next_nll")
+    nll = extra.get("val_next_nll") if nll is None else nll
     log(f"transaction encoder: {dest} ({scorer.d_model} d, window {scorer.window}, {scorer.dim} feature columns, "
-        f"val next-event nll {extra.get('best_val_next_nll', float('nan')):.4f} at step {extra.get('step', '?')})")
+        f"val next-event nll {(float(nll) if nll is not None else float('nan')):.4f} at step {extra.get('step', '?')}"
+        + (f", fine-tuned on {', '.join(extra.get('finetuned_sources', []))}" if extra.get("finetuned") else "") + ")")
     if prepared:
         from .txfm_cache import ensure_cache
 
