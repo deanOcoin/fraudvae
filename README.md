@@ -4,7 +4,7 @@
 [![pretrained bundles](https://github.com/deanOcoin/fraudvae/actions/workflows/pretrained.yml/badge.svg)](https://github.com/deanOcoin/fraudvae/actions/workflows/pretrained.yml)
 [![uptime](https://github.com/deanOcoin/fraudvae/actions/workflows/uptime.yml/badge.svg)](https://github.com/deanOcoin/fraudvae/actions/workflows/uptime.yml)
 [![live site](https://img.shields.io/badge/live-finfraud.dev-2563eb)](https://www.finfraud.dev)
-[![pretrained models](https://img.shields.io/badge/pretrained-6%20generations-10b981)](https://github.com/deanOcoin/fraudvae/releases)
+[![pretrained models](https://img.shields.io/badge/pretrained-8%20generations-10b981)](https://github.com/deanOcoin/fraudvae/releases)
 [![python](https://img.shields.io/badge/python-3.10%2B-3776ab)](pyproject.toml)
 [![pytorch](https://img.shields.io/badge/pytorch-2.4%2B-ee4c2c)](https://pytorch.org)
 [![lightgbm](https://img.shields.io/badge/lightgbm-4%2B-5e8b2f)](https://lightgbm.readthedocs.io)
@@ -13,7 +13,8 @@
 Fraud screening for payment transactions: a variational autoencoder that learnt what
 normal payments look like, a boosted model that learnt what known fraud looks like,
 and a per-bank blend of the two, trained on a merged corpus of eleven public
-transaction datasets (~43M rows), with a web UI to score new transactions, browse
+transaction datasets (~43M rows); since v6 the boosted model also reads a
+transformer pretrained on unlabelled payment histories. With a web UI to score new transactions, browse
 the data, train locally, or push a training run to a rented GPU over ssh. The
 Python package and its command are called `fraudvae`.
 
@@ -24,7 +25,7 @@ compare them side by side, read how they were built
 ([story.finfraud.dev](https://story.finfraud.dev), also as a [nine-page PDF](docs/FinFraud-development-process.pdf)) and how they work
 ([define.finfraud.dev](https://define.finfraud.dev)). **Every pretrained generation is on the
 [Releases](https://github.com/deanOcoin/fraudvae/releases) page**, and
-`fraudvae models pull v5-h200-h` drops the shipped one into `runs/` so the app
+`fraudvae models pull v7-f` drops the shipped one into `runs/` so the app
 below scores with it in minutes; training it yourself is optional and
 documented, not required.
 
@@ -77,7 +78,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
 # score with the pretrained generations (no data needed; the example rows ship with the repo)
-fraudvae models pull v5-h200-h     # the shipped generation, ~360 MB; `--all` for every one on the timeline
+fraudvae models pull v7-f          # the shipped generation, ~845 MB (513 MB of it the pretrained encoder); `--all` for every one on the timeline
 fraudvae serve                     # http://127.0.0.1:8765
 
 # or train your own
@@ -188,7 +189,7 @@ same read-out into a fourth supervised signal. The server keeps a per-customer
 store of what it has scored, so the API needs only a `customer_id` (or an
 explicit `history` list) to score with context.
 
-**Transaction encoder (v6, in progress).** A self-supervised
+**Transaction encoder (v6, v7).** A self-supervised
 transaction-sequence model in the shape of the published payments foundation
 models: each row becomes (field, value) tokens with learned quantile buckets, an
 event encoder turns a row into a vector, a causal history encoder reads the
@@ -201,8 +202,18 @@ The booster can read its block (state, per-field surprise, mean surprise) as
 features; the post stage computes it for every row of a prepared set in one pass
 over whole sequences (`fraudvae txfm-cache`) and the receipt shows the most
 surprising fields for this customer.
+Two generations carry it. `v6-base-e` hands the block of a 128M-parameter
+encoder (60,000 steps on sixteen sources, no labels) to the booster for every
+bank: tabformer gains a great deal, three banks lose a little. `v7-f` routes the
+block to the two banks where it earns its place (`txfm.sources`), adds a
+supervised head on it as one more blend signal (`txsup`), and fits the blend
+without the VAE's columns (`boost.blend_without_vae`); it is what ships. The
+encoder reads a payment against the customer's earlier ones, so those have to
+come with it: the example rows carry their customer's last eight, and a payment
+whose own fields count earlier payments but which arrives alone is scored by
+`v7-f` without the block rather than as a first payment.
 `docs/ARCHITECTURE.md` (v6) has the design and `docs/TRAINING_NOTES.md` the
-experiment plan; no v6 generation ships yet.
+rounds, the controls and what serving it took.
 
 **Supervised (booster).** A LightGBM classifier on the same fields (NaN where
 unobserved) plus the source token and the source's wide block, trained on the
@@ -230,7 +241,9 @@ because no transaction row ever carried text or a session.
 **Blend.** One logistic regression on bounded signals - booster logit,
 VAE score z, KL z and (v5) the sequence, device and graph logits, each with a
 presence bit - with a source one-hot and the signals × one-hot, fit on labelled
-validation rows. The interaction terms give every bank its
+validation rows. From v7 the two VAE columns are left out (the VAE explains a
+payment on the receipt and does not vote) and the encoder's supervised head
+joins the signals. The interaction terms give every bank its
 own booster-vs-novelty weighting. Calibration then scores the whole
 validation split once and records, per bank and for the generic context,
 operating thresholds at 0.1/0.5/1/2/5% false positive rate for every
@@ -252,41 +265,53 @@ the friendly one.
 ## Results
 
 Held-out test split: the newest 20% of every source, 8.57M rows, 27k fraud,
-thresholds frozen on validation. `v5-h200-h` is the full 30M-row v5 corpus
-trained on a rented H200 through the relay (30 epochs of the history-conditioned
-VAE in 2.9 h, then the booster, the specialists, the sequence / device / graph
-heads, the text and behaviour modules, calibration and evaluation as a 30-minute
-`post` stage). Two blend columns: as trained, for a deployment whose fraud labels
+thresholds frozen on validation. `v7-f` is the full 30M-row v5 corpus trained on
+a rented H200 through the relay (30 epochs of the history-conditioned VAE in
+2.9 h, run `v5-h200-e`) with the booster side refit on a rented 2× H200 box in
+91 minutes: the booster reading the pretrained encoder's block for tabformer and
+fdh, the specialists, the sequence / device / graph heads and the encoder's
+supervised head, the blend without the VAE's columns, calibration and evaluation. Two blend columns: as trained, for a deployment whose fraud labels
 arrive within a week, and the same model scored as one whose labels take a month
 (the one-week fraud-history block blanked - `label_delay_days` on the API, the
-"labels arrive within" control in the UI). The last two columns are
-`gpu_full-4090-v4`, the previous release on the same nine sources. `runs/` is not
+"labels arrive within" control in the UI). The last two columns are `v5-h200-h`,
+the generation that shipped before it, on the same rows. `runs/` is not
 in git: `fraudvae models pull --all` fetches every generation on this timeline from
 the Releases page (`fraudvae/pretrained.json` is the manifest it verifies against),
 or train your own with the commands above.
 
-| source | VAE | booster | seq | local | device | graph | **blend** | r@1% FPR | 30-day labels: blend / r@1% | v4 blend | v4 r@1% |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| fdh | 0.624 | 0.903 | 0.656 | 0.905 | – | 0.501 | **0.905** | 78% | 0.679 / 34% | 0.672 | 34% |
-| capone | 0.613 | 0.837 | 0.815 | 0.839 | – | 0.767 | **0.841** | 21% | 0.836 / 19% | 0.765 | 8% |
-| tabformer | 0.940 | 0.991 | 0.985 | 0.995 | – | 0.815 | **0.994** | 86% | 0.986 / 73% | 0.981 | 73% |
-| ulb | 0.962 | 0.986 | 0.987 | 0.985 | – | – | **0.984** | 89% | 0.984 / 89% | 0.982 | 84% |
-| paysim | 0.797 | 1.000 | 0.991 | 1.000 | – | 0.554 | **1.000** | 100% | 1.000 / 100% | 1.000 | 100% |
-| sparkov | 0.863 | 1.000 | 0.996 | 1.000 | – | 0.953 | **1.000** | 100% | 1.000 / 100% | 0.999 | 99% |
-| banksim | 0.990 | 0.999 | 0.999 | 1.000 | – | 0.998 | **1.000** | 99% | 0.999 / 99% | 0.999 | 97% |
-| ieee | 0.795 | 0.958 | 0.904 | 0.955 | 0.733 | 0.825 | **0.958** | 63% | 0.940 / 56% | 0.858 | 35% |
-| amlworld | 0.912 | 0.990 | 0.984 | 0.990 | – | 0.846 | **0.990** | 85% | 0.990 / 85% | 0.990 | 84% |
-| baf | 0.658 | 0.893 | 0.812 | 0.891 | 0.768 | – | **0.893** | 25% | 0.893 / 25% | – | – |
-| fraudecom | 0.641 | 0.645 | 0.644 | 0.639 | 0.639 | 0.516 | **0.641** | 10% | 0.641 / 9% | – | – |
-| **mean (11)** | 0.799 | 0.927 | 0.889 | 0.927 | 0.714 | 0.753 | **0.928** | | 0.904 | | |
-| **mean (v4's 9)** | 0.833 | 0.963 | | | | | **0.963** | | 0.935 | 0.916 | |
-| generic (bank unknown) | 0.625 | 0.969 | 0.930 | – | 0.735 | – | **0.969** | 70% | 0.952 / 62% | 0.956 | 66% |
+| source | VAE | booster | seq | local | history head | device | graph | **blend** | r@1% FPR | 30-day labels: blend / r@1% | h blend | h r@1% |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| fdh | 0.624 | 0.903 | 0.656 | 0.907 | 0.693 | – | 0.501 | **0.907** | 79% | 0.686 / 35% | 0.905 | 78% |
+| capone | 0.613 | 0.837 | 0.815 | 0.839 | – | – | 0.767 | **0.841** | 21% | 0.838 / 20% | 0.841 | 21% |
+| tabformer | 0.940 | 0.996 | 0.985 | 0.998 | 0.974 | – | 0.815 | **0.998** | 95% | 0.996 / 91% | 0.994 | 86% |
+| ulb | 0.962 | 0.986 | 0.987 | 0.985 | – | – | – | **0.985** | 89% | 0.985 / 89% | 0.984 | 89% |
+| paysim | 0.798 | 1.000 | 0.991 | 1.000 | – | – | 0.554 | **1.000** | 100% | 1.000 / 100% | 1.000 | 100% |
+| sparkov | 0.862 | 1.000 | 0.996 | 1.000 | – | – | 0.953 | **1.000** | 100% | 1.000 / 100% | 1.000 | 100% |
+| banksim | 0.990 | 1.000 | 0.999 | 1.000 | – | – | 0.998 | **1.000** | 99% | 0.999 / 99% | 1.000 | 99% |
+| ieee | 0.795 | 0.957 | 0.904 | 0.955 | – | 0.733 | 0.825 | **0.958** | 63% | 0.940 / 56% | 0.958 | 63% |
+| amlworld | 0.912 | 0.990 | 0.984 | 0.990 | – | – | 0.846 | **0.990** | 86% | 0.990 / 86% | 0.990 | 85% |
+| baf | 0.658 | 0.892 | 0.812 | 0.891 | – | 0.768 | – | **0.892** | 26% | 0.892 / 26% | 0.893 | 25% |
+| fraudecom | 0.643 | 0.643 | 0.644 | 0.639 | – | 0.639 | 0.516 | **0.641** | 10% | 0.641 / 9% | 0.641 | 10% |
+| **mean (11)** | 0.800 | 0.928 | 0.889 | 0.928 | 0.833 | 0.714 | 0.753 | **0.928** | | 0.906 | 0.928 | |
+| **mean (v4's 9)** | 0.833 | 0.963 | | | | | | **0.964** | | 0.937 | 0.963 | |
+| generic (bank unknown) | 0.625 | 0.970 | 0.930 | – | – | 0.737 | – | **0.971** | 72% | 0.955 / 64% | 0.969 | 70% |
 
 AUROC unless marked; r@1% FPR is the share of fraud caught at a 1% false-positive
 budget; `seq` is the sequence head on the history encoder, `local` the bank's own
-specialist booster, `device` and `graph` the device-block and entity-graph heads
-(only where a source carries those columns). The honest reading: the new columns
-are the step change - the entity-graph block with its delayed fraud labels lifted
+specialist booster, `history head` the supervised head on the pretrained
+encoder's block (the two banks it is routed to), `device` and `graph` the
+device-block and entity-graph heads (only where a source carries those columns).
+What v7 changed against `v5-h200-h`, each difference from a paired bootstrap over
+the same test rows (`fraudvae compare`): the mean share of fraud caught at 1% FPR
+is up 0.011 [0.009, 0.013], and 0.018 [0.016, 0.021] when labels take a month;
+tabformer goes from 86% to 95% (73% to 91% with month-old labels, because the
+encoder reads payments, not labels), fdh from 78% to 79%, amlworld from 85% to
+86%, and no bank is worse beyond a few millionths of AUROC on paysim at its
+ceiling. The mean over eleven hardly moves (0.9277 to 0.9283): eight of them were
+already where they are. `v6-base-e`, the block for every bank, is the trade that
+came first: tabformer 94%, and capone, ieee and fraudecom a little worse by an
+interval. Since v4 (0.916 over its nine sources) the honest reading has been that
+the new columns are the step change - the entity-graph block with its delayed fraud labels lifted
 Capital One from 0.77 to 0.84 (8% → 21% of its fraud at 1% FPR); the same labels
 at a one-week delay with 7 / 30-day windows (the Fraud Detection Handbook's
 assumption about label latency, booster-only, `docs/SCHEMA.md`) took fdh from
@@ -311,10 +336,10 @@ summary as booster input, a longer VAE).
 
 ## The generations
 
-Six trained generations are kept, so the model's progress is something you can score
+Eight trained generations are kept, so the model's progress is something you can score
 a transaction on rather than read about: the score tab's **Model generation** picker
 takes any of them and **Compare every version** scores one transaction on all
-six. The UI's development-process tab (and `docs/TRAINING_NOTES.md`) tells what changed at each step
+eight. The UI's development-process tab (and `docs/TRAINING_NOTES.md`) tells what changed at each step
 and what did not work; the model tab's timeline shows each one's hardware, training
 time and numbers.
 
@@ -325,7 +350,9 @@ time and numbers.
 | `gpu_full-4090-v4` | v4 | 1× RTX 4090, 9 sources, every row | 18 min + 8 min post | 0.916 |
 | `v5-h200-e` | v5 | 1× H200 NVL, 11 sources, every row | 2.9 h + 40 min post | 0.936 |
 | `v5-h200-f` | v5 | e's VAE, booster side refit (one-week labels) | + 30 min post | 0.961 |
-| `v5-h200-h` | v5 | e's VAE, booster side refit (recent-fraud windows, latency dropout) | + 41 min post | **0.963** |
+| `v5-h200-h` | v5 | e's VAE, booster side refit (recent-fraud windows, latency dropout) | + 41 min post | 0.963 |
+| `v6-base-e` | v5 | e's VAE; a 128M-parameter transaction encoder pretrained on 8× B200 (16 sources, no labels), its block for every bank | 4.5 h pretraining + 72 min post | 0.963 |
+| `v7-f` | v5 | e's VAE and v6's encoder; the block for tabformer and fdh, a supervised head on it, the blend without the VAE (2× H200 NVL) | + 91 min post | **0.964** |
 
 ## Hosting it
 
