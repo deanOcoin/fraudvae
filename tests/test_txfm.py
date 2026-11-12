@@ -833,3 +833,68 @@ def test_server_runs_the_encoder_outside_the_generations_lock(encoder_run, monke
     assert events == [3] and np.isfinite(out["sequence_surprise"].to_numpy()[[0, 2, 4]]).all()
     assert np.isnan(out["sequence_surprise"].to_numpy()[[1, 3]]).all() and out["p_fraud"].between(0, 1).all()
     assert locked and not any(locked)
+
+
+def test_public_site_meters_the_encoder(encoder_run, monkeypatch):
+    """public mode: a file may send the encoder so many rows, and a history that the encoder
+    has to read is charged by its length past a few payments and runs one at a time; a bank
+    the block is not routed to, and a short history, pay nothing extra"""
+    import io
+
+    import pandas as pd
+    from fastapi.testclient import TestClient
+
+    from fraudvae.server import public
+    from fraudvae.server.app import app
+
+    def upload(c, sources):
+        buf = io.BytesIO()
+        pd.DataFrame({"amount": [5.0 + i for i in range(len(sources))], "source": sources}).to_csv(buf, index=False)
+        return c.post("/api/score/batch?run=test-run-txfm", files={"file": ("x.csv", buf.getvalue(), "text/csv")})
+
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        monkeypatch.setattr(public, "PUBLIC", True)
+        monkeypatch.setattr(public, "SCORE_PER_MINUTE", 60)
+        monkeypatch.setattr(public, "SCORE_BURST", 6)
+        monkeypatch.setattr(public, "ENCODER_BATCH_ROWS", 3)
+        monkeypatch.setattr(public, "ENCODER_HISTORY_FREE", 2)
+        monkeypatch.setattr(public, "ENCODER_HISTORY_PER_TOKEN", 2)
+        public._buckets.clear()
+        assert c.get("/api/meta").json()["public"]["encoder_batch_rows"] == 3
+        # a file: five fdh rows are five events for the encoder, two more than allowed; the
+        # same five rows of a bank the block is not for are none
+        r = upload(c, ["fdh"] * 5)
+        assert r.status_code == 413 and "test-run-txfm reads 5 of these rows" in r.json()["detail"]
+        assert upload(c, ["capone"] * 5).status_code == 200
+        assert upload(c, ["fdh", "capone", "fdh", "ieee", "fdh"]).status_code == 200
+        # one payment: a history of two is a score like any other, and seven in a row fit a burst of six as six
+        body = {"run": "test-run-txfm", "source": "fdh", "features": {"amount": 12.5}}
+        public._buckets.clear()
+        codes = [c.post("/api/score", json={**body, "history": _history(2)}).status_code for _ in range(7)]
+        assert codes == [200] * 6 + [429]
+        # seven past payments (the fixture's window) are 1 + 7 // 2 requests' worth: one fits, the next does not
+        public._buckets.clear()
+        long = {**body, "history": _history(7)}
+        first = c.post("/api/score", json=long)
+        assert first.status_code == 200 and first.json()["sequence_model"]["n_history"] == 7
+        assert c.post("/api/score", json=long).status_code == 429
+        # the same history for a bank the encoder does not read is not charged
+        public._buckets.clear()
+        assert [c.post("/api/score", json={**long, "source": "capone"}).status_code for _ in range(6)] == [200] * 6
+        # one long history at a time: while the lane is taken the next is told to come back, a short one is not
+        public._buckets.clear()
+        assert public.encoder_lane.acquire(blocking=False)
+        try:
+            busy = c.post("/api/score", json=long)
+            assert busy.status_code == 503 and busy.headers["retry-after"] == "5"
+            assert c.post("/api/score", json={**body, "history": _history(2)}).status_code == 200
+            # a comparison that brings the encoder's generation in is held to the same rule
+            public._buckets.clear()
+            assert c.post("/api/score", json={**long, "run": "test-run", "compare": ["test-run-txfm"]}).status_code == 503
+        finally:
+            public.encoder_lane.release()
+        public._buckets.clear()
+        r = c.post("/api/score", json={**long, "run": "test-run", "compare": ["test-run-txfm"]})
+        assert r.status_code == 200 and [x["run"] for x in r.json()["compare"]] == ["test-run", "test-run-txfm"]
+        public._buckets.clear()
+

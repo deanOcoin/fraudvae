@@ -222,27 +222,49 @@ def post_score(req: ScoreRequest, request: Request):
 
     On the public site a visitor's history is not stored, so `customer_id` and `remember`
     are ignored, and the limits are 60 requests a minute (burst 20) and 6 generations in a
-    comparison. 429 or 503 with `Retry-After` past that; 422 when a field is over its size.
+    comparison. A generation with the transaction encoder (v6 on) reads the `history` with
+    it for the banks its block is routed to: up to 8 past payments cost nothing extra, a
+    longer one counts as one more request per 16 payments and runs one at a time for the
+    whole site. 429 or 503 with `Retry-After` past that; 422 when a field is over its size.
     """
     public.limit("score", request)
     m = _model_named(req.run)
     if public.PUBLIC and not _score_slots.acquire(timeout=3.0):
         raise HTTPException(503, "the scorer is busy, try again in a moment", headers={"Retry-After": "2"})
     try:
-        return _score(req, m)
+        return _score(req, m, request)
     finally:
         if public.PUBLIC:
             _score_slots.release()
 
 
-def _score(req: ScoreRequest, m: inference.ActiveModel):
+def _score_on(m: inference.ActiveModel, req: ScoreRequest, kw: dict, request: Request) -> dict:
+    """one generation's receipt. On the public site a history that the generation's transaction
+    encoder has to read is the one part of a score that takes seconds: past a few payments it
+    is charged to the visitor's budget by its length, and one runs at a time for everyone"""
+    n = m.encoder_events(req.source, req.history) if public.PUBLIC else 0
+    if n <= public.ENCODER_HISTORY_FREE:
+        return m.score(req.features, req.source, req.fpr_target, **kw)
+    extra = n // max(1, public.ENCODER_HISTORY_PER_TOKEN)
+    if extra:
+        public.limit("score", request, cost=extra)
+    if not public.encoder_lane.acquire(blocking=False):
+        raise HTTPException(503, "the sequence encoder is reading another long history, try again in a few seconds",
+                            headers={"Retry-After": "5"})
+    try:
+        return m.score(req.features, req.source, req.fpr_target, **kw)
+    finally:
+        public.encoder_lane.release()
+
+
+def _score(req: ScoreRequest, m: inference.ActiveModel, request: Request):
     # a public site keeps no visitor state: histories must come with the request
     remember, customer_id = (False, None) if public.PUBLIC else (req.remember, req.customer_id)
     kw = dict(wide=req.wide, history=req.history, customer_id=customer_id, ts=req.ts, remember=remember,
               device=req.device, entities=req.entities, text=req.text, session=req.session, label_delay_days=req.label_delay_days,
               seed=req.seed)
     try:
-        out = m.score(req.features, req.source, req.fpr_target, **kw)
+        out = _score_on(m, req, kw, request)
         if req.compare:
             rows = [_summary(out)]
             seen = set()
@@ -252,7 +274,7 @@ def _score(req: ScoreRequest, m: inference.ActiveModel):
                 seen.add(name)
                 other = _model_named(name)
                 # the same transaction, read-only: no history remembered under another generation's name
-                r = other.score(req.features, req.source, req.fpr_target, **{**kw, "remember": False, "customer_id": None})
+                r = _score_on(other, req, {**kw, "remember": False, "customer_id": None}, request)
                 rows.append(_summary(r))
             out["compare"] = rows
         return _clean(out)
@@ -305,7 +327,8 @@ def post_score_batch(request: Request, file: UploadFile = File(..., description=
     `novelty_raw` and `flag` columns appended; the `X-Summary` response header carries the counts (rows, flagged, fraud rate)
     as json. A text cell that a spreadsheet would read as a formula comes back with a leading apostrophe. Columns are matched by name the way `/api/score` matches `features`. On the
     public site a file may have at most 5,000 rows and 3,000 columns, 4 uploads a minute,
-    two running at once server-wide."""
+    two running at once server-wide; a generation with the transaction encoder (v6 on) reads
+    at most 1,000 of a file's rows with it (the rows of the banks its block is routed to)."""
     # a plain (not async) handler on purpose: it runs in the worker pool, so the seconds a batch
     # takes to score never stall the event loop that every other request goes through
     public.limit("batch", request)
@@ -339,6 +362,12 @@ def post_score_batch(request: Request, file: UploadFile = File(..., description=
         raise HTTPException(413, "too many columns")
     if source and "source" not in df:
         df["source"] = source
+    if public.PUBLIC:
+        # the transaction encoder is a thirtieth of a second a row on a small cpu, not a millisecond
+        n_enc = m.encoder_rows(df)
+        if n_enc > public.ENCODER_BATCH_ROWS:
+            raise HTTPException(413, f"{m.name} reads {n_enc:,} of these rows with its transaction encoder, and the public site allows "
+                                     f"{public.ENCODER_BATCH_ROWS:,} a file: send fewer rows, or pick a generation without the encoder")
     if public.PUBLIC and not public.batch_slots.acquire(blocking=False):
         raise HTTPException(429, "the batch scorer is busy, try again in a minute", headers={"Retry-After": "60"})
     try:

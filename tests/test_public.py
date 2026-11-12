@@ -27,6 +27,20 @@ def test_bucket_refill(monkeypatch):
     assert [public.take("score", "a", 60, 3) for _ in range(3)] == [None, None, None]   # refilled, capped at the burst
 
 
+def test_bucket_takes_a_cost(monkeypatch):
+    """a request can be worth several: the bucket gives them all or none, and says how long
+    until it can; a charge larger than the bucket waits for a full one, not for ever"""
+    now = [1000.0]
+    monkeypatch.setattr(public.time, "time", lambda: now[0])
+    monkeypatch.setattr(public, "_buckets", {})
+    assert public.take("score", "a", 60, 6, cost=4) is None           # 6 -> 2
+    assert abs(public.take("score", "a", 60, 6, cost=4) - 2.0) < 1e-9   # two more tokens, a second each
+    assert public.take("score", "a", 60, 6) is None                   # a plain request still fits
+    now[0] += 3600
+    assert public.take("score", "a", 60, 6, cost=50) is None
+    assert abs(public.take("score", "a", 60, 6, cost=50) - 6.0) < 1e-9
+
+
 def test_bucket_table_is_bounded(monkeypatch):
     now = [1000.0]
     monkeypatch.setattr(public.time, "time", lambda: now[0])

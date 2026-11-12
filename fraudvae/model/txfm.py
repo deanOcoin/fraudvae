@@ -581,12 +581,16 @@ class TxfmScorer:
         out[hist <= 0] = np.nan
         return out
 
+    def routed(self, src) -> np.ndarray:
+        """[B] bool: the rows of a source the block is for (every row without a routing)"""
+        src = np.asarray(src.cpu().numpy() if hasattr(src, "cpu") else src).astype(np.int64)
+        return np.ones(src.shape, dtype=bool) if self.sources is None else np.isin(src, list(self.sources))
+
     def reads(self, src, hist=None) -> np.ndarray:
         """[B] bool: the rows whose block the encoder has to compute. A row of a source the block
         is not routed to carries NaN whatever the encoder would say, and so does a customer's
         first event under gate_first (hist None: rows that come without a past, a csv's)"""
-        src = np.asarray(src.cpu().numpy() if hasattr(src, "cpu") else src).astype(np.int64)
-        keep = np.ones(src.shape, dtype=bool) if self.sources is None else np.isin(src, list(self.sources))
+        keep = self.routed(src)
         if self.gate_first:
             if hist is None or self.window < 2:
                 keep[:] = False

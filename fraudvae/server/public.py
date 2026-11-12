@@ -9,7 +9,11 @@ on someone's laptop. Set FRAUDVAE_PUBLIC=1 and the server
   * hides the host name and file paths from /api/meta and the box details from run metadata;
   * rate-limits scoring per client address (a token bucket in memory, behind nginx's own
     limits) and caps a batch upload at FRAUDVAE_BATCH_ROWS rows with a small global
-    concurrency, so one visitor cannot keep the CPU for everyone.
+    concurrency, so one visitor cannot keep the CPU for everyone;
+  * meters the v6 transaction encoder, the one part of a score that costs seconds on a CPU: a
+    file may send it FRAUDVAE_ENCODER_BATCH_ROWS rows, and a history of more than
+    FRAUDVAE_ENCODER_HISTORY_FREE past payments that it has to read runs one at a time for
+    the whole site and is charged to the visitor's budget by its length.
 
 Everything else - the examples, the receipts, the model timeline, the batch upload - works
 as on a laptop. A deployment also puts nginx in front (deploy/), which does TLS, the
@@ -31,10 +35,17 @@ BATCH_ROWS = int(os.environ.get("FRAUDVAE_BATCH_ROWS", "5000"))
 BATCH_CONCURRENCY = int(os.environ.get("FRAUDVAE_BATCH_CONCURRENCY", "2"))
 COMPARE_MAX = int(os.environ.get("FRAUDVAE_COMPARE_MAX", "6"))
 SCORE_CONCURRENCY = int(os.environ.get("FRAUDVAE_SCORE_CONCURRENCY", "4"))   # transactions scoring at once, all visitors together
+# the transaction encoder (v6 on): 128M parameters, about a thirtieth of a second per event it
+# reads on a small server's cpu. One event is a payment without a history; a file is one per row
+# of a source the block is routed to; a full history is 128
+ENCODER_BATCH_ROWS = int(os.environ.get("FRAUDVAE_ENCODER_BATCH_ROWS", "1000"))        # rows of one file the encoder reads
+ENCODER_HISTORY_FREE = int(os.environ.get("FRAUDVAE_ENCODER_HISTORY_FREE", "8"))       # past payments it reads like any score
+ENCODER_HISTORY_PER_TOKEN = int(os.environ.get("FRAUDVAE_ENCODER_HISTORY_PER_TOKEN", "16"))   # past that, one more request's worth per this many
 
 _buckets: dict[tuple[str, str], list[float]] = {}
 _lock = threading.Lock()
 batch_slots = threading.BoundedSemaphore(BATCH_CONCURRENCY)
+encoder_lane = threading.BoundedSemaphore(1)     # one long history through an encoder at a time, all visitors together
 # the proxies whose X-Real-IP / X-Forwarded-For are believed: the local nginx by default, more
 # with FRAUDVAE_TRUSTED_PROXIES (comma separated addresses). A connection from anywhere else is
 # charged to its own socket address whatever headers it sends
@@ -59,15 +70,16 @@ def client_ip(request: Request) -> str:
     return peer
 
 
-def take(kind: str, ip: str, per_minute: int, burst: int) -> float | None:
-    """token bucket per (kind, ip): None when a token was taken, otherwise seconds to wait"""
+def take(kind: str, ip: str, per_minute: int, burst: int, cost: float = 1.0) -> float | None:
+    """token bucket per (kind, ip): None when `cost` tokens were taken, otherwise seconds to wait"""
     now = time.time()
     rate = per_minute / 60.0
+    cost = min(float(cost), float(burst))        # a charge the bucket can never hold would never pass
     with _lock:
         tokens, last = _buckets.get((kind, ip), (float(burst), now))
         tokens = min(float(burst), tokens + (now - last) * rate)
-        if tokens >= 1.0:
-            _buckets[(kind, ip)] = [tokens - 1.0, now]
+        if tokens >= cost:
+            _buckets[(kind, ip)] = [tokens - cost, now]
             # keep the table from growing with every address that ever visited: addresses idle
             # for an hour go first, and if a flood of fresh addresses is what filled it, the
             # least recently seen go too (they lose nothing but a full bucket)
@@ -80,15 +92,16 @@ def take(kind: str, ip: str, per_minute: int, burst: int) -> float | None:
                         _buckets.pop(k, None)
             return None
         _buckets[(kind, ip)] = [tokens, now]
-        return (1.0 - tokens) / rate
+        return (cost - tokens) / rate
 
 
-def limit(kind: str, request: Request):
-    """raise 429 for a visitor past their budget (public mode only)"""
+def limit(kind: str, request: Request, cost: float = 1.0):
+    """raise 429 for a visitor past their budget (public mode only). cost: how many requests'
+    worth this one takes from it"""
     if not PUBLIC:
         return
     per_minute, burst = (SCORE_PER_MINUTE, SCORE_BURST) if kind == "score" else (BATCH_PER_MINUTE, max(1, BATCH_PER_MINUTE))
-    wait = take(kind, client_ip(request), per_minute, burst)
+    wait = take(kind, client_ip(request), per_minute, burst, cost)
     if wait is not None:
         raise HTTPException(429, f"rate limit: try again in {wait:.0f}s", headers={"Retry-After": str(int(wait) + 1)})
 
@@ -126,4 +139,5 @@ def scrub_log_lines(lines: list[str]) -> list[str]:
 
 def limits() -> dict:
     return {"public": PUBLIC, "score_per_minute": SCORE_PER_MINUTE, "batch_rows": BATCH_ROWS,
-            "batch_per_minute": BATCH_PER_MINUTE, "compare_max": COMPARE_MAX, "score_concurrency": SCORE_CONCURRENCY}
+            "batch_per_minute": BATCH_PER_MINUTE, "compare_max": COMPARE_MAX, "score_concurrency": SCORE_CONCURRENCY,
+            "encoder_batch_rows": ENCODER_BATCH_ROWS, "encoder_history_free": ENCODER_HISTORY_FREE}

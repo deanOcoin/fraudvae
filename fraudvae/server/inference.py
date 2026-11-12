@@ -305,6 +305,29 @@ class ActiveModel:
                 continue
         return row
 
+    def encoder_events(self, source: str | None, history: list | None) -> int:
+        """how many past payments this generation's transaction encoder would read for one
+        payment of this source: 0 without an encoder, for a source its block is not routed to,
+        and without a history; otherwise the history, up to the encoder's window"""
+        if self.txfm is None or not history:
+            return 0
+        if not self.txfm.routed(np.array([self.source_index.get(source, 0) if source else 0]))[0]:
+            return 0
+        return min(len(history), self.txfm.window - 1)
+
+    def _frame_sources(self, df, source_col="source") -> np.ndarray:
+        """a csv's rows -> source codes (0 = generic, also for a name this generation never saw)"""
+        if source_col in df:
+            return df[source_col].astype(str).map(lambda s: self.source_index.get(s, 0)).fillna(0).to_numpy().astype(np.int64)
+        return np.zeros(len(df), dtype=np.int64)
+
+    def encoder_rows(self, df, source_col="source") -> int:
+        """how many rows of a csv this generation's transaction encoder would read: one event
+        each, for the sources its block is routed to"""
+        if self.txfm is None:
+            return 0
+        return int(self.txfm.reads(self._frame_sources(df, source_col)).sum())
+
     def history_tensors(self, rows: list, source: str | None, cur_ts: float, window: int | None = None):
         """v5: past transactions -> the window tensors the history encoder wants (oldest first,
         padded at the front). rows: [(ts, num, mask, cat)] in model space, as the entity store
@@ -697,10 +720,7 @@ class ActiveModel:
             else:
                 lut = {name: i for i, name in enumerate(c["values"])}
                 cat[:, j] = col.astype(str).map(lut).fillna(0).astype(int).to_numpy()
-        if source_col in df:
-            src = df[source_col].astype(str).map(lambda s: self.source_index.get(s, 0)).fillna(0).to_numpy().astype(np.int64)
-        else:
-            src = np.zeros(n, dtype=np.int64)
+        src = self._frame_sources(df, source_col)
         # v5 wide block for a batch csv: either a 'wide' column of json dicts (the samples file) or
         # columns named like the booster's wide features ('ieee.V1'); anything else is missing
         wide = None
