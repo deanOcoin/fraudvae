@@ -93,9 +93,11 @@ mkdir -p "$APP/data/raw" "$APP/data/processed" "$APP/data/prepared"
 
 log "pretrained generations in $RUNS"
 present=$(ls -d "$RUNS"/*/model.pt 2>/dev/null | wc -l || true)
-echo "$present generation(s) already here"
-if [ "$present" -lt 6 ]; then
-  echo "pulling the rest from the github release (large: ~1.1 GB)"
+# as many as the manifest lists, so a new generation is pulled by the next run of this script
+wanted=$("$APP/.venv/bin/python" -c "import json; print(len(json.load(open('$APP/fraudvae/pretrained.json'))['models']))")
+echo "$present of $wanted generation(s) already here"
+if [ "$present" -lt "$wanted" ]; then
+  echo "pulling the rest from the github release (large: ~2.8 GB for all of them)"
   FRAUDVAE_RUNS_DIR="$RUNS" "$APP/.venv/bin/python" -m fraudvae.cli models pull --all || echo "pull failed; scp the runs/ directory into $RUNS and re-run"
 fi
 # nothing a visitor must not see travels with a run: the box it was fetched from, pid files
