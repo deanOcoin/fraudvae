@@ -8,7 +8,10 @@ pull one back onto any machine.
     fraudvae models pack v5-h200-h            # runs/<name> -> dist/<name>.tar.gz (+ the paysim graph apart)
 
 A bundle is the run directory as the trainer left it, minus what never leaves the machine
-that trained it: `remote.json` (the box it was fetched from), launcher logs and pid files.
+that trained it: `remote.json` (the box it was fetched from), launcher logs and pid files,
+the host names in `run.json` and `manifest.json`. It also leaves out `scores_test*.npz`,
+every test row's scores as `fraudvae evaluate` keeps them for `fraudvae compare`: 400 MB per
+label setting that no server reads.
 The v5 bundles also set aside `graph/paysim.pt`, the PaySim entity graph: 822 MB per run for
 a head that scores 0.55 on PaySim and gets no weight in the blend, so it ships as a separate
 optional asset and the server scores PaySim without the graph head when it is absent (the
@@ -19,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import calendar
+import fnmatch
 import gzip
 import hashlib
 import io
@@ -38,6 +42,8 @@ RELEASE_URL = "https://github.com/{repo}/releases/download/{tag}/{asset}"
 # a mirror instead of the github release, e.g. https://fraudvae.example.org/models/{asset}
 MIRROR_URL = os.environ.get("FRAUDVAE_MODELS_URL")
 NEVER_SHIPPED = ("remote.json", "launcher.log", "launcher.pid", "train.pid", "status.pid")
+NOT_BUNDLED = ("scores_test*.npz",)                 # a comparison's working files, not a model's
+SCRUBBED = {"run.json": ("host", "pid"), "manifest.json": ("host",)}   # file at the run's top -> keys taken out
 APART = {"graph/paysim.pt": "graph-paysim"}       # file inside the run -> suffix of its own bundle
 
 
@@ -62,14 +68,16 @@ def save_manifest(m: dict):
     MANIFEST.write_text(json.dumps(m, indent=1, sort_keys=False) + "\n")
 
 
-def _scrub_run_json(data: bytes) -> bytes:
-    """run.json names the training host and process; neither is a visitor's business"""
+def _scrub(rel: str, data: bytes) -> bytes:
+    """run.json names the training host and process, manifest.json the host of every stage it
+    records (the latest and those under history); neither is a visitor's business"""
     try:
         d = json.loads(data)
     except json.JSONDecodeError:
         return data
-    for k in ("host", "pid"):
-        d.pop(k, None)
+    for rec in [d] + [h for h in (d.get("history") or []) if isinstance(h, dict)]:
+        for k in SCRUBBED[rel]:
+            rec.pop(k, None)
     return json.dumps(d, indent=1).encode()
 
 
@@ -85,7 +93,7 @@ def pack(name: str, out_dir: Path, runs_dir: Path = RUNS_DIR, tag: str | None = 
         if not p.is_file():
             continue
         rel = p.relative_to(src).as_posix()
-        if p.name in NEVER_SHIPPED or p.name.endswith(".pid"):
+        if p.name in NEVER_SHIPPED or p.name.endswith(".pid") or any(fnmatch.fnmatch(p.name, pat) for pat in NOT_BUNDLED):
             continue
         if rel in APART:
             bundles.setdefault(f"{name}-{APART[rel]}", []).append((rel, p))
@@ -109,7 +117,7 @@ def pack(name: str, out_dir: Path, runs_dir: Path = RUNS_DIR, tag: str | None = 
         with open(out, "wb") as raw, gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0, compresslevel=3) as gz, \
                 tarfile.open(fileobj=gz, mode="w", format=tarfile.PAX_FORMAT) as tf:
             for rel, p in files:
-                data = _scrub_run_json(p.read_bytes()) if rel == "run.json" else None
+                data = _scrub(rel, p.read_bytes()) if rel in SCRUBBED else None
                 info = tarfile.TarInfo(f"{name}/{rel}")
                 info.size = len(data) if data is not None else p.stat().st_size
                 info.mtime = stamp

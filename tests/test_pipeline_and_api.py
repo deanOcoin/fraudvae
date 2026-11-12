@@ -830,6 +830,13 @@ def test_models_pack_and_pull(trained_run, tmp_path, monkeypatch):
 
     monkeypatch.setattr(models, "MANIFEST", tmp_path / "pretrained.json")
     (trained_run / "remote.json").write_text(json.dumps({"host": "10.0.0.1", "port": 22}))
+    # what an evaluated round leaves beside the model: every test row's scores, and a manifest
+    # that names the host of each stage
+    (trained_run / "scores_test.npz").write_bytes(b"rows")
+    (trained_run / "scores_test_delay30.npz").write_bytes(b"rows")
+    had_manifest = (trained_run / "manifest.json").read_bytes() if (trained_run / "manifest.json").exists() else None
+    (trained_run / "manifest.json").write_text(json.dumps({"stage": "post", "host": "box-2", "files": {"model.pt": {"bytes": 1}},
+                                                           "history": [{"stage": "train", "host": "box-1"}]}))
     try:
         entry = models.pack("test-run", tmp_path / "dist", RUNS_DIR, tag="t")
         asset = tmp_path / "dist" / "test-run.tar.gz"
@@ -838,7 +845,10 @@ def test_models_pack_and_pull(trained_run, tmp_path, monkeypatch):
         with tarfile.open(asset) as tf:
             names = tf.getnames()
             run = json.loads(tf.extractfile("test-run/run.json").read())
+            man = json.loads(tf.extractfile("test-run/manifest.json").read())
         assert "test-run/model.pt" in names and "test-run/remote.json" not in names and "host" not in run and "pid" not in run
+        assert not any("scores_test" in n for n in names)
+        assert man == {"stage": "post", "files": {"model.pt": {"bytes": 1}}, "history": [{"stage": "train"}]}
         assert models.pack("test-run", tmp_path / "dist", RUNS_DIR)["assets"]["test-run.tar.gz"]["sha256"] == info["sha256"]
         manifest = json.loads((tmp_path / "pretrained.json").read_text())
         assert manifest["tag"] == "t" and "test-run" in manifest["models"]
@@ -854,7 +864,10 @@ def test_models_pack_and_pull(trained_run, tmp_path, monkeypatch):
         with pytest.raises(RuntimeError):
             models.pull("test-run", tmp_path / "runs3")
     finally:
-        (trained_run / "remote.json").unlink(missing_ok=True)
+        for f in ("remote.json", "scores_test.npz", "scores_test_delay30.npz", "manifest.json"):
+            (trained_run / f).unlink(missing_ok=True)
+        if had_manifest is not None:
+            (trained_run / "manifest.json").write_bytes(had_manifest)
 
 
 def test_prepare_parallel_matches_serial(processed_corpus):
