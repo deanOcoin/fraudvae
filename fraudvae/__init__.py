@@ -2,7 +2,7 @@
 import os as _os
 import sys as _sys
 
-__version__ = "0.5.1"
+__version__ = "0.6.0"
 
 # macOS: the PyTorch wheel ships its own copy of the LLVM OpenMP runtime and the
 # LightGBM wheel links the homebrew one (brew install libomp). Two copies in one

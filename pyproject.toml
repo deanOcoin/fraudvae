@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fraudvae"
-version = "0.5.1"
+version = "0.6.0"
 description = "Variational autoencoder for payment fraud screening, trained on a merged corpus of public transaction datasets, with a web UI for inference and (remote) training"
 readme = "README.md"
 requires-python = ">=3.10"
