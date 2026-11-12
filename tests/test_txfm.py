@@ -232,6 +232,32 @@ def test_blanked_rows_are_not_encoded(monkeypatch):
     assert not sc.reads(src).any() and np.isnan(sc.features(num, mask, cat, src, None)).all() and rows == []
 
 
+def test_a_cpu_readout_takes_a_bounded_number_of_events(monkeypatch):
+    """on a cpu the scorer hands the readout CPU_EVENTS events at a time (rows times window),
+    one source per call, and the block is the same as in one go"""
+    import fraudvae.model.txfm as T
+
+    torch.manual_seed(0)
+    tok = _tok()
+    m = TransactionEncoder(tok.vocab, tok.n_fields, tok.sizes, tok.D, d_model=32, event_layers=1, history_layers=1, heads=4, window=4).eval()
+    B, Lh = 23, 3
+    num, mask, cat = torch.randn(B, 5), torch.ones(B, 5), torch.randint(0, 3, (B, 3))
+    src = torch.tensor([3, 4] * 11 + [3])
+    hist = (torch.randn(B, Lh, 5), torch.ones(B, Lh, 5), torch.randint(0, 3, (B, Lh, 3)), torch.rand(B, Lh), torch.ones(B, Lh, dtype=torch.bool))
+    sc = TxfmScorer(m, tok)
+    whole_file, whole_hist = sc.features(num, mask, cat, src, None), sc.features(num, mask, cat, src, hist)
+    calls = []
+    readout_ = T.readout
+    monkeypatch.setattr(T, "readout", lambda model, tk, toks, dt, valid: (calls.append(tuple(toks.shape[:2])), readout_(model, tk, toks, dt, valid))[1])
+    monkeypatch.setattr(T, "CPU_EVENTS", 8)
+    # a file's rows are windows of one event: 8 rows a call; with a history of 3 the window is 4: 2 rows a call
+    assert np.allclose(sc.features(num, mask, cat, src, None), whole_file, atol=1e-5, equal_nan=True)
+    assert sorted(calls) == sorted([(8, 1), (4, 1)] + [(8, 1), (3, 1)]) and sum(b for b, _ in calls) == B
+    calls.clear()
+    assert np.allclose(sc.features(num, mask, cat, src, hist), whole_hist, atol=1e-5, equal_nan=True)
+    assert all(b * L <= 8 and L == 4 for b, L in calls) and sum(b for b, _ in calls) == B
+
+
 def test_windows_from_history_match_the_v5_tensors():
     tok = _tok()
     B, L = 2, 3

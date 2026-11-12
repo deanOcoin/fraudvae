@@ -39,6 +39,8 @@ from .loading import load_checkpoint as read_checkpoint
 DT_SCALE = 2.0       # dt bucket = ceil(log1p(seconds) * DT_SCALE); 40 buckets reach past a year
 EVENT_CHUNK = 8192   # sequences per event-encoder launch: a cuda attention kernel refuses 65,536 in one go, and the
                      # feed-forward activation of a chunk is ~6 GB at 121 fields (23 GB at 32768, too much next to a training rank)
+CPU_EVENTS = 256     # events per readout on a cpu, where the memory is the server's own: a csv's rows arrive 4,096 at a
+                     # time, and 4,096 events of 40 tokens are 2 GB of feed-forward activation at d_model 768; 256 are 130 MB
 
 
 class Tokeniser:
@@ -608,11 +610,15 @@ class TxfmScorer:
         if toks.shape[1] > self.window:
             toks, dt, valid = toks[:, -self.window :], dt[:, -self.window :], valid[:, -self.window :]
         out = np.empty((toks.shape[0], self.dim), dtype=np.float32)
-        # one source per readout, so a row's packed fields never depend on the rows beside it
+        # one source per readout, so a row's packed fields never depend on the rows beside it; on
+        # a cpu a readout takes CPU_EVENTS events at most (rows times the window they come in)
+        step = max(1, CPU_EVENTS // toks.shape[1]) if toks.device.type == "cpu" else toks.shape[0]
         for s_ in torch.unique(src).tolist():
-            m = src == s_
-            h, per_field, total = readout(self.model, self.tok, toks[m], dt[m], valid[m])
-            out[m.cpu().numpy()] = np.concatenate([h.cpu().numpy(), per_field.cpu().numpy(), total.cpu().numpy()[:, None]], axis=1)
+            rows = torch.nonzero(src == s_).squeeze(1)
+            for a in range(0, len(rows), step):
+                r_ = rows[a : a + step]
+                h, per_field, total = readout(self.model, self.tok, toks[r_], dt[r_], valid[r_])
+                out[r_.cpu().numpy()] = np.concatenate([h.cpu().numpy(), per_field.cpu().numpy(), total.cpu().numpy()[:, None]], axis=1)
         return out
 
     def features_windows(self, split, idx, seq, split_name, device=None, src_override=None, batch_size=8192) -> np.ndarray:
