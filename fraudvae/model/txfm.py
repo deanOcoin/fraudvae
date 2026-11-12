@@ -579,9 +579,31 @@ class TxfmScorer:
         out[hist <= 0] = np.nan
         return out
 
+    def reads(self, src, hist=None) -> np.ndarray:
+        """[B] bool: the rows whose block the encoder has to compute. A row of a source the block
+        is not routed to carries NaN whatever the encoder would say, and so does a customer's
+        first event under gate_first (hist None: rows that come without a past, a csv's)"""
+        src = np.asarray(src.cpu().numpy() if hasattr(src, "cpu") else src).astype(np.int64)
+        keep = np.ones(src.shape, dtype=bool) if self.sources is None else np.isin(src, list(self.sources))
+        if self.gate_first:
+            if hist is None or self.window < 2:
+                keep[:] = False
+            else:
+                keep &= hist[4][:, -(self.window - 1) :].any(dim=1).cpu().numpy()
+        return keep
+
     def features(self, num, mask, cat, src, hist=None) -> np.ndarray:
         """[B, dim] float32 for a batch of current rows with their history tensors (any window;
         the last `window - 1` past events are used), or hist None for rows without a past"""
+        keep = self.reads(src, hist)
+        if not keep.all():
+            # the rows whose block is blanked are not encoded at all: for a round that routes the
+            # block to two sources, most of what a server scores
+            out = np.full((len(keep), self.dim), np.nan, dtype=np.float32)
+            if keep.any():
+                k = torch.from_numpy(keep).to(num.device)
+                out[keep] = self.features(num[k], mask[k], cat[k], src[k], None if hist is None else tuple(t[k] for t in hist))
+            return out
         toks, dt, valid = windows_from_history(self.tok, num, mask, cat, src, hist)
         if toks.shape[1] > self.window:
             toks, dt, valid = toks[:, -self.window :], dt[:, -self.window :], valid[:, -self.window :]
@@ -591,9 +613,7 @@ class TxfmScorer:
             m = src == s_
             h, per_field, total = readout(self.model, self.tok, toks[m], dt[m], valid[m])
             out[m.cpu().numpy()] = np.concatenate([h.cpu().numpy(), per_field.cpu().numpy(), total.cpu().numpy()[:, None]], axis=1)
-        if self.gate_first:
-            out[(~valid[:, :-1].any(dim=1)).cpu().numpy()] = np.nan
-        return self._routed(out, src)
+        return out
 
     def features_windows(self, split, idx, seq, split_name, device=None, src_override=None, batch_size=8192) -> np.ndarray:
         """[len(idx), dim] in the order of idx, one history window per row (what the server

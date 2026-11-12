@@ -195,6 +195,43 @@ def test_readout_encodes_only_the_events_a_window_holds(monkeypatch):
     assert torch.allclose(h, h0, atol=1e-5) and torch.allclose(total, t0, atol=1e-5)
 
 
+def test_blanked_rows_are_not_encoded(monkeypatch):
+    """a row of a source the block is not routed to, or a first event under gate_first, gets
+    NaN without going through the encoder; the other rows get what they got before"""
+    import fraudvae.model.txfm as T
+
+    torch.manual_seed(0)
+    tok = _tok()
+    m = TransactionEncoder(tok.vocab, tok.n_fields, tok.sizes, tok.D, d_model=32, event_layers=1, history_layers=1, heads=4, window=4).eval()
+    B, Lh = 6, 3
+    num, mask, cat = torch.randn(B, 5), torch.ones(B, 5), torch.randint(0, 3, (B, 3))
+    src = torch.tensor([3, 4, 3, 5, 4, 3])
+    h_valid = torch.tensor([[False, True, True]] * 3 + [[False, False, False]] * 3)
+    hist = (torch.randn(B, Lh, 5), torch.ones(B, Lh, 5), torch.randint(0, 3, (B, Lh, 3)), torch.rand(B, Lh), h_valid)
+    sc = TxfmScorer(m, tok)
+    everything = sc.features(num, mask, cat, src, hist)
+    assert np.isfinite(everything[:, : sc.d_model]).all()
+    rows = []
+    whole = T.readout
+    monkeypatch.setattr(T, "readout", lambda model, tk, toks, dt, valid: (rows.append(len(toks)), whole(model, tk, toks, dt, valid))[1])
+    sc.sources = {3, 5}
+    assert sc.reads(src).tolist() == [True, False, True, True, False, True]
+    routed = sc.features(num, mask, cat, src, hist)
+    assert sum(rows) == 4 and np.isnan(routed[[1, 4]]).all()
+    assert np.allclose(routed[[0, 2, 3, 5]], everything[[0, 2, 3, 5]], atol=1e-5, equal_nan=True)
+    rows.clear()
+    sc.sources = {7}
+    assert np.isnan(sc.features(num, mask, cat, src, hist)).all() and rows == []
+    # gate_first: the three rows without a past are blanked too, and a file's rows (no history) all are
+    sc.sources, sc.gate_first = {3, 5}, True
+    assert sc.reads(src, hist).tolist() == [True, False, True, False, False, False]
+    gated = sc.features(num, mask, cat, src, hist)
+    assert sum(rows) == 2 and np.isnan(gated[[1, 3, 4, 5]]).all()
+    assert np.allclose(gated[[0, 2]], everything[[0, 2]], atol=1e-5, equal_nan=True)
+    rows.clear()
+    assert not sc.reads(src).any() and np.isnan(sc.features(num, mask, cat, src, None)).all() and rows == []
+
+
 def test_windows_from_history_match_the_v5_tensors():
     tok = _tok()
     B, L = 2, 3
