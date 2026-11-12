@@ -221,7 +221,7 @@ def post_score(req: ScoreRequest, request: Request):
     arrive). `run` picks a generation; `compare` lists others to score the same transaction on.
 
     On the public site a visitor's history is not stored, so `customer_id` and `remember`
-    are ignored, and the limits are 60 requests a minute (burst 20) and 6 generations in a
+    are ignored, and the limits are 60 requests a minute (burst 20) and 8 generations in a
     comparison. A generation with the transaction encoder (v6 on) reads the `history` with
     it for the banks its block is routed to: up to 8 past payments cost nothing extra, a
     longer one counts as one more request per 16 payments and runs one at a time for the

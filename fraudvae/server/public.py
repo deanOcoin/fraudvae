@@ -27,13 +27,16 @@ import time
 
 from fastapi import HTTPException, Request
 
+from ..milestones import MILESTONES
+
 PUBLIC = os.environ.get("FRAUDVAE_PUBLIC", "").lower() in ("1", "true", "yes")
 SCORE_PER_MINUTE = int(os.environ.get("FRAUDVAE_SCORE_PER_MINUTE", "60"))
 SCORE_BURST = int(os.environ.get("FRAUDVAE_SCORE_BURST", "20"))
 BATCH_PER_MINUTE = int(os.environ.get("FRAUDVAE_BATCH_PER_MINUTE", "4"))
 BATCH_ROWS = int(os.environ.get("FRAUDVAE_BATCH_ROWS", "5000"))
 BATCH_CONCURRENCY = int(os.environ.get("FRAUDVAE_BATCH_CONCURRENCY", "2"))
-COMPARE_MAX = int(os.environ.get("FRAUDVAE_COMPARE_MAX", "6"))
+# "compare all" sends every generation on the timeline, so the limit defaults to their number
+COMPARE_MAX = int(os.environ.get("FRAUDVAE_COMPARE_MAX", str(len(MILESTONES))))
 SCORE_CONCURRENCY = int(os.environ.get("FRAUDVAE_SCORE_CONCURRENCY", "4"))   # transactions scoring at once, all visitors together
 # the transaction encoder (v6 on): 128M parameters, about a thirtieth of a second per event it
 # reads on a small server's cpu. One event is a payment without a history; a file is one per row

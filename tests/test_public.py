@@ -70,3 +70,14 @@ def test_client_ip_trusts_only_a_proxy(monkeypatch):
     # from anywhere else the headers are a visitor's claim, and the socket is the visitor
     assert public.client_ip(_req("198.51.100.4", X_REAL_IP="203.0.113.9", X_FORWARDED_FOR="203.0.113.9")) == "198.51.100.4"
     assert public.client_ip(_req(None, X_REAL_IP="203.0.113.9")) == "unknown"
+
+
+def test_a_comparison_may_span_the_timeline():
+    """the score tab's "compare all" names every generation on the timeline, so without a setting
+    of its own the limit is their number"""
+    import os
+
+    from fraudvae.milestones import MILESTONES
+
+    if "FRAUDVAE_COMPARE_MAX" not in os.environ:
+        assert public.COMPARE_MAX == len(MILESTONES) == public.limits()["compare_max"]

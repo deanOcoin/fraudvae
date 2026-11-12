@@ -20,7 +20,7 @@ site was put up.
 - **Rate limits.** A token bucket per client address (behind nginx's own `limit_req`, which
   is coarser and runs first): 60 scores a minute with a burst of 20, 4 batch uploads a minute
   of at most 5,000 rows each with two running at once server-wide, a comparison across at
-  most 6 generations per request. 429 with `Retry-After` past that. On top of the buckets a
+  most 8 generations per request (every one on the timeline). 429 with `Retry-After` past that. On top of the buckets a
   global ceiling: four transactions scoring at once across every visitor, then a 503 with
   `Retry-After` after a three-second wait. All of it is in `deploy/env.example`. The buckets
   believe `X-Real-IP` / `X-Forwarded-For` only from a trusted proxy (loopback, or
