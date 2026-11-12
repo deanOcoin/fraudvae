@@ -439,12 +439,13 @@ def get_metrics(name: str):
     """The training curve (`metrics`: one row per epoch), the run's settings and status, the
     evaluation on the test split (`eval`, and `eval_delay` under delayed labels), and the
     report of each side model: calibration, booster, sequence head, specialists, entity graph,
-    text heads, behaviour verifiers. A few hundred kilobytes; on the public site nginx keeps the
+    text heads, behaviour verifiers, and from v6 the transaction encoder (`encoder`, the
+    `txfm.json` that travels with `txfm.pt`) and the supervised head on it (`txfmhead`). A few hundred kilobytes; on the public site nginx keeps the
     answer for ten minutes, a workbench reads the files on every call."""
     d = _run_dir(name)
     out = {"metrics": [], "status": None, "run": None, "eval": None, "eval_delay": None, "calibration": None, "booster": None,
            "seqhead": None, "specialists": None, "graph": None, "text": None, "behaviour": None, "graph_bench": None,
-           "heads": {},
+           "heads": {}, "encoder": None, "txfmhead": None,
            "schema_version": inference.run_schema_version(d),
            "compatible": inference.compatible_schema(inference.run_schema_version(d)) and not inference.encoder_missing(d),
            "encoder_missing": inference.encoder_missing(d), "current_schema_version": SCHEMA_VERSION}
@@ -459,7 +460,9 @@ def get_metrics(name: str):
                        ("booster", "booster.json"),
                        # v5 modules, each with its own summary
                        ("seqhead", "seqhead.json"), ("specialists", "specialists.json"), ("graph", "graph.json"),
-                       ("text", "text.json"), ("behaviour", "behaviour.json"), ("graph_bench", "graph_bench.json")):
+                       ("text", "text.json"), ("behaviour", "behaviour.json"), ("graph_bench", "graph_bench.json"),
+                       # v6: the pretrained encoder the booster reads; v7: the supervised head on its block
+                       ("encoder", "txfm.json"), ("txfmhead", "txfmhead.json")):
         f = d / fname
         if f.exists():
             try:

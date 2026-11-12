@@ -835,6 +835,37 @@ def test_server_runs_the_encoder_outside_the_generations_lock(encoder_run, monke
     assert locked and not any(locked)
 
 
+def test_receipt_says_what_the_history_model_was_read_for(encoder_run):
+    """the receipt's history-model block says whether this payment's block reached the booster and
+    which banks the block is for, and the blend says what it weighs"""
+    from fraudvae.server.inference import ActiveModel
+
+    m = ActiveModel(encoder_run, device="cpu")
+    r = m.score({"amount": 12.5}, source="fdh", history=_history(2), remember=False, seed=0)
+    sm = r["sequence_model"]
+    assert sm["used"] is True and sm["sources"] == ["fdh"] and sm["columns"] == m.txfm.dim and sm["most_surprising"]
+    other = m.score({"amount": 12.5}, source="capone", history=_history(2), remember=False, seed=0)["sequence_model"]
+    assert other["used"] is False and other["sources"] == ["fdh"] and other["surprise"] is None
+    # the blend names the side models it weighs and whether it was fit without the novelty model
+    assert r["blend"]["without_vae"] is False and isinstance(r["blend"]["signals"], list)
+
+
+def test_a_runs_record_carries_the_encoders_summary(encoder_run):
+    """what the model page reads about a v6 run: the encoder's own summary (the txfm.json that
+    travels with txfm.pt) and the booster's routing of its block"""
+    from fraudvae.server.api_model import get_metrics
+
+    side = encoder_run / "txfm.json"
+    assert get_metrics(encoder_run.name)["encoder"] is None
+    side.write_text(json.dumps({"params": 1234, "steps": 10}))
+    try:
+        d = get_metrics(encoder_run.name)
+    finally:
+        side.unlink()
+    assert d["encoder"] == {"params": 1234, "steps": 10} and d["txfmhead"] is None
+    assert d["booster"]["txfm_dim"] and d["booster"]["txfm_sources"] == ["fdh"]
+
+
 def test_public_site_meters_the_encoder(encoder_run, monkeypatch):
     """public mode: a file may send the encoder so many rows, and a history that the encoder
     has to read is charged by its length past a few payments and runs one at a time; a bank

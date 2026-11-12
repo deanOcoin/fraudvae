@@ -159,6 +159,7 @@ class ActiveModel:
         # v6: the transaction encoder whose block the booster reads; None for a run without one
         self.txfm = TxfmScorer.load(self.run_dir, device=self.device) if (self.booster is not None and self.booster.txfm_dim) else None
         self.txfm_labels = self.txfm.field_labels(self.categorical) if self.txfm is not None else []
+        self.field_label = {f["name"]: f.get("label") or f["name"] for f in list(self.numeric) + list(self.categorical)}
         # v7: the supervised head on that block ("txsup"), None for a run without one
         self.txhead = load_txfmhead(self.run_dir, device=self.device) if self.txfm is not None else None
         # v5: the customer-history side. window 0 = a model without a history encoder
@@ -506,7 +507,13 @@ class ActiveModel:
         # -- v6: the transaction encoder's view of this row for this customer --------------
         if self.txfm is not None and txfm_np is not None:
             sm = self.txfm.explain(txfm_np[0], self.txfm_labels)
+            for f in sm["most_surprising"]:
+                f["label"] = self.field_label.get(f["field"], f["field"])
+            # used: whether this row's block reached the booster (a bank the block is not routed to, or a
+            # gated first payment, gets none); sources: the banks it is for, None = every bank
             sm.update({"n_history": int(n_hist2), "window": int(self.txfm.window), "d_model": int(self.txfm.d_model),
+                       "columns": int(self.txfm.dim), "used": bool(np.isfinite(txfm_np[0]).any()),
+                       "sources": list(self.txfm.source_names) if self.txfm.source_names else None,
                        "note": "next-event negative log likelihood per observed field, from the customer's past alone; "
                                "the block (state + surprises) is read by the booster, not blended on its own"})
             out["sequence_model"] = sm
@@ -587,7 +594,8 @@ class ActiveModel:
         # -- the blend: what we flag on ---------------------------------------------------
         if self.has_blend:
             p = float(self.scorer.blend_prob(r, np.array([src_idx]), b_logit)[0])
-            bl = {"prob": p}
+            # without_vae (v7): a blend fit without the novelty model's columns; signals: the side models it weighs
+            bl = {"prob": p, "without_vae": bool(self.scorer.blend_without_vae), "signals": list(self.scorer.blend_signals)}
             blcal, blkind = self._calibration_for(ctx, name="blend")
             bl["calibration"] = blkind
             if blcal:
@@ -693,7 +701,7 @@ class ActiveModel:
         if td:
             start = D + C + 1 + len(self.booster.wide_names) + hd
             block = contrib[start : start + td]
-            items.append({"feature": "transaction_encoder", "label": f"customer sequence model ({td} columns, {int((block != 0).sum())} used)",
+            items.append({"feature": "transaction_encoder", "label": f"history model ({td} columns, {int((block != 0).sum())} used)",
                           "kind": "sequence_model", "contribution": float(block.sum()), "observed": None, "is_observed": True})
         items.sort(key=lambda d: -abs(d["contribution"]))
         total = float(np.abs(contrib).sum()) or 1.0

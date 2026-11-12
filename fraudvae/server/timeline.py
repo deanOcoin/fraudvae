@@ -76,12 +76,23 @@ def timeline() -> list[dict]:
                 ev = json.loads((d / "eval.json").read_text())
             except json.JSONDecodeError:
                 ev = None
-        trees = None
+        trees, encoder = None, None
         if (d / "booster.json").exists():
             try:
-                trees = json.loads((d / "booster.json").read_text()).get("best_iteration")
+                bj = json.loads((d / "booster.json").read_text())
+                trees = bj.get("best_iteration")
+                # v6: the pretrained encoder's block among the booster's inputs, and the banks it is for (None = all)
+                if bj.get("txfm_dim"):
+                    encoder = {"columns": int(bj["txfm_dim"]), "sources": list(bj.get("txfm_sources") or []) or None}
             except json.JSONDecodeError:
                 trees = None
+        # v7: a blend fit without the VAE's columns (calibration.json records the layout)
+        without_vae = False
+        if (d / "calibration.json").exists():
+            try:
+                without_vae = bool((json.loads((d / "calibration.json").read_text()).get("blend") or {}).get("without_vae", False))
+            except json.JSONDecodeError:
+                without_vae = False
         ev30 = None
         for f in sorted(d.glob("eval_delay*.json")):
             try:
@@ -110,6 +121,8 @@ def timeline() -> list[dict]:
             "has_booster": r.get("has_booster"),
             "booster_trees": trees,
             "has_blend": bool(ev and ev.get("with_booster")),
+            "encoder": encoder,
+            "blend_without_vae": without_vae,
             "mean_test_auroc": r.get("mean_test_auroc"),
             "mean": r.get("mean"),
             "generic_test_auroc": r.get("generic_test_auroc"),

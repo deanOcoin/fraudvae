@@ -81,8 +81,12 @@ function updateLede() {
   lede.textContent = ledeText;
   const n = (m.sources || []).length;
   const vae = `${m.params ? `a ${(m.params / 1e6).toFixed(1)}-million-parameter` : "a"} VAE that learnt honest payments from ${n} dataset${n === 1 ? "" : "s"}`;
+  // v6 on: the trees also read a pretrained model of payment histories; v7: the blend leaves the VAE out
+  const enc = m.encoder ? ` and read a pretrained model of payment histories${m.encoder.sources ? ` for ${m.encoder.sources.join(" and ")}` : ""}` : "";
+  const blend = m.blend_without_vae ? "and a per-bank blend of the fraud-trained models that the verdict is read from (the VAE explains a payment, it does not vote)"
+    : "and a per-bank blend of the two that the verdict is read from";
   const parts = m.has_booster
-    ? `${vae}, ${m.booster_trees ? m.booster_trees.toLocaleString("en-US") + " decision trees" : "boosted decision trees"} that learnt the labelled fraud, and a per-bank blend of the two that the verdict is read from`
+    ? `${vae}, ${m.booster_trees ? m.booster_trees.toLocaleString("en-US") + " decision trees" : "boosted decision trees"} that learnt the labelled fraud${enc}, ${blend}`
     : `${vae}, on its own: this version has no fraud-trained model, so the verdict is the novelty score, and it knows an older, smaller set of fields`;
   if (line) line.textContent = `Judging with ${m.version && m.label ? `${m.version} · ${m.label}` : m.name}: ${parts}.`;
 }
@@ -404,7 +408,8 @@ async function score() {
     plotLatent(r);
     // where the receipt sits below the form (the stylesheet's own breakpoint), bring it up
     if (stacked()) document.getElementById("receipt").scrollIntoView({ behavior: glide(), block: "start" });
-    status.textContent = `scored from ${r.observed_features} known fields · ${r.n_samples} posterior samples${r.supervised ? " · booster + blend" : " · VAE alone"}${r.sequence ? ` · ${r.sequence.n_history} past payments` : ""}`;
+    const nPast = Math.max(r.sequence ? r.sequence.n_history : 0, r.sequence_model && r.sequence_model.used ? r.sequence_model.n_history : 0);
+    status.textContent = `scored from ${r.observed_features} known fields · ${r.n_samples} posterior samples${r.supervised ? " · booster + blend" : " · VAE alone"}${r.sequence || r.sequence_model ? ` · ${nPast} past payments` : ""}`;
   } catch (e) {
     status.textContent = e.message;
   } finally {
@@ -603,7 +608,8 @@ function readVerdict(r, label) {
 
   // the ruler: the verdict, then each of the two models on its own
   v.rows = [];
-  if (bl) v.rows.push({ key: "Overall", note: "every model, blended for this bank", pct: overallPct, flag: r.flag, main: true });
+  // a v7 blend is fit without the novelty model: it weighs the models that learnt from labelled fraud
+  if (bl) v.rows.push({ key: "Overall", note: bl.without_vae ? "the models that learnt fraud, blended for this bank" : "every model, blended for this bank", pct: overallPct, flag: r.flag, main: true });
   if (nov.legit_percentile != null || !bl) v.rows.push({ key: "How unusual", note: "the model that learnt honest payments", pct: bl ? placeByFlag(nov.legit_percentile, nov.flag, line) : overallPct, flag: bl ? nov.flag : r.flag, main: !bl });
   if (sup && sup.legit_percentile != null) v.rows.push({ key: "How fraud-like", note: "the model that learnt known fraud", pct: placeByFlag(sup.legit_percentile, sup.flag, line), flag: sup.flag });
 
@@ -614,7 +620,8 @@ function readVerdict(r, label) {
       : sup.flag ? "Ordinary-looking, yet shaped like known fraud: the kind that hides in plain sight."
       : "Neither model is alarmed: ordinary for this bank, and unlike known fraud.";
     // the verdict is the blend's, and the blend weighs more than these two
-    const also = [r.sequence?.prob != null ? "the customer's history" : null, r.local?.present ? "this bank's own model" : null,
+    const also = [r.sequence?.prob != null ? "the customer's history" : null, r.sequence_supervised?.present ? "the pretrained history model" : null,
+                  r.local?.present ? "this bank's own model" : null,
                   r.device?.present ? "the device" : null, r.graph?.present ? "the network around the payment" : null].filter(Boolean);
     const weighs = also.length ? `the blend, which also weighs ${also.length > 1 ? also.slice(0, -1).join(", ") + " and " + also[also.length - 1] : also[0]},` : "the blend, weighting the two for this bank,";
     if (bl && r.flag === false && sup.flag) v.opinion += ` Even so, ${weighs} keeps it under your line.`;
@@ -869,6 +876,29 @@ function renderReceipt(r, label, { fresh = false, reveal = false } = {}) {
     if (!sq.n_history) lines.push(`<div class="rc-line dim"><span>no history given: scored as a first transaction. add past transactions below, or a customer id so the server remembers them</span></div>`);
   }
 
+  // ---- v6 history model: the pretrained transaction encoder's reading, and (v7) its own fraud score ----
+  const sm = r.sequence_model;
+  if (sm) {
+    const banks = sm.sources ? sm.sources.join(" and ") : null;
+    lines.push(`<div class="rc-sep"></div>`);
+    lines.push(`<div class="rc-sub">HISTORY MODEL  <span class="dim">a transformer pretrained on unlabelled payments${sm.used ? `, ${sm.n_history} of up to ${sm.window - 1} previous payments read` : ""}</span></div>`);
+    if (!sm.used) {
+      lines.push(`<div class="rc-line dim"><span>${banks && !sm.sources.includes(r.source) ? `not read for this bank: this version uses it for ${esc(banks)} only, where it earned its place` : "not read: no earlier payments came with this one"}</span></div>`);
+    } else {
+      if (sm.surprise != null) lines.push(`<div class="rc-line"><span class="k">how unexpected this payment is, after the earlier ones</span><span>${fmt.num(sm.surprise, 2)} nats a field</span></div>`);
+      for (const f of (sm.most_surprising || []).slice(0, showAll ? 5 : 3)) {
+        lines.push(`<div class="rc-line"><span class="k">· ${esc(f.label || f.field)}</span><span>${fmt.num(f.nll, 2)}</span></div>`);
+      }
+      const ts = r.sequence_supervised;
+      if (ts && ts.present && ts.prob != null) {
+        const tf = ts.flag == null ? "" : (ts.flag ? "  FLAG" : "  ok");
+        lines.push(`<div class="rc-line"><span class="k">fraud score, from its reading alone</span><span class="${ts.flag ? "z hot" : ""}">${(100 * ts.prob).toFixed(ts.prob < 0.1 ? 2 : 1)}${tf}</span></div>`);
+        if (ts.legit_percentile != null) lines.push(`<div class="rc-line"><span class="k">above this share of normal</span><span>${pctText(ts.legit_percentile, "")}</span></div>`);
+      }
+      lines.push(`<div class="rc-line dim"><span>its ${sm.columns ?? ""} columns go to the decision trees above${ts && ts.present ? "; its own score is one more signal in the blend" : ""}${sm.n_history ? "" : ". no earlier payments came with this one, so it read the payment on its own"}</span></div>`);
+    }
+  }
+
   // ---- v5 text: free text through the text heads, fused as likelihood ratios ----
   if (r.text) {
     lines.push(`<div class="rc-sep"></div>`);
@@ -923,7 +953,7 @@ function renderReceipt(r, label, { fresh = false, reveal = false } = {}) {
 
   // ---- novelty evidence ----
   lines.push(`<div class="rc-sep"></div>`);
-  lines.push(`<div class="rc-sub">HOW UNUSUAL  <span class="dim">the VAE, trained on legitimate payments only${sq ? ", with this customer's history in view" : ""}</span></div>`);
+  lines.push(`<div class="rc-sub">HOW UNUSUAL  <span class="dim">the VAE, trained on legitimate payments only${sq ? ", with this customer's history in view" : ""}${bl && bl.without_vae ? "; shown beside the verdict, not weighed in it" : ""}</span></div>`);
   const nf = nov.flag == null ? "" : (nov.flag ? "  FLAG" : "  ok");
   if (nov.legit_percentile != null) lines.push(`<div class="rc-line"><span class="k">above this share of normal</span><span class="${nov.flag ? "z hot" : ""}">${pctText(nov.legit_percentile, "")}${nf}</span></div>`);
   lines.push(`<div class="rc-line"><span class="k">novelty score${nov.score_type === "norm" ? " (per-field, normalised)" : ""}</span><span>${fmt.num(nov.score, 3)}</span></div>`);
@@ -945,7 +975,13 @@ function renderReceipt(r, label, { fresh = false, reveal = false } = {}) {
     lines.push(`<div class="rc-more"><button type="button" id="rc-toggle">${showAll ? "show fewer" : "show everything"}</button></div>`);
   }
   lines.push(`<div class="rc-sep"></div>`);
-  lines.push(`<div class="rc-foot">${bl ? "the verdict comes from the blend: every model's score, weighted per bank. a fraud score is the blend's probability, fit with fraud and honest payments weighted equally: read it against the line, not against 50.<br>" : "the verdict is the novelty score alone (no blend in this version).<br>"}surprise = how much worse than usual the VAE predicted a field, compared with normal ${esc(r.source === "generic" ? "traffic" : r.source + " traffic")}, in standard deviations; "exp" is what it expected.${sup ? "<br>pushes are the booster's SHAP contributions, in log-odds; a field that is unknown can still push, because a missing value tells a decision tree something too." : ""}</div>`);
+  // what the verdict is made of: a v7 blend leaves the novelty model out, so the foot says who votes
+  const footVerdict = !bl ? "the verdict is the novelty score alone (no blend in this version).<br>"
+    : (bl.without_vae
+      ? "the verdict comes from the blend: the scores of the models that learnt from labelled fraud, weighted per bank. this version's blend leaves the novelty model out (at the line it cost a little more than it added once the others were in), so that model explains and does not vote. "
+      : "the verdict comes from the blend: every model's score, weighted per bank. ")
+      + "a fraud score is the blend's probability, fit with fraud and honest payments weighted equally: read it against the line, not against 50.<br>";
+  lines.push(`<div class="rc-foot">${footVerdict}surprise = how much worse than usual the VAE predicted a field, compared with normal ${esc(r.source === "generic" ? "traffic" : r.source + " traffic")}, in standard deviations; "exp" is what it expected.${sup ? "<br>pushes are the booster's SHAP contributions, in log-odds; a field that is unknown can still push, because a missing value tells a decision tree something too." : ""}</div>`);
   box.innerHTML = lines.join("");
   wireCopy(box, v, r);
   const tog = document.getElementById("rc-toggle");

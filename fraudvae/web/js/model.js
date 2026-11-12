@@ -103,7 +103,18 @@ async function loadRuns() {
   if (selected) showRun(selected);
 }
 
-// runs that are not one of the six: a workbench's experiments, partial runs, something still training
+// v6 on: which banks the booster reads the payment-history model for, and the model's size on the run's "size" line
+function encoderBanks(d) {
+  const banks = d.booster?.txfm_sources;
+  return banks && banks.length ? `${esc(banks.join(" and "))} only` : "every dataset";
+}
+
+function encoderLine(d) {
+  if (!d.booster?.txfm_dim) return "";
+  return `; ${d.booster.txfm_dim} of those inputs come from the payment-history model${d.encoder?.params ? `, a transformer of ${(d.encoder.params / 1e6).toFixed(1)}M parameters` : ""}, read for ${encoderBanks(d)}`;
+}
+
+// runs that are not on the timeline: a workbench's experiments, partial runs, something still training
 function renderRuns() {
   const section = document.getElementById("other-runs");
   const host = document.getElementById("runs-list");
@@ -161,7 +172,7 @@ async function showRun(name, scroll = false) {
     <dt>started</dt><dd>${esc(run.started || "–")}${run.host ? ` on ${esc(run.host)}` : ""}</dd>
     <dt>device</dt><dd>${esc(run.device_name || run.device || "–")}</dd>
     <dt>config</dt><dd>${esc(cfg.name || "–")}: latent ${cfg.model?.latent_dim}, hidden ${(cfg.model?.hidden || []).join("-")}, batch ${cfg.train?.batch_size}, lr ${cfg.train?.lr}, β ${cfg.train?.beta} (warmup ${cfg.train?.beta_warmup_epochs} ep), source dropout ${cfg.train?.source_dropout}</dd>
-    <dt>size</dt><dd>${run.params ? (run.params / 1e6).toFixed(2) + "M parameters in the VAE" : "–"}${d.booster ? `, plus a booster of ${d.booster.best_iteration} trees (${d.booster.params?.num_leaves} leaves each, ${d.booster.features?.length} inputs, trained on ${fmt.int(d.booster.train_rows)} labelled rows in ${d.booster.seconds}s)` : ""}</dd>
+    <dt>size</dt><dd>${run.params ? (run.params / 1e6).toFixed(2) + "M parameters in the VAE" : "–"}${d.booster ? `, plus a booster of ${d.booster.best_iteration} trees (${d.booster.params?.num_leaves} leaves each, ${d.booster.features?.length} inputs, trained on ${fmt.int(d.booster.train_rows)} labelled rows in ${d.booster.seconds}s)` : ""}${encoderLine(d)}</dd>
     <dt>data</dt><dd>${run.prepared_meta ? `set <code>${esc(run.prepared)}</code>: ${fmt.int(run.prepared_meta.counts?.train)} training / ${fmt.int(run.prepared_meta.counts?.val)} validation / ${fmt.int(run.prepared_meta.counts?.test)} test rows from ${(run.prepared_meta.sources || []).join(", ")}${run.prepared_meta.max_rows_per_source ? `, training rows capped at ${fmt.int(run.prepared_meta.max_rows_per_source)} per dataset` : ""}` : "–"}</dd>
     ${d.remote ? `<dt>remote</dt><dd>fetched from ${esc(d.remote.user)}@${esc(d.remote.host)}:${d.remote.port} ${fmt.ago(d.remote.fetched)}</dd>` : ""}
   </dl>`);
@@ -178,7 +189,9 @@ async function showRun(name, scroll = false) {
     const hybrid = !!ev.mean;   // v4 eval.json: per-source vae / booster / blend blocks
     const hasSeq = hybrid && Object.values(ev.sources).some((v) => v.seq);   // v5 runs carry the sequence head
     // v5 field heads (device ...): a column each, "–" on the sources without the block
-    const heads = hybrid ? ["local", "device", "graph"].filter((h) => Object.values(ev.sources).some((v) => v[h])) : [];
+    const heads = hybrid ? ["local", "txsup", "device", "graph"].filter((h) => Object.values(ev.sources).some((v) => v[h])) : [];
+    const headName = { local: "specialist", txsup: "history head" };
+    const headWhat = { local: "one booster per bank", txsup: "a small model on the pretrained history model's reading", device: "a model on the device fields", graph: "the entity graph" };
     const headCells = (v) => heads.map((h) => `<td>${v && v[h] ? fmt.auc(v[h].auroc) : "–"}</td>`).join("");
     const row = (k, v) => {
       if (!hybrid) {
@@ -194,8 +207,8 @@ async function showRun(name, scroll = false) {
     };
     const g = ev.generic;
     parts.push(`<h3 style="margin-top:1.4rem">Results on data the model never saw</h3>
-      <p class="dim small">The newest 20% of every dataset, kept out of training and tuning. One column per model: the <b>VAE</b> (how unusual a payment is; trained without labels), the <b>booster</b> (decision trees trained on the labelled fraud${hasSeq ? ", plus the dataset's own raw columns" : ""}),${hasSeq ? " the <b>sequence</b> model (reads the customer's previous payments)," : ""}${heads.length ? ` the ${heads.map((h) => `<b>${h === "local" ? "specialist" : h}</b>`).join(" / ")} model${heads.length > 1 ? "s" : ""} (one booster per bank, a model on the device fields, the entity graph; each only where it applies),` : ""} and the <b>blend</b> the verdict is read from (their scores weighted per bank, fit on the validation split).${ev.pooled ? ` All datasets pooled: blend AUROC ${fmt.auc(ev.pooled.blend_auroc)}, VAE ${fmt.auc(ev.pooled.auroc)}.` : ""}</p>
-      <table class="metric-table"><thead><tr><th>dataset</th><th>rows</th><th>fraud</th><th>VAE AUROC</th><th>booster AUROC</th>${hasSeq ? "<th>sequence AUROC</th>" : ""}${heads.map((h) => `<th>${h === "local" ? "specialist" : h} AUROC</th>`).join("")}<th>blend AUROC</th><th>blend AUPRC</th><th>blend recall @0.1% FPR</th><th>@1%</th><th>@5%</th><th>blend at the 1% budget: FPR / recall / precision</th><th>recall @1%: VAE / booster</th>${evd ? `<th title="the same rows scored without last week's fraud history: what a bank whose fraud labels take ${evd.label_delay_days} days gets">blend with ${evd.label_delay_days}-day labels: AUROC / recall @1%</th>` : ""}</tr></thead><tbody>
+      <p class="dim small">The newest 20% of every dataset, kept out of training and tuning. One column per model: the <b>VAE</b> (how unusual a payment is; trained without labels), the <b>booster</b> (decision trees trained on the labelled fraud${hasSeq ? ", plus the dataset's own raw columns" : ""}),${hasSeq ? " the <b>sequence</b> model (reads the customer's previous payments)," : ""}${heads.length ? ` the ${heads.map((h) => `<b>${headName[h] || h}</b>`).join(" / ")} model${heads.length > 1 ? "s" : ""} (${heads.map((h) => headWhat[h]).join(", ")}; each only where it applies),` : ""} and the <b>blend</b> the verdict is read from (${d.calibration?.blend?.without_vae ? "the scores of every model but the VAE, weighted per bank" : "their scores weighted per bank"}, fit on the validation split).${ev.pooled ? ` All datasets pooled: blend AUROC ${fmt.auc(ev.pooled.blend_auroc)}, VAE ${fmt.auc(ev.pooled.auroc)}.` : ""}</p>
+      <table class="metric-table"><thead><tr><th>dataset</th><th>rows</th><th>fraud</th><th>VAE AUROC</th><th>booster AUROC</th>${hasSeq ? "<th>sequence AUROC</th>" : ""}${heads.map((h) => `<th>${headName[h] || h} AUROC</th>`).join("")}<th>blend AUROC</th><th>blend AUPRC</th><th>blend recall @0.1% FPR</th><th>@1%</th><th>@5%</th><th>blend at the 1% budget: FPR / recall / precision</th><th>recall @1%: VAE / booster</th>${evd ? `<th title="the same rows scored without last week's fraud history: what a bank whose fraud labels take ${evd.label_delay_days} days gets">blend with ${evd.label_delay_days}-day labels: AUROC / recall @1%</th>` : ""}</tr></thead><tbody>
       ${Object.entries(ev.sources).map(([k, v]) => row(k, v)).join("")}
       ${hybrid ? `<tr><td><b>mean</b></td><td></td><td></td><td><b>${fmt.auc(ev.mean.vae)}</b></td><td><b>${fmt.auc(ev.mean.booster)}</b></td>${hasSeq ? `<td><b>${fmt.auc(ev.mean.seq)}</b></td>` : ""}${heads.map((h) => `<td><b>${fmt.auc(ev.mean[h])}</b></td>`).join("")}<td><b>${fmt.auc(ev.mean.blend)}</b></td><td colspan="6"></td>${evd ? `<td class="dim"><b>${fmt.auc(evd.mean.blend)}</b></td>` : ""}</tr>` : ""}
       ${hybrid && g ? `<tr class="generic-row"><td><b>generic</b> <span class="dim">(bank unknown)</span></td><td>${fmt.int(g.n)}</td><td>${fmt.int(g.fraud)}</td><td>${fmt.auc(g.vae.auroc)}</td><td>${g.booster ? fmt.auc(g.booster.auroc) : "–"}</td>${hasSeq ? `<td>${g.seq ? fmt.auc(g.seq.auroc) : "–"}</td>` : ""}${headCells(g)}<td><b>${fmt.auc(g.blend.auroc)}</b></td><td>${fmt.auc(g.blend.auprc)}</td><td>${fmt.pct(g.blend.recall_at_fpr["0.001"], 1)}</td><td><b>${fmt.pct(g.blend.recall_at_fpr["0.01"], 1)}</b></td><td>${fmt.pct(g.blend.recall_at_fpr["0.05"], 1)}</td><td>${g.blend.at_val_thresholds?.["fpr_0.01"] ? `${fmt.pct(g.blend.at_val_thresholds["fpr_0.01"].fpr, 2)} / ${fmt.pct(g.blend.at_val_thresholds["fpr_0.01"].recall, 1)} / ${fmt.pct(g.blend.at_val_thresholds["fpr_0.01"].precision, 1)}` : "–"}</td><td class="dim">${fmt.pct(g.vae.recall_at_fpr["0.01"], 1)}${g.booster ? ` / ${fmt.pct(g.booster.recall_at_fpr["0.01"], 1)}` : ""}</td>${slowCell("__generic__")}</tr>` : ""}
@@ -208,6 +221,8 @@ async function showRun(name, scroll = false) {
   // v5: the modules' own summaries (what each learned, on what, how well)
   const mods = [];
   if (d.seqhead?.sources) mods.push(`<tr><td>customer-history model</td><td>the summary of the customer's last ${d.seqhead.window} payments, ${fmt.int(d.seqhead.train_rows)} labelled rows</td><td>val AUROC ${Object.entries(d.seqhead.sources).map(([k, v]) => `${esc(k)} ${fmt.auc(v.auroc)}`).join(", ")}</td></tr>`);
+  if (d.booster?.txfm_dim) mods.push(`<tr><td>payment-history model</td><td>a transformer${d.encoder?.params ? ` of ${(d.encoder.params / 1e6).toFixed(0)}M parameters` : ""}, pretrained without labels to predict a customer's next payment${d.encoder?.steps ? ` (${fmt.int(d.encoder.steps)} steps${d.encoder.train_rows ? ` over ${fmt.int(d.encoder.train_rows)} rows of ${d.encoder.n_sources} datasets` : ""})` : ""}; the booster reads its ${d.booster.txfm_dim} columns for ${encoderBanks(d)}</td><td>${d.encoder?.best_val_next_nll != null ? `next-payment loss on validation ${fmt.num(d.encoder.best_val_next_nll, 3)} nats a field` : "–"}</td></tr>`);
+  if (d.txfmhead?.sources) mods.push(`<tr><td>history-model head</td><td>a small supervised model on those columns, one output per bank: ${Object.entries(d.txfmhead.sources).map(([k, v]) => `${esc(k)} ${fmt.int(v.train_rows)} rows`).join(", ")}</td><td>val AUROC ${Object.entries(d.txfmhead.sources).map(([k, v]) => `${esc(k)} ${fmt.auc(v.auroc)}`).join(", ")}</td></tr>`);
   if (d.specialists?.sources) mods.push(`<tr><td>per-bank specialists</td><td>one booster per bank with at least ${fmt.int(300)} labelled fraud rows</td><td>val AUROC ${Object.entries(d.specialists.sources).map(([k, v]) => `${esc(k)} ${fmt.auc(v.val_auroc)} (${v.best_iteration} trees)`).join(", ")}</td></tr>`);
   for (const [h, info] of Object.entries(d.heads || {})) mods.push(`<tr><td>${esc(info.label || h)} head</td><td>${(info.numeric || []).length + (info.categorical || []).length} fields, ${fmt.int(info.train_rows)} rows from ${Object.keys(info.sources || {}).join(", ")}</td><td>val AUROC ${Object.entries(info.sources || {}).map(([k, v]) => `${esc(k)} ${fmt.auc(v.auroc)}`).join(", ")}</td></tr>`);
   if (d.graph?.sources) mods.push(`<tr><td>entity graph</td><td>a graph neural network (GraphSAGE) per bank; ${Object.entries(d.graph.sources).map(([k, v]) => `${esc(k)} ${fmt.int(v.nodes_a)} nodes / ${fmt.int(v.edges_a)} edges`).join(", ")}</td><td>val AUROC ${Object.entries(d.graph.sources).map(([k, v]) => `${esc(k)} ${v.val_auroc == null ? "–" : fmt.auc(v.val_auroc)}`).join(", ")}</td></tr>`);
@@ -215,8 +230,8 @@ async function showRun(name, scroll = false) {
   if (d.behaviour?.modalities) mods.push(`<tr><td>behaviour models (mouse, keystrokes, touch, motion)</td><td>${Object.entries(d.behaviour.modalities).map(([k, v]) => `${esc(k)}: ${v.train_users} users (${(v.datasets || []).join(", ")})`).join("; ")}</td><td>${Object.entries(d.behaviour.modalities).map(([k, v]) => v.open_set ? `${esc(k)} EER ${fmt.pct(v.open_set.eer, 1)} on ${v.open_set.users} unseen users` : (v.balabit ? `${esc(k)} Balabit AUROC ${fmt.auc(v.balabit.auroc)}, EER ${fmt.pct(v.balabit.eer, 1)}` : esc(k))).join("; ")}</td></tr>`);
   if (d.graph_bench) mods.push(`<tr><td>graph benchmarks</td><td>the same graph model on four public fraud networks</td><td>test AUROC ${Object.entries(d.graph_bench).map(([k, v]) => `${esc(k)} ${fmt.auc(v.auroc)}`).join(", ")}</td></tr>`);
   if (mods.length) {
-    parts.push(`<h3>The extra models (v5)</h3><table class="metric-table"><thead><tr><th>model</th><th>trained on</th><th>its own result</th></tr></thead><tbody>${mods.join("")}</tbody></table>
-      <p class="dim small">The customer-history model, the specialists, the device model and the entity graph feed the blend (each appears in the table above where it applies). The text and behaviour models never see a payment row: they add their evidence to the verdict only when a request carries text or a session, and their numbers come from their own public datasets.</p>`);
+    parts.push(`<h3>The extra models (v5 on)</h3><table class="metric-table"><thead><tr><th>model</th><th>trained on</th><th>its own result</th></tr></thead><tbody>${mods.join("")}</tbody></table>
+      <p class="dim small">The customer-history model, the specialists, the device model and the entity graph feed the blend (each appears in the table above where it applies).${d.booster?.txfm_dim ? ` The payment-history model feeds the booster${d.txfmhead?.sources ? ", and its head feeds the blend" : ""}.` : ""}${d.calibration?.blend?.without_vae ? " This version's blend is fit without the VAE's score: the VAE explains a payment on the receipt and does not vote in the verdict." : ""} The text and behaviour models never see a payment row: they add their evidence to the verdict only when a request carries text or a session, and their numbers come from their own public datasets.</p>`);
   }
   if (d.calibration) {
     const c = d.calibration;
