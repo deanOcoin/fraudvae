@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Update a deployed site to the current code: pull (or rsync from a checkout), reinstall,
-# restart. Run as root:  bash /srv/fraudvae/app/deploy/update.sh [--source /path/to/checkout]
+# restart, and wait until the app answers; the exit status is 0 only if it does. Run as root:
+#   bash /srv/fraudvae/app/deploy/update.sh [--source /path/to/checkout]
 set -euo pipefail
 # the pull or rsync below replaces this very file while bash is still reading it: run from a
 # copy, so the new version is picked up on the next run rather than halfway through this one
@@ -55,6 +56,17 @@ systemctl daemon-reload
 systemctl restart fraudvae
 # the answers nginx cached came from the old code
 rm -rf /var/cache/nginx/fraudvae/* 2>/dev/null || true
-sleep 3
+# the app loads the default generation before it listens (thirteen seconds on the site's box),
+# so ask until it answers rather than once after a fixed pause: the exit status then says
+# whether the new code is serving, and a service not back within ninety seconds fails the run
+SECONDS=0
+until meta=$(curl -fs -m 5 http://127.0.0.1:8765/api/meta); do
+  if [ "$SECONDS" -ge 90 ]; then
+    systemctl --no-pager --lines=20 status fraudvae || true
+    echo "update.sh: no successful answer from 127.0.0.1:8765/api/meta in ${SECONDS} s, the service has not come back (journalctl -u fraudvae)" >&2
+    exit 1
+  fi
+  sleep 1
+done
 systemctl --no-pager --lines=3 status fraudvae || true
-curl -s -m 5 http://127.0.0.1:8765/api/meta | head -c 200; echo
+printf 'answered after %s s: %s\n' "$SECONDS" "${meta:0:200}"

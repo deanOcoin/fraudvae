@@ -99,6 +99,10 @@ tail -f /srv/fraudvae/home/server.log
 bash /srv/fraudvae/app/deploy/update.sh            # after `git pull` / with --source for a copied checkout
 ```
 
+`update.sh` ends by asking the restarted app for `/api/meta` once a second until it gets a
+successful answer, and prints how long that took. If none has come after ninety seconds it
+prints the unit's status and exits 1, so its exit status says whether the new code is serving.
+
 The systemd unit runs the service as an unprivileged user with a read-only view of the
 system, a 12 GB memory ceiling, no capabilities, a system-call allow-list and no network
 beyond localhost; nginx terminates TLS, caps request bodies at 6 MB, limits requests per
