@@ -140,6 +140,61 @@ def test_event_encoder_chunks_large_batches(monkeypatch):
     assert torch.allclose(whole, chunked, atol=1e-5) and torch.allclose(tw, tc, atol=1e-5)
 
 
+def _readout_the_long_way(m, tok, toks, dt, valid):
+    """the readout as one full pass: every slot through the event encoder, every position scored"""
+    with torch.no_grad():
+        states, _ = m(toks, dt, valid, fields=tok.fields_for(toks))
+        L = toks.shape[1]
+        obs = tok.observed(toks) & valid.unsqueeze(-1)
+        tgt = torch.zeros_like(obs)
+        tgt[:, L - 1] = obs[:, L - 1]
+        nll = m.next_event_nll(states, toks, tgt)[:, L - 1, : tok.n_fields - 2]
+        o = obs[:, L - 1, : tok.n_fields - 2]
+        per_field = torch.where(o, nll, torch.full_like(nll, float("nan")))
+        total = (nll * o).sum(1) / o.sum(1).clamp(min=1)
+    return states[:, L], per_field, total
+
+
+def test_readout_encodes_only_the_events_a_window_holds(monkeypatch):
+    """the readout skips empty slots and scores the last event alone; what it returns is the
+    full pass's, and the event encoder is handed the held events and no others"""
+    torch.manual_seed(0)
+    tok = _tok()
+    F = tok.n_fields
+    tok.source_fields = {3: sorted({0, 1, 5, F - 2, F - 1})}
+    m = TransactionEncoder(tok.vocab, F, tok.sizes, tok.D, d_model=32, event_layers=2, history_layers=2, heads=4, window=12).eval()
+    B, L = 4, 12
+    toks = tok.encode(torch.randn(B, L, 5), (torch.rand(B, L, 5) > 0.2).float(), torch.randint(0, 3, (B, L, 3)),
+                      torch.full((B, L), 3), torch.rand(B, L) * 1e5)
+    dt = torch.rand(B, L) * 10
+    seen = []
+    whole = m.encode_events
+    monkeypatch.setattr(m, "encode_events", lambda t, fields=None: (seen.append(t.shape[0] * t.shape[1]), whole(t, fields))[1])
+    # histories of 0, 2, 5 and 11 past events at the end of the window, as the server pads them;
+    # then a window with a gap in the middle; then one with every slot held
+    aligned = torch.zeros(B, L, dtype=torch.bool)
+    for b, n_past in enumerate((0, 2, 5, 11)):
+        aligned[b, L - 1 - n_past :] = True
+    gap = aligned.clone()
+    gap[3, 4:7] = False
+    for valid, held, lead in ((aligned[:3], 1 + 3 + 6, 6), (aligned, 1 + 3 + 6 + 12, 0), (gap, 1 + 3 + 6 + 9, 0),
+                              (torch.ones(B, L, dtype=torch.bool), B * L, 0)):
+        n = len(valid)
+        seen.clear()
+        h, per_field, total = readout(m, tok, toks[:n], dt[:n], valid)
+        assert seen == [held], (seen, held, lead)
+        seen.clear()
+        h0, pf0, t0 = _readout_the_long_way(m, tok, toks[:n], dt[:n], valid)
+        assert seen == [n * L]
+        assert torch.allclose(h, h0, atol=1e-5) and torch.allclose(total, t0, atol=1e-5)
+        assert torch.equal(torch.isnan(per_field), torch.isnan(pf0))
+        assert torch.allclose(torch.nan_to_num(per_field), torch.nan_to_num(pf0), atol=1e-5)
+    # a single event, the row without a past, is a window of one and reads the same either way
+    h, per_field, total = readout(m, tok, toks[:, -1:], dt[:, -1:], torch.ones(B, 1, dtype=torch.bool))
+    h0, pf0, t0 = _readout_the_long_way(m, tok, toks[:, -1:], dt[:, -1:], torch.ones(B, 1, dtype=torch.bool))
+    assert torch.allclose(h, h0, atol=1e-5) and torch.allclose(total, t0, atol=1e-5)
+
+
 def test_windows_from_history_match_the_v5_tensors():
     tok = _tok()
     B, L = 2, 3

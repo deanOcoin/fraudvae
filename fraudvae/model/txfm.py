@@ -234,14 +234,16 @@ class TransactionEncoder(nn.Module):
             tok_out = x
         return self.event_norm(evt).reshape(B, L, -1), tok_out.reshape(B, L, Fn, -1)
 
-    def encode_history(self, events, dt_log, valid, block=None):
+    def encode_history(self, events, dt_log, valid, block=None, first: int = 0):
         """events [B, L, d] oldest first, dt_log [B, L] (log1p seconds since the previous event,
         0 for none), valid [B, L] -> states [B, L + 1, d]: states[:, t] has seen events < t.
         block [B, L] ids: a window that holds several customers in a row (the block pass over
-        the sequence index); an event then sees only earlier events of its own block"""
+        the sequence index); an event then sees only earlier events of its own block.
+        first: the window position of events[:, 0], for a caller that left out leading slots no
+        row uses (the readout); the events that remain keep the positions they had"""
         B, L, _ = events.shape
         dev = events.device
-        pos = torch.arange(L, device=dev)
+        pos = torch.arange(L, device=dev) + int(first)
         x = events + self.pos(pos + 1)[None] + self.time(dt_log.unsqueeze(-1).float())
         x = torch.cat([self.bos.expand(B, 1, -1) + self.pos.weight[0][None, None], x], dim=1)
         pad = torch.cat([torch.zeros(B, 1, dtype=torch.bool, device=dev), ~valid], dim=1)
@@ -378,14 +380,32 @@ def windows_from_history(tok: Tokeniser, num, mask, cat, src, hist, cur_dt_secs=
 def readout(model: TransactionEncoder, tok: Tokeniser, tokens, dt_log, valid):
     """for the last event of each window: the state after it [B, d] and the per-field surprise
     [B, F - 2] (nll of each observed content field from the state before it; NaN unobserved)
-    and the mean surprise [B]. the booster's and the receipt's view of the encoder."""
-    states, _ = model(tokens, dt_log, valid, fields=tok.fields_for(tokens))
-    L = tokens.shape[1]
-    obs = tok.observed(tokens) & valid.unsqueeze(-1)
-    tgt = torch.zeros_like(obs)
-    tgt[:, L - 1] = obs[:, L - 1]
-    nll = model.next_event_nll(states, tokens, tgt)[:, L - 1, : tok.n_fields - 2]
-    o = obs[:, L - 1, : tok.n_fields - 2]
+    and the mean surprise [B]. the booster's and the receipt's view of the encoder.
+
+    Only what those depend on is computed. An empty slot is a masked key of the history encoder
+    and its own state is replaced by the start token's, so its event vector reaches nothing: the
+    event encoder reads the events a window holds and no others, and the leading slots that are
+    empty in every row are left out (the rest keep their positions). The surprise is scored for
+    the last event alone. A customer with eight past payments in a window of 128 costs nine
+    events, not 128; the numbers are the full pass's up to float rounding."""
+    fields = tok.fields_for(tokens)
+    B, L = valid.shape
+    used = torch.nonzero(valid.any(dim=0))
+    lead = min(int(used[0]), L - 1) if len(used) else L - 1
+    if lead:
+        tokens, dt_log, valid = tokens[:, lead:], dt_log[:, lead:], valid[:, lead:]
+        L = L - lead
+    if bool(valid.all()):
+        events, _ = model.encode_events(tokens, fields)
+    else:
+        held, _ = model.encode_events(tokens[valid].unsqueeze(0), fields)
+        events = held.new_zeros(B, L, held.shape[-1])
+        events[valid] = held[0]
+    states = model.encode_history(events, dt_log, valid, first=lead)
+    o = (tok.observed(tokens[:, L - 1]) & valid[:, L - 1 :])[:, : tok.n_fields - 2]
+    tgt = torch.zeros(B, 1, tok.n_fields, dtype=torch.bool, device=tokens.device)
+    tgt[:, 0, : tok.n_fields - 2] = o
+    nll = model.next_event_nll(states[:, L - 1 : L], tokens[:, L - 1 :], tgt)[:, 0, : tok.n_fields - 2]
     per_field = torch.where(o, nll, torch.full_like(nll, float("nan")))
     total = (nll * o).sum(1) / o.sum(1).clamp(min=1)
     return states[:, L].float(), per_field.float(), total.float()
