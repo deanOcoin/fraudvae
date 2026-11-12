@@ -60,7 +60,7 @@ const GLOSSARY = {
   "graph head": "graph head: the model that scores a payment from the network around it - which customers, merchants, devices and cards are connected to which - using a graph neural network per dataset. Reads the entity graph.",
   "head": "head (of a model): a small final layer that reads an internal representation and outputs one specific thing, such as a fraud score. Several heads can share one representation.",
   "module": "module: a self-contained part of the system with its own training and its own score, plugged into the blend: the device head, the graph head, the text heads, the behaviour verifiers.",
-  "transformer": "transformer: the neural-network design behind modern language models. Here a small one reads the customer's previous payments, in order, and summarises them so the VAE can judge the next payment against that customer's own habits.",
+  "transformer": "transformer: the neural-network design behind modern language models. Here a small one reads the customer's previous payments, in order, and summarises them so the VAE can judge the next payment against that customer's own habits; from v6 a large one, pretrained on unlabelled payments, does the same for the booster.",
   "history encoder": "history encoder: the small transformer that reads a customer's previous payments (up to 32) and turns them into a summary vector. Both halves of the VAE read it, so 'unusual' means unusual for this customer.",
   "latent": "latent (space / vector): the few numbers the VAE compresses a payment into - its summary. Nearby points in latent space are payments the model sees as similar.",
   "latent space": "latent space: the compressed representation inside the VAE, a few numbers per payment. Nearby points are payments the model sees as similar; the chart on the score tab shows where one lands among validation traffic.",
@@ -140,8 +140,10 @@ const GLOSSARY = {
   "nginx": "nginx: the web server in front of the app on the public site. It handles the encryption and the first layer of rate limiting.",
   "rate limit": "rate limit: a cap on how many requests one visitor can make per minute, so no one can keep the server busy for everyone else.",
   "receipt": "receipt: the itemised explanation that comes with every score: which fields looked unusual, what pushed the booster's verdict, which models were consulted.",
-  "generation": "generation: one trained version of the model you can pick on the score tab. Six are kept, oldest to newest, so progress is something you can test rather than read about.",
-  "post stage": "post stage: everything after the VAE finished training: the booster, the specialists, the heads, calibration and evaluation. Can be redone on the same VAE, which is what the last two v5 generations are.",
+  "generation": "generation: one trained version of the model you can pick on the score tab. Eight are kept, oldest to newest, so progress is something you can test rather than read about.",
+  "post stage": "post stage: everything after the VAE finished training: the booster, the specialists, the heads, calibration and evaluation. Can be redone on the same VAE, which is what the last two v5 generations, v6 and v7 are.",
+  "history model": "history model: a large transformer (128 million parameters) trained without fraud labels to predict a customer's next payment from the ones before. From v6 the booster reads what it makes of a customer's history; it gives no verdict of its own.",
+  "nats": "nats: the unit of surprise here. 0 means the history model saw the value coming; about 4 is what a blind guess among a field's 64 buckets costs.",
 };
 
 // longest terms first so "false-positive rate" wins over "rate", and a word boundary on both sides
