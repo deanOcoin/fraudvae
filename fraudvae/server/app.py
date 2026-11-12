@@ -49,7 +49,7 @@ except OSError:
 
 def _preload():
     """warm the other generations in the background so the first visitor's comparison does
-    not pay six model loads: FRAUDVAE_PRELOAD=milestones (the default on a public site),
+    not pay eight model loads: FRAUDVAE_PRELOAD=milestones (the default on a public site),
     all, or none"""
     want = os.environ.get("FRAUDVAE_PRELOAD", "milestones" if public.PUBLIC else "none").lower()
     if want in ("", "none", "0", "no"):

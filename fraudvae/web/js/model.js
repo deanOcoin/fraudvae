@@ -86,6 +86,10 @@ function renderTimeline() {
   if (!box) return;
   box.innerHTML = "";
   if (!timelineItems.length) { box.innerHTML = "<p class='dim'>No trained versions on this server yet.</p>"; return; }
+  // the heading counts what this server holds, in words up to twelve
+  const count = document.getElementById("timeline-count");
+  const words = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"];
+  if (count) count.textContent = words[timelineItems.length] || String(timelineItems.length);
   // newest first
   for (const m of [...timelineItems].reverse()) box.append(card(m, runs.find((r) => r.name === m.name)));
 }

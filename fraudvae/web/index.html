@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#17232f">
 <title>FinFraud</title>
-<meta name="description" content="FinFraud: fraud screening for payment transactions. A model that learnt what normal payments look like, one that learnt what known fraud looks like, and a receipt that explains every verdict. Score a transaction on any of its six generations.">
+<meta name="description" content="FinFraud: fraud screening for payment transactions. A model that learnt what normal payments look like, one that learnt what known fraud looks like, and a receipt that explains every verdict. Score a transaction on any of its eight generations.">
 <!-- the card a link to the site unfolds into in a chat, a feed or an e-mail -->
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="FinFraud">
@@ -210,11 +210,11 @@
         <p class="lede">Every version of the model that was trained, newest first: what it was trained on, how long it took, and how it scores on data it never saw. Select a version to see its full record below the list; <i>score a payment with it</i> opens the Score tab with that version chosen.</p>
       </header>
       <section class="timeline-section">
-        <div class="card-head"><h2>The six versions</h2><span class="dim">newest first · the same payment can be scored on any of them</span></div>
+        <div class="card-head"><h2>The <span id="timeline-count">eight</span> versions</h2><span class="dim">newest first · the same payment can be scored on any of them</span></div>
         <div class="gen-list" id="timeline"></div>
       </section>
       <section class="other-runs hidden" id="other-runs">
-        <div class="card-head"><h2>Other runs on this machine</h2><span class="dim">experiments and partial runs that are not one of the six</span></div>
+        <div class="card-head"><h2>Other runs on this machine</h2><span class="dim">experiments and partial runs that are not on the timeline above</span></div>
         <div class="gen-list compact" id="runs-list"></div>
       </section>
       <div class="run-detail" id="run-detail"><p class="dim">Select a version.</p></div>
