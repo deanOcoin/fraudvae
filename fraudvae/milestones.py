@@ -4,6 +4,7 @@ Kept apart from the server so `fraudvae models pack` can read it on a machine wi
 from __future__ import annotations
 
 # hardware is what each was actually trained on; vae_from marks a booster-side refit of another run's checkpoint
+# (v6 and v7 also read a pretrained transaction encoder, txfm.pt beside the booster)
 MILESTONES = {
     "cpu_small-8src": {
         "version": "v3", "label": "on a laptop", "order": 0,
@@ -48,7 +49,30 @@ MILESTONES = {
         "hardware": "the VAE checkpoint of e; booster side refit on the H200 box (64 CPU cores)", "corpus": "as e",
         "what": "Fraud share over the last 7 / 30 days before the label horizon (tabformer 74% to 86% of its fraud at 1% FPR), "
                 "and the booster trained for both label latencies, so a deployment whose labels take a month is a "
-                "regime it has seen. 0.963 over the nine, 0.969 generic. What ships.",
-        "changed": "Looks at a merchant's fraud over the last 7 and 30 days rather than its whole lifetime, and copes whether or not fresh labels are available. 0.963 average over the nine shared datasets; what ships.",
+                "regime it has seen. 0.963 over the nine, 0.969 generic. What shipped until v7.",
+        "changed": "Looks at a merchant's fraud over the last 7 and 30 days rather than its whole lifetime, and copes whether or not fresh labels are available. 0.963 average over the nine shared datasets; what shipped until v7.",
+    },
+    "v6-base-e": {
+        "version": "v6", "label": "a pretrained model of payment histories", "order": 6, "vae_from": "v5-h200-e",
+        "hardware": "the encoder on a rented node of 8 NVIDIA B200 GPUs (60,000 steps, four and a half hours); the VAE checkpoint of e; booster side refit on one of them",
+        "corpus": "the encoder: 16 datasets (five more AMLworld variants), 328M training rows, no labels; the booster as e",
+        "what": "A 128M-parameter transformer pretrained without labels to predict a customer's next payment field by field. "
+                "Its state after the customer's last 127 payments and its surprise at each field of this one, 888 columns, "
+                "go to the booster for every bank. tabformer 85.9% to 94.3% of its fraud at 1% FPR (73.4% to 87.6% when "
+                "labels take a month), fdh and amlworld better; capone, ieee and fraudecom a little worse. 0.9277 to 0.9282 "
+                "mean AUROC over the eleven: a trade, not a step.",
+        "changed": "A large model that read 328 million payments with no fraud labels and learnt what a customer's next payment looks like. What it makes of a customer's history goes to the decision trees. A big gain for the bank with long card histories (86% to 94% of its fraud caught), a small loss for three others.",
+    },
+    "v7-f": {
+        "version": "v7", "label": "the history model where it helps", "order": 7, "vae_from": "v5-h200-e",
+        "hardware": "the encoder of v6, unchanged; the VAE checkpoint of e; booster side refit on a rented box with 2x NVIDIA H200 NVL",
+        "corpus": "as v6",
+        "what": "v6's block for tabformer and fdh only (a control showed capone's and ieee's losses were the weight of 888 "
+                "more columns on the trees), a supervised head on that block as one more signal for the blend, and the blend "
+                "fit without the VAE's two columns. Against h on the same 8.6M test rows, paired: mean recall at 1% FPR "
+                "+0.011 [+0.009, +0.013], +0.018 [+0.016, +0.021] when labels take a month; tabformer 85.9% to 95.4% "
+                "(73.4% to 90.6%); no bank worse beyond a few millionths of AUROC on paysim. 0.964 over the nine, 0.971 "
+                "generic. What ships.",
+        "changed": "Uses the history model only for the two banks where it earned its place, adds a small model trained on fraud labels on top of it, and lets the verdict rest on the models that learnt fraud. More fraud caught at the same false-alarm rate on average, 86% to 95% for the bank with long card histories, and no bank worse; what ships.",
     },
 }
