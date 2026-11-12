@@ -560,7 +560,7 @@ run twice), a `prepare` and a `post` on a copy of the e checkpoint: 30 minutes o
   entity's first week looks like that in training) rather than feed it labels it would
   not have had.
 
-### Round 3 (v5-h200-h, what ships): label latency as a first-class thing, and the booster reads the transformer
+### Round 3 (v5-h200-h, what shipped until v7): label latency as a first-class thing, and the booster reads the transformer
 
 Three changes on the booster side, each its own `post` on the e checkpoint (the VAE never
 moved), compared on the same test rows as f:
@@ -626,7 +626,7 @@ one-week block blanked; the last two columns are the v4 release):
   so a better novelty model would have changed the receipt and nothing the app flags on.
   The config is kept for whoever wants the novelty score itself to be better.
 
-## v6: the transaction encoder (in progress)
+## v6: the transaction encoder
 
 The plan and the reading behind it are in the owner's notes; the shape is in
 `docs/ARCHITECTURE.md` (v6). Code landed first, numbers follow as the runs come in.
@@ -1046,3 +1046,60 @@ evaluations, the caches of two encoders, the probes, the fine-tune and nineteen 
 settings each; the plan's estimate was nine to eleven hours and $80-100. About an hour and a half of it went to
 shared gpus, one evaluation lost to memory pressure and run again alone, and two scripting faults. Every result is
 under `runs/` on the Mac and on the storage VPS, verified by sha256 lists on both sides, and the box is gone.
+
+### What shipped, and what serving it took (2026-11-12)
+
+**What shipped.** Two generations joined the timeline, on the owner's choice of the second reading above (a minimum
+effect size, so paysim's millionths are not a loss): `v6-base-e` as v6, the trade, and `v7-f` as v7, the default. Their
+bundles are on the `pretrained` release, 837 MB and 844 MB, 513 MB of each the encoder (sha256 `59558b7e...`), packed
+from the copies that came back from the node and the box with three things added: `txfm.pt`, `txfm.json` (a summary
+written from what the checkpoint records) and a latent map with v5-h200-e's points and no per-point scores, because the
+rounds' own maps were not copied back. Each run's `manifest.json` has a "bundle" record that says so; v7-f's keeps the
+post stage's record under it, and every other artefact has the hash that record gives.
+
+**The encoder on a CPU.** The site's box is six virtual cores without AVX. A full window of 128 events of 40 tokens
+costs 4.4 s there on four threads, about a thirtieth of a second per event, where the rest of a score is a quarter of a
+second. Serving therefore reads no event it does not need: a row whose block is blanked is not encoded, the readout
+encodes the events a window holds and scores the surprise for the last one only, a CPU readout takes 256 events at a
+time, the pass runs outside the lock a generation's scoring holds, and public mode gives a file 1,000 encoder rows and
+reads histories of more than eight payments one at a time. The first measurement through the service was still four
+times what the same code took in a shell on the same box: 1.56 s for nine events against 0.45. The unit's system-call
+filter denies `sched_setaffinity`; MKL counts cores by pinning itself to each in turn, counts one, and torch sizes its
+pool from MKL, so every generation had been scoring on one thread since the filter went in, which a v5 score is too
+small to show. The server now sets the count from `OMP_NUM_THREADS` itself. Measured on the box after that, eight
+generations resident:
+
+| what | seconds |
+|---|---|
+| v5-h200-h, any payment | 0.27 |
+| v7-f, a bank its block is not for, or a payment judged without its history | 0.3 |
+| v7-f, tabformer with 8 earlier payments (an example row) | 0.8 |
+| v6-base-e, tabformer or sparkov with 8 earlier payments | 0.65 |
+| v7-f, 32 / 127 earlier payments | 1.8 / 6.0 |
+| the tabformer example compared across all eight | 2.1 |
+
+The eight hold 7.5 GB of the unit's 11 GB, about 2 GB for each of the two with the encoder.
+
+**The history has to come with the payment.** The example picker sent a row alone, and the first look at the example
+rows through the app did not match the test numbers. A window that holds the payment alone is a first payment's, and
+the trees met that state only beside a new customer's fields. tabformer's 300 example rows at the 1% budget, by what
+came with the payment (honest rows judged right of 150 / frauds caught of 150 / AUROC):
+
+| generation | alone | 8 earlier payments | 32 | 127 |
+|---|---|---|---|---|
+| v5-h200-h | 149 / 133 / 0.9950 | 149 / 133 / 0.9948 | 149 / 133 / 0.9948 | 149 / 133 / 0.9948 |
+| v6-base-e | 107 / 150 / 0.9927 | 149 / 141 / 0.9961 | 149 / 141 / 0.9977 | 149 / 139 / 0.9981 |
+| v7-f (alone: read as a first payment) | 137 / 149 / 0.9975 | 149 / 142 / 0.9955 | 150 / 143 / 0.9972 | 150 / 143 / 0.9986 |
+| v7-f (alone: the block left out, the rule below) | 150 / 129 / 0.9944 | | | |
+
+So the example rows now carry their customer's last eight payments, taken from the processed table in the prepared
+set's sequence order, and the picker sends them. All 1,679 example rows of the six redistributable sources, right
+verdicts on the 900 honest and the 779 fraud rows: v5-h200-h 889 and 635, v6-base-e 888 and 658, v7-f 891 and 645;
+sent alone they were 891 and 630, 830 and 663, 879 and 653. And a payment whose own fields count earlier payments but
+which arrives without them goes without the block where the booster has met rows without it (v7-f: routed), which is
+the last row of the table: no false alarm, and four frauds fewer than v5-h200-h. Where it has not (v6-base-e) leaving
+the block out is worse than the first-payment reading: over the 1,679 rows the AUROC falls from 0.961 to 0.929, and
+amlworld's frauds caught from 135 of 150 to none. v6-base-e keeps the reading and its receipt says the payment arrived
+alone. On fdh's 300 sample rows (local, not redistributable) v7-f read as a first payment flags 13 of 150 honest rows;
+with the block left out, 1, and 99 of 150 frauds against v5-h200-h's 106; with eight earlier payments 6 and 106, with
+thirty-two 5 and 107: level with v5-h200-h on a sample too small to show the +0.013 the test split measured.

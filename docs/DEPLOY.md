@@ -56,9 +56,15 @@ adds the rest on a later run).
 ## The server
 
 The site runs on a VPS at 1984.hosting (Iceland): 6 vCPU, 16 GB of RAM, 320 GB SSD, no
-GPU. Inference is CPU work here; a single transaction scores in about 0.2 s on the v5
-generation, a six-way comparison in about a second once every generation is resident
-(`FRAUDVAE_PRELOAD=milestones` loads them at start; six generations take ~7 GB). The whole
+GPU. Inference is CPU work here, on four threads. A payment scores in about 0.3 s on any
+generation that does not send it through the transaction encoder: every generation up to v5,
+and v7 for a bank its block is not routed to. With the eight earlier payments an example row
+carries, a TabFormer payment takes about 0.8 s on v7 and 0.65 s on v6, an eight-way
+comparison of it about two seconds, and a full history of 127 payments six seconds, which is
+why those run one at a time. Every generation is resident (`FRAUDVAE_PRELOAD=milestones`
+loads them at start, a minute to a minute and a half for the eight); together they hold
+7.5 GB, about 2 GB for each of the two that carry the encoder, under the unit's 11 GB soft
+and 12 GB hard ceilings. The whole
 corpus is not on the server, and neither is the processed data: the only rows it holds are
 the example files committed with the repository.
 
