@@ -850,6 +850,52 @@ def test_receipt_says_what_the_history_model_was_read_for(encoder_run):
     assert r["blend"]["without_vae"] is False and isinstance(r["blend"]["signals"], list)
 
 
+def test_a_payment_without_its_history_is_not_read_as_a_first_payment(encoder_run, monkeypatch):
+    """a payment whose own fields say the customer has earlier payments and which arrives without
+    them. A generation whose booster met rows without the block leaves the block out (no encoder
+    pass, and the receipt says why); a file's rows follow the same rule; a booster that never met
+    a missing block keeps the first-payment reading"""
+    import pandas as pd
+
+    import fraudvae.model.txfm as T
+    from fraudvae.server.inference import ActiveModel
+
+    m = ActiveModel(encoder_run, device="cpu")
+    assert m.txfm.blanks_trained                      # routed to fdh: the trees met rows without the block
+    events = []
+    readout_ = T.readout
+
+    def watched(model, tk, toks, dt, valid):
+        events.append(int(valid.sum()))
+        return readout_(model, tk, toks, dt, valid)
+
+    monkeypatch.setattr(T, "readout", watched)
+    alone = {"amount": 12.5, "cust_txn_count_prior": 40}
+    sm = m.score(alone, source="fdh", remember=False, seed=0)["sequence_model"]
+    assert events == [] and sm["used"] is False and sm["skipped"] == "no_history" and sm["past_in_fields"] is True
+    # the same payment with its past is read, and so is one that claims no past
+    sm = m.score(alone, source="fdh", history=_history(3), remember=False, seed=0)["sequence_model"]
+    assert events == [4] and sm["used"] is True and sm["skipped"] is None
+    events.clear()
+    sm = m.score({"amount": 12.5, "cust_txn_count_prior": 0}, source="fdh", remember=False, seed=0)["sequence_model"]
+    assert events == [1] and sm["used"] is True and sm["past_in_fields"] is False
+    # a bank the block is not for says so
+    assert m.score(alone, source="capone", remember=False, seed=0)["sequence_model"]["skipped"] == "bank"
+    # a file: the rows that speak of a past go without the block and do not count against the encoder's limit
+    events.clear()
+    df = pd.DataFrame({"amount": [5.0, 6.0, 7.0], "source": ["fdh"] * 3, "cust_txn_count_prior": [0, 12, None]})
+    assert m.encoder_rows(df) == 2
+    out = m.score_frame(df)
+    surprise = out["sequence_surprise"].to_numpy()
+    assert events == [2] and np.isnan(surprise[1]) and np.isfinite(surprise[[0, 2]]).all()
+    # a booster that never met a missing block (the block for every bank, no gate) reads it as before
+    m.txfm.set_sources(None)
+    assert not m.txfm.blanks_trained
+    events.clear()
+    sm = m.score(alone, source="fdh", remember=False, seed=0)["sequence_model"]
+    assert events == [1] and sm["used"] is True and sm["past_in_fields"] is True
+
+
 def test_a_runs_record_carries_the_encoders_summary(encoder_run):
     """what the model page reads about a v6 run: the encoder's own summary (the txfm.json that
     travels with txfm.pt) and the booster's routing of its block"""

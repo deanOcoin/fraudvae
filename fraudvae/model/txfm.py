@@ -586,22 +586,42 @@ class TxfmScorer:
         src = np.asarray(src.cpu().numpy() if hasattr(src, "cpu") else src).astype(np.int64)
         return np.ones(src.shape, dtype=bool) if self.sources is None else np.isin(src, list(self.sources))
 
-    def reads(self, src, hist=None) -> np.ndarray:
+    @property
+    def blanks_trained(self) -> bool:
+        """whether the booster this block feeds met rows without it in training: a routing leaves
+        the other sources' rows and every bank-blanked copy with none, gate_first a customer's
+        first event. Only such a booster can be handed a row whose block is withheld"""
+        return self.sources is not None or self.gate_first
+
+    def _came_with_history(self, n: int, hist) -> np.ndarray:
+        if hist is None or self.window < 2:
+            return np.zeros(n, dtype=bool)
+        return hist[4][:, -(self.window - 1) :].any(dim=1).cpu().numpy()
+
+    def reads(self, src, hist=None, past=None) -> np.ndarray:
         """[B] bool: the rows whose block the encoder has to compute. A row of a source the block
         is not routed to carries NaN whatever the encoder would say, and so does a customer's
-        first event under gate_first (hist None: rows that come without a past, a csv's)"""
+        first event under gate_first (hist None: rows that come without a past, a csv's).
+
+        past ([B] bool, what a server passes): the rows whose own fields say the customer has
+        earlier payments. One that arrives without them is not a first payment, and read as one
+        it hands the trees a new customer's state beside an old customer's fields, a pair they
+        never met: on tabformer's held-out rows it turned 1 false alarm in 150 into 13. Where
+        the booster has met rows without the block (blanks_trained) such a row goes without it,
+        which scores it as the generation before the encoder would; a booster that never met a
+        missing block (v6-base-e) has nothing better than the first-payment reading"""
         keep = self.routed(src)
         if self.gate_first:
-            if hist is None or self.window < 2:
-                keep[:] = False
-            else:
-                keep &= hist[4][:, -(self.window - 1) :].any(dim=1).cpu().numpy()
+            keep &= self._came_with_history(len(keep), hist)
+        if past is not None and self.blanks_trained:
+            keep &= ~(np.asarray(past, dtype=bool) & ~self._came_with_history(len(keep), hist))
         return keep
 
-    def features(self, num, mask, cat, src, hist=None) -> np.ndarray:
+    def features(self, num, mask, cat, src, hist=None, past=None) -> np.ndarray:
         """[B, dim] float32 for a batch of current rows with their history tensors (any window;
-        the last `window - 1` past events are used), or hist None for rows without a past"""
-        keep = self.reads(src, hist)
+        the last `window - 1` past events are used), or hist None for rows without a past.
+        past: see reads; training, calibration and evaluation never pass it"""
+        keep = self.reads(src, hist, past)
         if not keep.all():
             # the rows whose block is blanked are not encoded at all: for a round that routes the
             # block to two sources, most of what a server scores

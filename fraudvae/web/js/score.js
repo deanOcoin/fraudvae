@@ -883,7 +883,11 @@ function renderReceipt(r, label, { fresh = false, reveal = false } = {}) {
     lines.push(`<div class="rc-sep"></div>`);
     lines.push(`<div class="rc-sub">HISTORY MODEL  <span class="dim">a transformer pretrained on unlabelled payments${sm.used ? `, ${sm.n_history} of up to ${sm.window - 1} previous payments read` : ""}</span></div>`);
     if (!sm.used) {
-      lines.push(`<div class="rc-line dim"><span>${banks && !sm.sources.includes(r.source) ? `not read for this bank: this version uses it for ${esc(banks)} only, where it earned its place` : "not read: no earlier payments came with this one"}</span></div>`);
+      // left out: a bank its block is not for, or a payment that came without the past its own fields speak of
+      const why = sm.skipped === "bank" ? `not read for this bank: this version uses it for ${esc(banks || "some banks")} only, where it earned its place`
+        : sm.past_in_fields ? "left out: this payment's own fields say the customer has earlier payments, and none came with it. read alone it would pass for a new customer's and raise false alarms, so this version judges it without the history model, the way the version before it would. add the earlier payments below to bring it in"
+        : "left out: no earlier payments came with this one";
+      lines.push(`<div class="rc-line dim"><span>${why}</span></div>`);
     } else {
       if (sm.surprise != null) lines.push(`<div class="rc-line"><span class="k">how unexpected this payment is, after the earlier ones</span><span>${fmt.num(sm.surprise, 2)} nats a field</span></div>`);
       for (const f of (sm.most_surprising || []).slice(0, showAll ? 5 : 3)) {
@@ -895,7 +899,9 @@ function renderReceipt(r, label, { fresh = false, reveal = false } = {}) {
         lines.push(`<div class="rc-line"><span class="k">fraud score, from its reading alone</span><span class="${ts.flag ? "z hot" : ""}">${(100 * ts.prob).toFixed(ts.prob < 0.1 ? 2 : 1)}${tf}</span></div>`);
         if (ts.legit_percentile != null) lines.push(`<div class="rc-line"><span class="k">above this share of normal</span><span>${pctText(ts.legit_percentile, "")}</span></div>`);
       }
-      lines.push(`<div class="rc-line dim"><span>its ${sm.columns ?? ""} columns go to the decision trees above${ts && ts.present ? "; its own score is one more signal in the blend" : ""}${sm.n_history ? "" : ". no earlier payments came with this one, so it read the payment on its own"}</span></div>`);
+      lines.push(`<div class="rc-line dim"><span>its ${sm.columns ?? ""} columns go to the decision trees above${ts && ts.present ? "; its own score is one more signal in the blend" : ""}</span></div>`);
+      // read with nothing before it: fine for a first payment, a known weakness when the fields speak of a past
+      if (!sm.n_history) lines.push(`<div class="rc-line dim"><span>${sm.past_in_fields ? "no earlier payments came with this one, though its own fields say the customer has some. this version was trained with every customer's history in place and misjudges a payment that arrives alone more often, mostly as false alarms: add the earlier payments below" : "no earlier payments came with this one: read as a customer's first"}</span></div>`);
     }
   }
 

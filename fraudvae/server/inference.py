@@ -337,12 +337,30 @@ class ActiveModel:
             return df[source_col].astype(str).map(lambda s: self.source_index.get(s, 0)).fillna(0).to_numpy().astype(np.int64)
         return np.zeros(len(df), dtype=np.int64)
 
+    @staticmethod
+    def _has_past(values) -> np.ndarray:
+        """[n] bool from a payment's own cust_txn_count_prior (raw units): the customer has
+        earlier payments. Absent, blank or zero is not a claim of a past"""
+        a = np.asarray(values)
+        if a.dtype.kind in "fiub":
+            return np.nan_to_num(a.astype(np.float64), nan=0.0) > 0
+        out = np.zeros(len(a), dtype=bool)
+        for i, v in enumerate(a):
+            try:
+                x = float(v)
+            except (TypeError, ValueError):
+                continue
+            out[i] = math.isfinite(x) and x > 0
+        return out
+
     def encoder_rows(self, df, source_col="source") -> int:
         """how many rows of a csv this generation's transaction encoder would read: one event
-        each, for the sources its block is routed to"""
+        each, for the sources its block is routed to, less the rows that go without the block
+        because they come without the history their own fields speak of"""
         if self.txfm is None:
             return 0
-        return int(self.txfm.reads(self._frame_sources(df, source_col)).sum())
+        past = self._has_past(df["cust_txn_count_prior"]) if "cust_txn_count_prior" in df else None
+        return int(self.txfm.reads(self._frame_sources(df, source_col), None, past).sum())
 
     def history_tensors(self, rows: list, source: str | None, cur_ts: float, window: int | None = None):
         """v5: past transactions -> the window tensors the history encoder wants (oldest first,
@@ -412,6 +430,8 @@ class ActiveModel:
                 hist_from = "entity store"
         # v6: the transaction encoder reads the customer's past at its own window
         txfm_np, n_hist2 = None, 0
+        # the payment's own claim of a past, for a payment that arrives without one (TxfmScorer.reads)
+        has_past = self._has_past([features.get("cust_txn_count_prior")])
         if self.txfm is not None:
             hist2 = None
             if history:
@@ -420,7 +440,7 @@ class ActiveModel:
                 past2 = self.store.last(source or "", customer_id, cur_ts, self.txfm.window - 1)
                 if past2:
                     hist2, n_hist2 = self.history_tensors(past2, source, cur_ts, window=self.txfm.window - 1)
-            txfm_np = self.txfm.features(num, mask, cat, src, hist2)
+            txfm_np = self.txfm.features(num, mask, cat, src, hist2, past=has_past)
         with self._infer_lock:
             r = score_batch(self.model, num, mask, cat, src, n_samples=self.n_samples, hist=hist, generator=self._generator(seed))
             if self.seqhead is not None:
@@ -507,12 +527,18 @@ class ActiveModel:
         # -- v6: the transaction encoder's view of this row for this customer --------------
         if self.txfm is not None and txfm_np is not None:
             sm = self.txfm.explain(txfm_np[0], self.txfm_labels)
+            # used: whether this row's block reached the booster; sources: the banks it is for, None = every bank
+            used = bool(np.isfinite(txfm_np[0]).any())
+            routed = bool(self.txfm.routed(np.array([src_idx]))[0])
             for f in sm["most_surprising"]:
                 f["label"] = self.field_label.get(f["field"], f["field"])
-            # used: whether this row's block reached the booster (a bank the block is not routed to, or a
-            # gated first payment, gets none); sources: the banks it is for, None = every bank
+            # skipped: why this payment went without the block ("bank": not routed to its source;
+            # "no_history": it came without the earlier payments its own fields speak of, or it is a
+            # gated first payment); past_in_fields: the payment's own claim of earlier payments
             sm.update({"n_history": int(n_hist2), "window": int(self.txfm.window), "d_model": int(self.txfm.d_model),
-                       "columns": int(self.txfm.dim), "used": bool(np.isfinite(txfm_np[0]).any()),
+                       "columns": int(self.txfm.dim), "used": used,
+                       "skipped": None if used else ("bank" if not routed else "no_history"),
+                       "past_in_fields": bool(has_past[0]),
                        "sources": list(self.txfm.source_names) if self.txfm.source_names else None,
                        "note": "next-event negative log likelihood per observed field, from the customer's past alone; "
                                "the block (state + surprises) is read by the booster, not blended on its own"})
@@ -778,13 +804,15 @@ class ActiveModel:
                     v = pd.to_numeric(df[kind], errors="coerce").to_numpy()
                     ent[:, k] = np.where(np.isfinite(v), np.nan_to_num(v, nan=-1).astype(np.int64), -1)
         blend = np.full(n, np.nan, dtype=np.float32)
+        # a csv's rows come without histories: the ones whose own fields speak of a past go without the encoder's block
+        past_all = self._has_past(df["cust_txn_count_prior"]) if "cust_txn_count_prior" in df else None
         for s in range(0, n, batch_size):
             sl = slice(s, min(s + batch_size, n))
             num_t, mask_t = torch.from_numpy(num[sl]).to(self.device), torch.from_numpy(mask[sl]).to(self.device)
             cat_t, src_t = torch.from_numpy(cat[sl]).to(self.device), torch.from_numpy(src[sl]).to(self.device)
             # the encoder first, outside the lock; then the lock for these rows and no longer,
             # so a single payment gets its turn between a file's batches
-            txfm_np = self.txfm.features(num_t, mask_t, cat_t, src_t, None) if self.txfm is not None else None
+            txfm_np = self.txfm.features(num_t, mask_t, cat_t, src_t, None, past=None if past_all is None else past_all[sl]) if self.txfm is not None else None
             with self._infer_lock:
                 # a csv carries no history: every row gets the "no history" context (a trained state)
                 r = score_batch(self.model, num_t, mask_t, cat_t, src_t, n_samples=self.n_samples, generator=self._generator(0))
