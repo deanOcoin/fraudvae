@@ -898,3 +898,26 @@ def test_public_site_meters_the_encoder(encoder_run, monkeypatch):
         assert r.status_code == 200 and [x["run"] for x in r.json()["compare"]] == ["test-run", "test-run-txfm"]
         public._buckets.clear()
 
+
+def test_a_run_without_its_encoder_is_not_loaded(encoder_run, tmp_path):
+    """a booster trained on the encoder's block answers without the block, wrongly; a run that
+    has such a booster and no txfm.pt is refused, listed as not loadable and never the default"""
+    import shutil
+
+    from fraudvae.paths import RUNS_DIR
+    from fraudvae.server import inference
+
+    bare = RUNS_DIR / "test-run-txfm-bare"
+    shutil.rmtree(bare, ignore_errors=True)
+    shutil.copytree(encoder_run, bare, ignore=shutil.ignore_patterns("txfm.pt"))
+    try:
+        assert inference.encoder_missing(bare) and not inference.encoder_missing(encoder_run)
+        with pytest.raises(inference.IncompatibleRun, match="txfm.pt"):
+            inference.ActiveModel(bare, device="cpu")
+        listed = {r["name"]: r for r in inference.list_runs()}
+        assert listed["test-run-txfm-bare"]["encoder_missing"] and not listed["test-run-txfm-bare"]["compatible"]
+        assert listed["test-run-txfm"]["compatible"] and not listed["test-run-txfm"]["encoder_missing"]
+        # the bare copy has the best evaluation there is (the same files); it is still not picked
+        assert inference.pick_default_run() != "test-run-txfm-bare"
+    finally:
+        shutil.rmtree(bare, ignore_errors=True)

@@ -44,6 +44,18 @@ class IncompatibleRun(RuntimeError):
     pass
 
 
+def encoder_missing(run_dir: Path) -> bool:
+    """a run whose booster was trained on the transaction encoder's block and has no txfm.pt
+    beside it (a round copied back without the encoder it named). The booster would still
+    answer, with every block blank: a number, and the wrong one, so such a run is not loaded"""
+    if (run_dir / "txfm.pt").exists():
+        return False
+    try:
+        return bool(json.loads((run_dir / "booster.json").read_text()).get("txfm_dim"))
+    except (OSError, ValueError):
+        return False
+
+
 # a run encodes its inputs from its own checkpoint's feature list (names, transforms,
 # category values), and looks its bank up in its own source list, so any earlier run scores
 # today's transactions with the fields it knows and nothing else: a v4 run ignores the
@@ -122,6 +134,9 @@ class ActiveModel:
         if not compatible_schema(self.schema_version):
             raise IncompatibleRun(f"run {self.name} was trained on schema v{self.schema_version}, "
                                   f"this code is v{schema.SCHEMA_VERSION}; retrain (or check out the matching version)")
+        if encoder_missing(self.run_dir):
+            raise IncompatibleRun(f"run {self.name} has a booster that reads the transaction encoder's block and no txfm.pt beside it: "
+                                  f"copy the encoder its post stage named into {self.name}/txfm.pt, or pull the published bundle")
         self.legacy = (self.schema_version or 3) < LEGACY_SCHEMA
         self.schema_note = (f"trained on schema v{self.schema_version or 3}: scores with the {len(self.numeric)} numeric and "
                             f"{len(self.categorical)} categorical fields it knows, and sees {len(self.sources)} banks") \
@@ -873,10 +888,11 @@ def list_runs() -> list[dict]:
         if not d.is_dir():
             continue
         v = run_schema_version(d)
+        no_encoder = encoder_missing(d)
         info = {"name": d.name, "has_model": (d / "model.pt").exists(), "has_calibration": (d / "calibration.json").exists(),
                 "has_eval": (d / "eval.json").exists(), "has_booster": (d / "booster.txt").exists(),
                 "remote": (d / "remote.json").exists(), "schema_version": v,
-                "compatible": compatible_schema(v)}
+                "compatible": compatible_schema(v) and not no_encoder, "encoder_missing": no_encoder}
         for f in ("run.json", "status.json"):
             p = d / f
             if p.exists():

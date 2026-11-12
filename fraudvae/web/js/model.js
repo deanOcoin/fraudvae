@@ -149,7 +149,8 @@ async function showRun(name, scroll = false) {
     ${r.has_model && !stale ? `<a class="btn ghost small" id="btn-score-with" href="${esc(scoreHref(name))}">score a payment with it →</a>` : ""}
     ${r.has_model && !stale && !isPublic ? `<button class="btn ${name === active ? "ghost" : "primary"} small" id="btn-load-run" ${name === active ? "disabled" : ""}>${name === active ? "the default scorer" : "make it the default scorer"}</button>` : ""}
   </div></div>`);
-  if (stale) parts.push(`<div class="notice warn">This version was trained on a set of fields (v${d.schema_version ?? "?"}) the current code (v${state_schema_version()}) cannot read. It stays here for the record.</div>`);
+  if (stale && d.encoder_missing) parts.push(`<div class="notice warn">This run's decision trees read the payment-history model, and that model's file (<code>txfm.pt</code>) is not in the run's folder, so it cannot score. Copy the file in, or fetch the published version with <code>fraudvae models pull</code>. Its record is below.</div>`);
+  else if (stale) parts.push(`<div class="notice warn">This version was trained on a set of fields (v${d.schema_version ?? "?"}) the current code (v${state_schema_version()}) cannot read. It stays here for the record.</div>`);
   else if (legacy) parts.push(`<div class="notice info">Trained on an older set of fields (v${d.schema_version}; the current set is v${state_schema_version()}). It scores today's payments with the fields it knows and ignores the rest; the receipt on the Score tab says what it could not see.</div>`);
   const st = d.status || {};
   if (st.state && st.state !== "finished") {
