@@ -1,5 +1,6 @@
 """v6: the transaction-sequence encoder - the tokeniser, the model's causality and losses, a
-short pretraining on the synthetic prepared set, and a booster that reads the encoder's block."""
+short pretraining on the synthetic prepared set, a booster that reads the encoder's block, and
+the server on a run that has one."""
 import json
 
 import numpy as np
@@ -772,3 +773,63 @@ def test_post_loader_tolerates_a_checkpoint_without_a_validation_nll(pretrained_
         assert _load_txfm(post_dir, src, "cpu", lines.append) is not None
         line = next(ln for ln in lines if "val next-event nll" in ln)
         assert (f"at step {extra['step']}" in line) and (("1.2500" in line) if "val_next_nll" in extra else ("nan" in line))
+
+
+# -- the server on a run with the encoder ------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def encoder_run(trained_run, pretrained_txfm, prepared_set):
+    """a run the server can load whose booster reads the encoder's block for fdh alone: the
+    trained run's files, the pretrained encoder beside them, the booster refit on the block"""
+    import shutil
+
+    from fraudvae.config import load_config
+    from fraudvae.model.booster import train_booster
+    from fraudvae.paths import RUNS_DIR
+
+    run_dir = RUNS_DIR / "test-run-txfm"
+    shutil.rmtree(run_dir, ignore_errors=True)
+    shutil.copytree(trained_run, run_dir)
+    shutil.copy2(pretrained_txfm / "txfm.pt", run_dir / "txfm.pt")
+    sc = TxfmScorer.load(pretrained_txfm, device="cpu").set_sources(["fdh"])
+    cfg = load_config("smoke")
+    cfg.boost.txfm_features, cfg.boost.max_rounds, cfg.boost.early_stopping = True, 20, 10
+    train_booster(run_dir, prepared_set, cfg.boost, log=lambda m: None, seed=1, model=None, device="cpu", txfm=sc)
+    return run_dir
+
+
+def _history(n, amount=20.0):
+    return [{"features": {"amount": amount + k}, "secs_before": 3600.0 * (n - k)} for k in range(n)]
+
+
+def test_server_runs_the_encoder_outside_the_generations_lock(encoder_run, monkeypatch):
+    """one payment and a file, on a run whose block is routed to fdh: the receipt carries the
+    encoder's view, a bank the block is not for costs no pass, and the pass never holds the
+    lock that the rest of the generation's scoring takes"""
+    import pandas as pd
+
+    import fraudvae.model.txfm as T
+    from fraudvae.server.inference import ActiveModel
+
+    m = ActiveModel(encoder_run, device="cpu")
+    assert m.txfm is not None and m.txfm.source_names == ["fdh"]
+    events, locked = [], []
+    readout_ = T.readout
+
+    def watched(model, tk, toks, dt, valid):
+        events.append(int(valid.sum()))
+        locked.append(m._infer_lock.locked())
+        return readout_(model, tk, toks, dt, valid)
+
+    monkeypatch.setattr(T, "readout", watched)
+    r = m.score({"amount": 12.5}, source="fdh", history=_history(3), remember=False, seed=0)
+    assert events == [4] and r["sequence_model"]["n_history"] == 3 and r["sequence_model"]["surprise"] is not None
+    assert 0.0 <= r["p_fraud"] <= 1.0
+    events.clear()
+    r = m.score({"amount": 12.5}, source="capone", history=_history(3), remember=False, seed=0)
+    assert events == [] and r["sequence_model"]["surprise"] is None and 0.0 <= r["p_fraud"] <= 1.0
+    df = pd.DataFrame({"amount": [5.0, 6.0, 7.0, 8.0, 9.0], "source": ["fdh", "capone", "fdh", "ieee", "fdh"]})
+    out = m.score_frame(df)
+    assert events == [3] and np.isfinite(out["sequence_surprise"].to_numpy()[[0, 2, 4]]).all()
+    assert np.isnan(out["sequence_surprise"].to_numpy()[[1, 3]]).all() and out["p_fraud"].between(0, 1).all()
+    assert locked and not any(locked)

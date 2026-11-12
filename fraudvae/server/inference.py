@@ -93,7 +93,10 @@ class ActiveModel:
         self.device = torch.device(device)
         # one forward pass through this generation at a time: torch's intra-op threads are
         # already using the cores, and two batches interleaved only make both slower. Per model,
-        # so a comparison across generations is not serialised behind one lock
+        # so a comparison across generations is not serialised behind one lock. The v6 encoder's
+        # pass is the exception and runs before the lock is taken: a long history, or the routed
+        # rows of a file, is seconds of it on a cpu, and the payments that need none of it, or
+        # one event of it, should not queue behind that
         self._infer_lock = threading.Lock()
         self.model, ck = load_checkpoint(self.run_dir / "model.pt", device=self.device)
         self.meta = ck["prepared_meta"]
@@ -378,16 +381,15 @@ class ActiveModel:
                 past2 = self.store.last(source or "", customer_id, cur_ts, self.txfm.window - 1)
                 if past2:
                     hist2, n_hist2 = self.history_tensors(past2, source, cur_ts, window=self.txfm.window - 1)
+            txfm_np = self.txfm.features(num, mask, cat, src, hist2)
         with self._infer_lock:
             r = score_batch(self.model, num, mask, cat, src, n_samples=self.n_samples, hist=hist, generator=self._generator(seed))
             if self.seqhead is not None:
                 r["seq"] = self.seqhead.logit(self.model, num, mask, cat, src, torch.from_numpy(r["h"]).to(self.device))
             for name, head in self.heads.items():
                 r[name] = head.logit(num, mask, cat, src)
-            if self.txfm is not None:
-                txfm_np = self.txfm.features(num, mask, cat, src, hist2)
-                if self.txhead is not None:
-                    r["txsup"] = self.txhead.logit(txfm_np, np.array([src_idx]))
+            if self.txhead is not None and txfm_np is not None:
+                r["txsup"] = self.txhead.logit(txfm_np, np.array([src_idx]))
         ent = self._entity_row(entities)
         if self.graph is not None and src_idx:
             r["graph"] = self.graph.logit_rows(np.array([src_idx]), ent, which="test")
@@ -733,11 +735,14 @@ class ActiveModel:
                     v = pd.to_numeric(df[kind], errors="coerce").to_numpy()
                     ent[:, k] = np.where(np.isfinite(v), np.nan_to_num(v, nan=-1).astype(np.int64), -1)
         blend = np.full(n, np.nan, dtype=np.float32)
-        with self._infer_lock:
-            for s in range(0, n, batch_size):
-                sl = slice(s, min(s + batch_size, n))
-                num_t, mask_t = torch.from_numpy(num[sl]).to(self.device), torch.from_numpy(mask[sl]).to(self.device)
-                cat_t, src_t = torch.from_numpy(cat[sl]).to(self.device), torch.from_numpy(src[sl]).to(self.device)
+        for s in range(0, n, batch_size):
+            sl = slice(s, min(s + batch_size, n))
+            num_t, mask_t = torch.from_numpy(num[sl]).to(self.device), torch.from_numpy(mask[sl]).to(self.device)
+            cat_t, src_t = torch.from_numpy(cat[sl]).to(self.device), torch.from_numpy(src[sl]).to(self.device)
+            # the encoder first, outside the lock; then the lock for these rows and no longer,
+            # so a single payment gets its turn between a file's batches
+            txfm_np = self.txfm.features(num_t, mask_t, cat_t, src_t, None) if self.txfm is not None else None
+            with self._infer_lock:
                 # a csv carries no history: every row gets the "no history" context (a trained state)
                 r = score_batch(self.model, num_t, mask_t, cat_t, src_t, n_samples=self.n_samples, generator=self._generator(0))
                 raw[sl] = r["raw"]
@@ -754,7 +759,6 @@ class ActiveModel:
                 if self.scorer:
                     norm[sl] = self.scorer.norm(r, src[sl])
                     r["norm"] = norm[sl]
-                txfm_np = self.txfm.features(num_t, mask_t, cat_t, src_t, None) if self.txfm is not None else None
                 if txfm_np is not None:
                     surprise[sl] = txfm_np[:, -1]
                     if self.txhead is not None:
