@@ -121,16 +121,9 @@ def get_datasets():
 
 def _row_to_features(row: pd.Series) -> dict:
     """unified-schema parquet row -> the raw-units dict the score form uses"""
-    feats = {}
-    for f in schema.NUMERIC:
-        v = row.get(f.name)
-        if v is not None and not (isinstance(v, float) and math.isnan(v)):
-            feats[f.name] = round(float(v), 4)
-    for c in schema.CATEGORICAL:
-        code = int(row.get(c.name, 0) or 0)
-        if code:
-            feats[c.name] = c.values[code]
-    return feats
+    from ..data.examples import row_features
+
+    return row_features(row)
 
 
 _examples_cache: dict = {}
@@ -163,9 +156,10 @@ def get_examples(source: str | None = Query(None, description="restrict to one d
                  n: int = Query(1, description="how many, at most 50"),
                  seed: int | None = Query(None, description="fix the draw; a different one each call otherwise")):
     """Real rows from the test split of the datasets whose licence allows them to be shared,
-    with their true label, ready to paste into `/api/score` (`features` and `wide` are in the
-    shape it takes). A source whose licence does not allow redistribution answers 404 with
-    where to download it."""
+    with their true label, ready to paste into `/api/score` (`features`, `wide`, `entities` and
+    `history` are in the shape it takes; `history` is the customer's last eight payments
+    before this one, where the dataset has customers). A source whose licence does not allow
+    redistribution answers 404 with where to download it."""
     n = max(1, min(int(n), 50))
     if seed is not None:
         seed = int(seed) % (2**32)
@@ -186,13 +180,17 @@ def get_examples(source: str | None = Query(None, description="restrict to one d
     out = []
     for _, row in rows.iterrows():
         wide = row.get("wide") if "wide" in row else None
+        hist = row.get("history") if "history" in row else None
         out.append({"source": str(row["source"]), "txn_id": str(row["txn_id"]), "is_fraud": int(row["is_fraud"]),
                     "split": str(row["split"]), "fraud_scenario": int(row.get("fraud_scenario", 0) or 0),
                     "features": _row_to_features(row),
                     # v5: the source's raw columns for this row, to hand back to /api/score as `wide`
                     "wide": json.loads(wide) if isinstance(wide, str) and wide.startswith("{") else None,
                     # v5: the row's entity codes, to hand back as `entities` for the graph module
-                    "entities": {k: int(row[k]) for k in schema.ENTITY_COLUMNS if k in row and row[k] == row[k] and int(row[k]) >= 0}})
+                    "entities": {k: int(row[k]) for k in schema.ENTITY_COLUMNS if k in row and row[k] == row[k] and int(row[k]) >= 0},
+                    # the payments this row's customer made before it, to hand back as `history`: every
+                    # generation since v5 was measured with them, and v6's encoder misjudges a row without
+                    "history": json.loads(hist) if isinstance(hist, str) and hist.startswith("[") else None})
     return out
 
 

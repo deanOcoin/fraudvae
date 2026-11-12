@@ -350,6 +350,10 @@ function wireForm() {
       loadedWide = ex.wide || null;
       loadedEntities = ex.entities && Object.keys(ex.entities).length ? ex.entities : null;
       loadedExample = ex;
+      // the payments this customer made before it go into the history box, where they can be read and edited:
+      // every version since v5 was measured with them, and without them v6 takes an old customer for a new one
+      const histBox = document.getElementById("history-json");
+      if (histBox) histBox.value = ex.history && ex.history.length ? JSON.stringify(ex.history) : "";
       pendingLabel = ex.is_fraud;
       mystery = hidden;
       note.innerHTML = exampleNote(ex, hidden);
@@ -371,7 +375,8 @@ function wireForm() {
 function exampleNote(ex, hidden) {
   const label = hidden ? "what it really was stays hidden until it is scored"
     : `labelled <b>${ex.is_fraud ? "fraud" : "honest"}</b>${ex.fraud_scenario ? ` (fraud scenario ${esc(ex.fraud_scenario)})` : ""}`;
-  const extra = [ex.wide ? `${Object.keys(ex.wide).length} of the bank's own columns ride along` : null,
+  const extra = [ex.history && ex.history.length ? `the customer's ${ex.history.length === 1 ? "previous payment rides" : `last ${ex.history.length} payments ride`} along` : null,
+                 ex.wide ? `${Object.keys(ex.wide).length} of the bank's own columns ${ex.history && ex.history.length ? "too" : "ride along"}` : null,
                  loadedEntities ? `entities known: ${Object.keys(loadedEntities).join(", ")}` : null].filter(Boolean).join(" · ");
   return `<b>${esc(ex.txn_id)}</b> · ${esc(sourceName(ex.source))} · a real payment from the test data the model never saw: ${label}.`
     + (extra ? ` <span class="dim">${esc(cap(extra))}.</span>` : "");

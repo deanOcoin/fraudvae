@@ -245,7 +245,11 @@ def sample_rows(path: Path, n_legit=150, n_fraud=150, seed=0) -> pd.DataFrame:
     out = pd.concat(frames, ignore_index=True)
     if "wide" not in out:
         out["wide"] = None
-    return out
+    # each row with the payments its customer made before it, so the example picker scores a
+    # payment against its past, the way the history models were trained and measured
+    from .examples import attach_history
+
+    return attach_history(out, path)
 
 
 def build_source(key: str, raw_dir: Path, max_rows=None):

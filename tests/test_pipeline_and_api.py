@@ -123,6 +123,43 @@ def test_examples_and_scoring(client):
     assert g["calibration"] == "generic" and g["blend"]["calibration"] == "generic" and g["observed_features"] == 2
 
 
+def test_example_rows_carry_their_customers_earlier_payments(client, processed_corpus):
+    """an example row comes with the payments its customer made before it, in the shape the score
+    api takes: the last few, oldest first, read from the processed table in the prepared set's
+    sequence order; a samples file from an older build gets them when it is exported"""
+    import pandas as pd
+
+    from fraudvae.data import examples as ex
+    from fraudvae.data.build import SAMPLES
+
+    rows = client.get("/api/examples?source=fdh&n=50&seed=1").json()
+    with_past = [r for r in rows if r["history"]]
+    assert with_past, "the synthetic customers have several payments each"
+    table = pd.read_parquet(processed_corpus / "fdh.parquet").reset_index(drop=True)
+    for r in with_past[:10]:
+        h = r["history"]
+        assert 1 <= len(h) <= ex.HISTORY and all(set(p) == {"features", "secs_before"} for p in h)
+        gaps = [p["secs_before"] for p in h]
+        assert gaps == sorted(gaps, reverse=True) and gaps[-1] >= 0
+        # the table's own answer: this customer's rows before this one, by time, then row order
+        me = table.index[table["txn_id"] == r["txn_id"]][0]
+        mine = table[table["customer"] == table.at[me, "customer"]]
+        mine = mine.assign(_row=mine.index).sort_values(["ts", "_row"], kind="mergesort")
+        before = mine.iloc[: list(mine.index).index(me)].tail(ex.HISTORY)
+        assert len(h) == len(before)
+        assert [p["features"]["amount"] for p in h] == [round(float(a), 4) for a in before["amount"]]
+        assert gaps == [round(float(table.at[me, "ts"] - t), 3) for t in before["ts"]]
+    # scored with its past, the history side reads it
+    r0 = with_past[0]
+    out = client.post("/api/score", json={"source": "fdh", "features": r0["features"], "history": r0["history"]}).json()
+    assert out["sequence"]["n_history"] == min(len(r0["history"]), out["sequence"]["window"])
+    # a samples file without the column (a build from before it existed) gets it on export
+    old = pd.read_parquet(SAMPLES).drop(columns=["history"])
+    part = ex.attach_history(old[old["source"].astype(str) == "fdh"], processed_corpus / "fdh.parquet")
+    assert part["history"].notna().any() and len(part) == int((old["source"].astype(str) == "fdh").sum())
+    assert ex.attach_history(part.drop(columns=["history"]), processed_corpus / "missing.parquet")["history"].isna().all()
+
+
 def test_scoring_tolerates_junk(client):
     r = client.post("/api/score", json={"source": "nope", "features": {"amount": "abc", "channel": "spaceship", "hour": 99}})
     assert r.status_code == 200
@@ -787,10 +824,17 @@ def test_request_hardening(client, monkeypatch):
     public._buckets.clear()
 
 
+def _no_history(ex, tmp_path, samples):
+    ex.write_examples(tmp_path / "plain", n=20, samples=samples, history=0)
+    return tmp_path / "plain"
+
+
 def test_examples_export_and_public_examples(client, monkeypatch, tmp_path):
     """data/examples/: only the sources whose licence allows it are written, from the test split;
     the public site reads that directory and nothing else"""
     import dataclasses
+
+    import pandas as pd
 
     from fraudvae.data import examples as ex
     from fraudvae.data.build import SAMPLES
@@ -807,6 +851,8 @@ def test_examples_export_and_public_examples(client, monkeypatch, tmp_path):
     df = ex.load_examples(tmp_path / "ex")
     assert set(df["source"].astype(str)) == {"fdh"} and (df["split"].astype(str) == "test").all() and len(df) <= 20
     assert 0 < int(df["is_fraud"].sum()) < len(df)
+    assert df["history"].notna().any()                                 # each row with its customer's earlier payments
+    assert "history" not in pd.read_parquet(_no_history(ex, tmp_path, SAMPLES) / "fdh.parquet")
     # the workbench keeps reading the build's samples; the public site only the examples directory
     assert client.get("/api/examples?source=capone").status_code == 200
     monkeypatch.setattr(public, "PUBLIC", True)

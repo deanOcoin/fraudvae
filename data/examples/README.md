@@ -9,10 +9,15 @@ datasets - the public demonstration site included.
 Only sources whose licence allows redistribution are here. The rows are in the project's
 unified schema (`docs/SCHEMA.md`), plus the source's own raw columns in the `wide` column
 (json) and the entity codes the graph module uses; `is_fraud` is the dataset's label,
-`split` is always `test`. Each file keeps the licence of the dataset it was drawn from,
-listed below - in particular the Bank Account Fraud rows are **non-commercial** (CC BY-NC-SA
-4.0) and the PaySim / AMLworld rows are share-alike. Nothing here is a substitute for the
-datasets: download them from the sources below for anything beyond trying the model.
+`split` is always `test`. Where the dataset has customers, `history` (json) holds the eight
+payments the row's customer made before it, oldest first, in the shape `/api/score` takes:
+the models read a payment against its customer's past, so a row is scored the way it was
+measured. Those earlier payments carry no label and may come from any split.
+
+Each file keeps the licence of the dataset it was drawn from, listed below - in particular
+the Bank Account Fraud rows are **non-commercial** (CC BY-NC-SA 4.0) and the PaySim /
+AMLworld rows are share-alike. Nothing here is a substitute for the datasets: download them
+from the sources below for anything beyond trying the model.
 
 The sources that are *not* here (Fraud Detection Handbook, Capital One, BankSim, IEEE-CIS,
 fraud-ecommerce) either state no licence or forbid redistribution; `fraudvae fetch` gets
@@ -65,4 +70,4 @@ your machine only.
 - citation: Jesus, Pombal, Alves, Cruz, Saleiro, Ribeiro, Gama, Bizarro. Turning the Tables: Biased, Imbalanced, Dynamic Tabular Datasets for ML Evaluation, NeurIPS 2022
 - licence: CC BY-NC-SA 4.0 (<https://creativecommons.org/licenses/by-nc-sa/4.0/>)
 
-Written by `fraudvae examples` on 2026-10-20; regenerate rather than edit.
+Written by `fraudvae examples` on 2026-11-12; regenerate rather than edit.

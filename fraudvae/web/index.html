@@ -106,7 +106,7 @@
           <div id="field-groups"></div>
           <details class="history-box">
             <summary>Customer history <span class="dim">(the customer's previous payments)</span></summary>
-            <p class="dim">The newest model judges a payment against this customer's own habits. Paste their previous payments as JSON, oldest first — a list of
+            <p class="dim">Every version since v5 judges a payment against this customer's own habits, and an example row brings its customer's last eight payments with it. For a payment of your own, paste the previous payments as JSON, oldest first — a list of
               <code>{"features": {...same field names...}, "secs_before": 3600}</code> (or <code>"ts"</code> in epoch seconds). On your own installation you can instead give a customer id and the server remembers what it scores for that id; the public site keeps nothing.</p>
             <label class="wide"><span>previous transactions (json)</span><textarea id="history-json" rows="4" placeholder='[{"features": {"amount": 12.5, "hour": 14}, "secs_before": 86400}]'></textarea></label>
             <label><span>customer id</span><input type="text" id="customer-id" placeholder="any string, e.g. cust-42" autocomplete="off"></label>
