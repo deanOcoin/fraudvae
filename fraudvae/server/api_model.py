@@ -206,8 +206,11 @@ def post_score(req: ScoreRequest, request: Request):
     features that pushed the verdict and which way), and a block per part of the model -
     `novelty` (the autoencoder), `supervised` (the booster), `local` (the bank's own model),
     `sequence`, `device`, `graph`, `text`, `behaviour` (present when the request carries what
-    they need), `blend` (the final combination with every threshold) - plus `compare`, one
-    summary per generation, when other generations were asked for.
+    they need), from v6 `sequence_model` (the pretrained transaction encoder: whether this
+    payment's block was `used`, the banks it is for, how many earlier payments it read and
+    the fields it found hardest) and from v7 `sequence_supervised` (the head on it), `blend`
+    (the final combination with every threshold, and whether it was fit `without_vae`) -
+    plus `compare`, one summary per generation, when other generations were asked for.
 
     The novelty score averages `n_samples` draws of the model's latent; the draws are seeded
     (`seed`, default 0), so the same request returns the same receipt, and another seed shows

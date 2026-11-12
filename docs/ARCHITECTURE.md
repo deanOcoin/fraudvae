@@ -385,6 +385,35 @@ encoder (`extra` records the base checkpoint's sha256, the sources and the valid
 booster and `txsup` head read the exported encoder's block, and the paired comparison against
 the run built on the pretrained encoder is what decides whether the fine-tune earned its place.
 
+**Serving it** (`TxfmScorer.features`, `server/inference.py`, `server/public.py`). The encoder
+is the one part of a score that costs seconds on a small CPU: about a thirtieth of a second per
+event it reads on the demonstration site's six virtual cores, where the rest of a score is a
+fifth of a second. Five rules keep that in bounds. A row whose block is blanked is never
+encoded: a source the block is not routed to, and under `gate_first` a customer's first event.
+The readout encodes only the events a window holds, not its padding, and scores the surprise
+for the last event alone. A CPU readout takes at most 256 events at a time, so a file's rows
+do not allocate one tensor for all of them. The encoder's pass runs outside the lock a
+generation's scoring holds, so a long history does not make every other request of that
+generation wait. And a run whose booster reads the block does not load without `txfm.pt`:
+scored with a missing encoder the trees would see "no summary" on every row and the numbers
+would be another model's. Public mode adds its own limits (`docs/DEPLOY.md`).
+
+**The history has to come with the payment.** A block computed from a window that holds the
+payment alone is a first payment's block, and the booster met that state only beside a new
+customer's fields. On tabformer's 300 example rows (150 honest, 150 fraud, the 1% budget),
+scored alone, `v6-base-e` raised 43 false alarms and `v7-f` 13 where `v5-h200-h` raised 1.
+Two things follow. The example rows carry their customer's last eight payments
+(`fraudvae/data/examples.py`, `attach_history`: the processed table in the prepared set's
+sequence order), which brings both generations to their measured behaviour on those rows:
+1 false alarm each, 141 and 142 of the 150 frauds caught against 133. And the server passes
+the scorer each row's own claim of a past (`cust_txn_count_prior` above zero): where the
+booster has met rows without the block (`blanks_trained`: a routed or a gated round) a row
+that claims a past and arrives without it goes without the block and is not encoded, which
+on those rows is no false alarm and 129 frauds, about where `v5-h200-h` stands. `v6-base-e`'s
+booster never met a missing block, and withholding it there is worse than the first-payment
+reading, so that generation keeps the reading and the receipt says the payment arrived
+alone. Training, calibration and evaluation never pass the argument.
+
 ## v5: device telemetry - the two new sources and the field heads
 
 `fraudvae/data/adapters/baf.py`, `fraudvae/data/adapters/fraudecom.py`,

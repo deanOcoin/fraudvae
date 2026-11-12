@@ -20,7 +20,14 @@ site was put up.
 - **Rate limits.** A token bucket per client address (behind nginx's own `limit_req`, which
   is coarser and runs first): 60 scores a minute with a burst of 20, 4 batch uploads a minute
   of at most 5,000 rows each with two running at once server-wide, a comparison across at
-  most 8 generations per request (every one on the timeline). 429 with `Retry-After` past that. On top of the buckets a
+  most 8 generations per request (every one on the timeline). 429 with `Retry-After` past that.
+  The transaction encoder of the v6 and v7 generations has limits of its own, because it is the
+  one part of a score that takes seconds on this CPU: a file may send it 1,000 rows
+  (`FRAUDVAE_ENCODER_BATCH_ROWS`; 413 past that, and only the rows it would read count), a
+  history of up to 8 earlier payments is read like any score (`FRAUDVAE_ENCODER_HISTORY_FREE`,
+  which is why the example rows carry eight), and a longer one is charged one more request
+  per 16 payments (`FRAUDVAE_ENCODER_HISTORY_PER_TOKEN`) and runs one at a time for the whole
+  site, with a 503 and `Retry-After: 5` while another is being read. On top of the buckets a
   global ceiling: four transactions scoring at once across every visitor, then a 503 with
   `Retry-After` after a three-second wait. All of it is in `deploy/env.example`. The buckets
   believe `X-Real-IP` / `X-Forwarded-For` only from a trusted proxy (loopback, or
