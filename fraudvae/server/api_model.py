@@ -514,9 +514,11 @@ def _tail_lines(p, max_bytes: int) -> list[str]:
 @router.get("/runs/{name}/latent", summary="A run's latent map", tags=["models"])
 def get_latent(name: str):
     """A two-dimensional projection of the test split through the autoencoder: `xy` the
-    coordinates, `y` the fraud label, `src` the source index, `score` the novelty and `blend`
-    the final probability of each point. About three megabytes, what the scatter plot on the
-    Score tab draws; kept in memory once read, and on the public site cached by nginx for ten minutes."""
+    coordinates, `y` the fraud label, `src` the source index, and, where the run kept them,
+    `score` the novelty and `blend` the final probability of each point (the v6 and v7
+    bundles carry the map of the autoencoder they share with v5 and not those two). About
+    three megabytes, what the scatter plot on the Score tab draws; kept in memory once read,
+    and on the public site cached by nginx for ten minutes."""
     p = _run_dir(name) / "latent_map.npz"
     if not p.exists():
         raise HTTPException(404, "no latent map for this run")
@@ -527,7 +529,9 @@ def get_latent(name: str):
         hit = _latent_cache.get(key)
     if hit is None:
         z = np.load(p)
-        out = {"xy": z["xy"].round(3).tolist(), "y": z["y"].tolist(), "src": z["src"].tolist(), "score": z["score"].round(3).tolist()}
+        out = {"xy": z["xy"].round(3).tolist(), "y": z["y"].tolist(), "src": z["src"].tolist()}
+        if "score" in z:
+            out["score"] = z["score"].round(3).tolist()
         if "blend" in z:
             out["blend"] = z["blend"].round(4).tolist()
         hit = json.dumps(out, separators=(",", ":")).encode()

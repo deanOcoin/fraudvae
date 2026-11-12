@@ -870,6 +870,26 @@ def test_models_pack_and_pull(trained_run, tmp_path, monkeypatch):
             (trained_run / "manifest.json").write_bytes(had_manifest)
 
 
+def test_latent_map_without_per_point_scores(client, trained_run):
+    """a map that holds the coordinates and not each point's scores (a bundle that carries the
+    map of the autoencoder it shares with an earlier round) is served as what it has"""
+    import shutil
+
+    from fraudvae.paths import RUNS_DIR
+
+    d = RUNS_DIR / "test-run-map"
+    shutil.rmtree(d, ignore_errors=True)
+    d.mkdir()
+    z = np.load(trained_run / "latent_map.npz")
+    np.savez_compressed(d / "latent_map.npz", xy=z["xy"], y=z["y"], src=z["src"])
+    try:
+        lat = client.get("/api/runs/test-run-map/latent").json()
+        assert set(lat) == {"xy", "y", "src"} and len(lat["xy"]) == len(z["y"]) > 0
+        assert {"xy", "y", "src", "score", "blend"} <= set(client.get("/api/runs/test-run/latent").json())
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def test_prepare_parallel_matches_serial(processed_corpus):
     """the streaming tasks of prepare write the same bytes whether they run in one process or
     in a pool: every array of the set is identical, only the timing differs"""
