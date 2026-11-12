@@ -119,6 +119,12 @@ is anonymised and kept a week. There is no database, no cookie and no session: t
 nothing to leak that is not already public. `SECURITY.md` at the root of the repository goes
 through all of it.
 
+One side effect of the system-call allow-list is handled in the app. With `sched_setaffinity`
+denied, MKL counts one core, torch sizes its pool from that, and every score would run on one
+thread whatever `OMP_NUM_THREADS` says. The server therefore sets its thread count itself at
+start-up, from `OMP_NUM_THREADS` (`_threads` in `fraudvae/server/app.py`), and the log's
+`torch threads:` line says what it found and what it uses.
+
 Two things the installer leaves to you. `--harden-ssh` turns password logins off and limits
 root to key authentication; it runs only when root already has an authorized key, so make
 sure you can log in with yours before you ask for it, and keep that session open while it

@@ -81,3 +81,28 @@ def test_a_comparison_may_span_the_timeline():
 
     if "FRAUDVAE_COMPARE_MAX" not in os.environ:
         assert public.COMPARE_MAX == len(MILESTONES) == public.limits()["compare_max"]
+
+
+def test_server_says_its_thread_count_outright(monkeypatch):
+    """under the deployment's syscall filter torch finds one thread whatever OMP_NUM_THREADS says;
+    the server sets the number itself: the variable when there is one, the cores it may use when
+    torch found one and there are more, and nothing otherwise"""
+    import os
+
+    from fraudvae.server import app as A
+
+    state = {"n": 1, "set": []}
+    monkeypatch.setattr(A.torch, "get_num_threads", lambda: state["n"])
+    monkeypatch.setattr(A.torch, "set_num_threads", lambda n: (state["set"].append(n), state.update(n=n)))
+    monkeypatch.setenv("OMP_NUM_THREADS", "4")
+    assert A._threads() == (1, 4) and state["set"] == [4]
+    assert A._threads() == (4, 4) and state["set"] == [4]                 # already what was asked for
+    monkeypatch.delenv("OMP_NUM_THREADS")
+    monkeypatch.setattr(os, "sched_getaffinity", lambda pid: set(range(6)), raising=False)
+    state.update(n=1, set=[])
+    assert A._threads() == (1, 6) and state["set"] == [6]                 # one found, six allowed: the filter's doing
+    state.update(n=3, set=[])
+    assert A._threads() == (3, 3) and state["set"] == []                  # a count torch chose itself stands
+    monkeypatch.setenv("OMP_NUM_THREADS", "many")
+    state.update(n=2, set=[])
+    assert A._threads() == (2, 2) and state["set"] == []

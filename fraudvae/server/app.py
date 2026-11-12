@@ -36,6 +36,31 @@ def _log(msg: str):
         pass
 
 
+def _threads() -> tuple[int, int]:
+    """(found, used): say torch's thread count outright. torch sizes its pool by asking MKL, and
+    MKL counts cores by pinning itself to each in turn; under a syscall filter that denies
+    sched_setaffinity (deploy/fraudvae.service does, with the rest of @resources) it counts one,
+    and every score runs on one core whatever OMP_NUM_THREADS says. On the site's box that was
+    the transaction encoder reading a payment with eight earlier ones in 1.56 s where four
+    threads take 0.45. OMP_NUM_THREADS decides when it is set; without it a count of one on a
+    machine with more cores is taken for the filter's doing and raised to the cores this
+    process may run on."""
+    found = torch.get_num_threads()
+    try:
+        allowed = len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):          # not every platform has it
+        allowed = os.cpu_count() or 1
+    try:
+        want = int(os.environ.get("OMP_NUM_THREADS") or 0)
+    except ValueError:
+        want = 0
+    if want > 0 and want != found:
+        torch.set_num_threads(want)
+    elif want <= 0 and found == 1 and allowed > 1:
+        torch.set_num_threads(allowed)
+    return found, torch.get_num_threads()
+
+
 try:
     SERVER_LOG.parent.mkdir(parents=True, exist_ok=True)
     _crash_log = open(SERVER_LOG, "a")   # noqa: SIM115 - must outlive the process
@@ -75,6 +100,8 @@ async def _lifespan(app):
     ensure_dirs()
     _log(f"fraudvae {__version__} starting: python {platform.python_version()}, torch {torch.__version__}, "
          f"{platform.platform()}, pid {os.getpid()}")
+    found, used = _threads()
+    _log(f"torch threads: {used}" + (f" (it found {found}; set outright, see _threads)" if used != found else ""))
     try:
         from ..model.booster import _lgb
         _log(f"lightgbm {_lgb().__version__}")
