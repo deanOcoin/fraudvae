@@ -2,17 +2,21 @@
 pull one back onto any machine.
 
     fraudvae models list                      # what the manifest knows, what is on disk
-    fraudvae models pull v5-h200-h            # -> runs/v5-h200-h, verified against the manifest
+    fraudvae models pull v7-f                 # -> runs/v7-f, verified against the manifest
     fraudvae models pull --all                # every generation on the timeline
-    fraudvae models pull v5-h200-h --with-paysim-graph
-    fraudvae models pack v5-h200-h            # runs/<name> -> dist/<name>.tar.gz (+ the paysim graph apart)
+    fraudvae models pull v7-f --with-paysim-graph
+    fraudvae models pack v7-f                 # runs/<name> -> dist/<name>.tar.gz (+ the paysim graph apart)
 
 A bundle is the run directory as the trainer left it, minus what never leaves the machine
 that trained it: `remote.json` (the box it was fetched from), launcher logs and pid files,
 the host names in `run.json` and `manifest.json`. It also leaves out `scores_test*.npz`,
 every test row's scores as `fraudvae evaluate` keeps them for `fraudvae compare`: 400 MB per
 label setting that no server reads.
-The v5 bundles also set aside `graph/paysim.pt`, the PaySim entity graph: 822 MB per run for
+A v6 or v7 run holds the encoder its booster reads (`txfm.pt`, 513 MB, which the post stage
+copies into the run, and its summary `txfm.json`), and so does its bundle: the server refuses
+to load such a generation without it, which is what a run copied off a box without its
+largest file is.
+The bundles from v5 on also set aside `graph/paysim.pt`, the PaySim entity graph: 822 MB per run for
 a head that scores 0.55 on PaySim and gets no weight in the blend, so it ships as a separate
 optional asset and the server scores PaySim without the graph head when it is absent (the
 receipt says so). `fraudvae/pretrained.json` is the manifest the pull verifies against:
@@ -234,7 +238,7 @@ def main(argv=None):
     p = sub.add_parser("pull", help="download a generation into runs/")
     p.add_argument("name", nargs="?")
     p.add_argument("--all", action="store_true", help="every generation in the manifest")
-    p.add_argument("--with-paysim-graph", action="store_true", help="also fetch the optional PaySim entity graph (v5, ~800 MB)")
+    p.add_argument("--with-paysim-graph", action="store_true", help="also fetch the optional PaySim entity graph (v5 on, ~550 MB to download)")
     p.add_argument("--keep-archives", action="store_true")
     p.add_argument("--force", action="store_true")
     p.add_argument("--runs-dir", default=str(RUNS_DIR))

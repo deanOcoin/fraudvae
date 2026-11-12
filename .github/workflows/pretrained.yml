@@ -31,7 +31,7 @@ jobs:
           FRAUDVAE_HOME: ${{ runner.temp }}/home
         run: |
           fraudvae models pull cpu_small-8src
-          fraudvae models pull v5-h200-h
+          fraudvae models pull v7-f
       - name: serve and score
         env:
           FRAUDVAE_RUNS_DIR: ${{ runner.temp }}/runs
@@ -42,4 +42,6 @@ jobs:
           for i in $(seq 1 60); do curl -sf http://127.0.0.1:8765/api/meta > /dev/null && break; sleep 2; done
           curl -sf http://127.0.0.1:8765/api/meta | python -c "import json,sys; print(json.dumps(json.load(sys.stdin))[:300])"
           curl -sf -H 'content-type: application/json' --data '{"features": {"amount": 12.5}}' http://127.0.0.1:8765/api/score | python -c "import json,sys; r=json.load(sys.stdin); assert r.get('p_fraud') is not None, r; print('p_fraud', r['p_fraud'])"
+          # the shipped generation reads a pretrained encoder for tabformer: a payment with two earlier ones goes through it
+          curl -sf -H 'content-type: application/json' --data '{"source": "tabformer", "features": {"amount": 12.5}, "history": [{"features": {"amount": 30}, "secs_before": 7200}, {"features": {"amount": 8}, "secs_before": 600}]}' http://127.0.0.1:8765/api/score | python -c "import json,sys; r=json.load(sys.stdin); sm=r['sequence_model']; assert r['model']['run'] == 'v7-f' and sm['used'] and sm['n_history'] == 2, sm; print('history model read', sm['n_history'], 'earlier payments; p_fraud', r['p_fraud'])"
           tail -5 serve.log

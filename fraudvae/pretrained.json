@@ -14,8 +14,8 @@
    "version": "v3",
    "label": "on a laptop",
    "hardware": "2 x86-64 CPU cores, no GPU",
-   "corpus": "8 sources, capped at 1.5M rows per source (4M rows)",
-   "changed": "Baseline.",
+   "corpus": "8 datasets, capped at 1.5M rows each (4M rows)",
+   "changed": "The starting point: the normal-payments model alone, no fraud labels used anywhere.",
    "schema_version": 3,
    "params": 635179
   },
@@ -29,10 +29,10 @@
     }
    },
    "version": "v3",
-   "label": "on the full corpus",
+   "label": "on all the data",
    "hardware": "1x NVIDIA RTX 4090 (rented), 16 CPU cores",
-   "corpus": "8 sources, every row (29M)",
-   "changed": "More data, same features.",
+   "corpus": "8 datasets, every row (29M)",
+   "changed": "The same model on seven times the data. It barely moved: the fields it could see, not the number of rows, were the limit.",
    "schema_version": 3,
    "params": 2188715
   },
@@ -48,8 +48,8 @@
    "version": "v4",
    "label": "labels, context and the blend",
    "hardware": "1x NVIDIA RTX 4090 (rented), 16 CPU cores",
-   "corpus": "9 sources (AMLworld added), every row (29M)",
-   "changed": "Booster + context features + blend.",
+   "corpus": "9 datasets (AMLworld added), every row (29M)",
+   "changed": "Added decision trees trained on the labelled fraud, the customer's and merchant's recent history as inputs, and a per-bank blend of the two models. The big step: 0.83 to 0.92.",
    "schema_version": 4,
    "params": 2254204
   },
@@ -69,10 +69,10 @@
     }
    },
    "version": "v5",
-   "label": "history, entities, modules",
+   "label": "customer history, entities, extra models",
    "hardware": "1x NVIDIA H200 NVL (rented), 64 CPU cores, 188 GB RAM",
-   "corpus": "11 sources (BAF, fraudecom added), every row (30M train / 4.3M val / 8.6M test)",
-   "changed": "Two sources, the entity and wide blocks, five modules, history in the VAE.",
+   "corpus": "11 datasets (BAF, fraudecom added), every row (30M train / 4.3M validation / 8.6M test)",
+   "changed": "The model now reads the customer's previous payments; new facts about the merchant, card, device, e-mail and address around each payment; two more datasets; five extra models. 0.916 to 0.936.",
    "schema_version": 5,
    "params": 3011714
   },
@@ -92,10 +92,10 @@
     }
    },
    "version": "v5",
-   "label": "one-week fraud labels",
+   "label": "fresher fraud history",
    "hardware": "the VAE checkpoint of e; booster side refit on the H200 box (64 CPU cores)",
    "corpus": "as e",
-   "changed": "Label delay 7 days for the booster.",
+   "changed": "Counts fraud confirmed a week ago instead of a month ago, where a bank's labels arrive that fast. The terminal-compromise dataset went from 0.69 to 0.89.",
    "schema_version": 5,
    "params": 3011714
   },
@@ -115,10 +115,56 @@
     }
    },
    "version": "v5",
-   "label": "recent-fraud windows, latency as a setting",
+   "label": "recent fraud, label timing as a setting",
    "hardware": "the VAE checkpoint of e; booster side refit on the H200 box (64 CPU cores)",
    "corpus": "as e",
-   "changed": "Recent-fraud windows, latency dropout, both evaluations.",
+   "changed": "Looks at a merchant's fraud over the last 7 and 30 days rather than its whole lifetime, and copes whether or not fresh labels are available. 0.963 average over the nine shared datasets; what shipped until v7.",
+   "schema_version": 5,
+   "params": 3011714
+  },
+  "v6-base-e": {
+   "assets": {
+    "v6-base-e.tar.gz": {
+     "bytes": 837488342,
+     "sha256": "dc06bd51d809dd44e663fb65adabc2b0c9a302d2daf64f53c4d4efd08d96cb1a",
+     "optional": false,
+     "contents": "the run"
+    },
+    "v6-base-e-graph-paysim.tar.gz": {
+     "bytes": 544694521,
+     "sha256": "8df9219f2c9d6277ae5599d3113a1b608510c8dc76afb6b60f3d2d69d24f2681",
+     "optional": true,
+     "contents": "graph/paysim.pt (optional)"
+    }
+   },
+   "version": "v6",
+   "label": "a pretrained model of payment histories",
+   "hardware": "the encoder on a rented node of 8 NVIDIA B200 GPUs (60,000 steps, four and a half hours); the VAE checkpoint of e; booster side refit on one of them",
+   "corpus": "the encoder: 16 datasets (five more AMLworld variants), 328M training rows, no labels; the booster as e",
+   "changed": "A large model that read 328 million payments with no fraud labels and learnt what a customer's next payment looks like. What it makes of a customer's history goes to the decision trees. A big gain for the bank with long card histories (86% to 94% of its fraud caught), a small loss for three others.",
+   "schema_version": 5,
+   "params": 3011714
+  },
+  "v7-f": {
+   "assets": {
+    "v7-f.tar.gz": {
+     "bytes": 844283073,
+     "sha256": "f0576693f8270abaca0fd50a05304381ce94ad21b2b49d11956c5a133b691a17",
+     "optional": false,
+     "contents": "the run"
+    },
+    "v7-f-graph-paysim.tar.gz": {
+     "bytes": 548445473,
+     "sha256": "14ff6e331aaf24debab70fa0f731fab171f853f969b1fc0d5c54a4b6f0e98f0a",
+     "optional": true,
+     "contents": "graph/paysim.pt (optional)"
+    }
+   },
+   "version": "v7",
+   "label": "the history model where it helps",
+   "hardware": "the encoder of v6, unchanged; the VAE checkpoint of e; booster side refit on a rented box with 2x NVIDIA H200 NVL",
+   "corpus": "as v6",
+   "changed": "Uses the history model only for the two banks where it earned its place, adds a small model trained on fraud labels on top of it, and lets the verdict rest on the models that learnt fraud. More fraud caught at the same false-alarm rate on average, 86% to 95% for the bank with long card histories, and no bank worse; what ships.",
    "schema_version": 5,
    "params": 3011714
   }
