@@ -35,7 +35,9 @@ async function load() {
 
 function renderSummary() {
   const built = data.sources.filter((s) => s.built);
-  const real = built.filter((s) => /real/.test(s.context)).length;
+  // a dataset of real payments says so first ("real european card transactions ..."); BAF's description
+  // mentions "a real bank's data" further on, because its synthetic rows were generated from one
+  const real = built.filter((s) => /^real\b/i.test(s.context || "")).length;
   const span = built.map((s) => s.stats).filter((st) => st.absolute_time);
   const lo = Math.min(...span.map((s) => s.ts_min)), hi = Math.max(...span.map((s) => s.ts_max));
   document.getElementById("corpus-summary").innerHTML = `
