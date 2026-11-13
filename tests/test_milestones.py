@@ -25,3 +25,19 @@ def test_every_generation_on_the_timeline_has_a_bundle():
         for k in ("version", "label", "hardware", "corpus", "changed"):
             assert models[name][k] == cur[k], (name, k)
         assert [a for a, i in models[name]["assets"].items() if not i["optional"]] == [f"{name}.tar.gz"]
+
+
+def test_a_hidden_folder_in_runs_is_not_a_run():
+    """`fraudvae models pull` keeps its downloads in runs/.bundles; the model page listed that
+    folder as a run of its own"""
+    from fraudvae.paths import RUNS_DIR
+    from fraudvae.server import inference
+
+    hidden = RUNS_DIR / ".bundles"
+    made = not hidden.exists()
+    hidden.mkdir(parents=True, exist_ok=True)
+    try:
+        assert ".bundles" not in {r["name"] for r in inference.list_runs()}
+    finally:
+        if made:
+            hidden.rmdir()

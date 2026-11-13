@@ -921,7 +921,8 @@ def list_runs() -> list[dict]:
     if not RUNS_DIR.exists():
         return out
     for d in sorted(RUNS_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
-        if not d.is_dir():
+        # a hidden folder is not a run: `fraudvae models pull` keeps its downloads in runs/.bundles
+        if not d.is_dir() or d.name.startswith("."):
             continue
         v = run_schema_version(d)
         no_encoder = encoder_missing(d)
