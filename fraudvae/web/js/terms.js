@@ -135,7 +135,7 @@ const GLOSSARY = {
   "JSON": "JSON: a plain-text format for structured data, the way the API takes requests and gives answers. {\"amount\": 12.5, \"hour\": 14} is JSON.",
   "CSV": "CSV: a plain spreadsheet file, one row per line, columns separated by commas. The batch scorer takes one.",
   "relay": "relay: the way the rented GPU box was controlled with the laptop off: it polled a private git repository for commands and pushed results back.",
-  "the box": "the box: the rented data-centre GPU machine (one NVIDIA H200, 64 cores, 188 GB of memory) that all of v5 was trained on.",
+  "the box": "the box: a rented GPU machine that the training ran on, controlled remotely. Without a qualifier it means the one NVIDIA H200 machine (64 cores, 188 GB of memory) that all of v5 was trained on; the story's machines table lists every one.",
   "rows/s": "rows/s: how many payments per second training gets through. 85,000 rows/s with 30 million rows is about six minutes per pass.",
   "nginx": "nginx: the web server in front of the app on the public site. It handles the encryption and the first layer of rate limiting.",
   "rate limit": "rate limit: a cap on how many requests one visitor can make per minute, so no one can keep the server busy for everyone else.",
