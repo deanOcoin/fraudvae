@@ -991,9 +991,9 @@ function renderReceipt(r, label, { fresh = false, reveal = false } = {}) {
   // what the verdict is made of: a v7 blend leaves the novelty model out, so the foot says who votes
   const footVerdict = !bl ? "the verdict is the novelty score alone (no blend in this version).<br>"
     : (bl.without_vae
-      ? "the verdict comes from the blend: the scores of the models that learnt from labelled fraud, weighted per bank. this version's blend leaves the novelty model out (at the line it cost a little more than it added once the others were in), so that model explains and does not vote. "
+      ? "the verdict comes from the blend: the scores of the models that learnt from labelled fraud, weighted per bank. this version's blend leaves the novelty model out (measured as fraud caught at a 1% false-positive rate, it cost slightly more than it added once the others were in), so that model explains the payment and has no weight in the verdict. "
       : "the verdict comes from the blend: every model's score, weighted per bank. ")
-      + "a fraud score is the blend's probability, fit with fraud and honest payments weighted equally: read it against the line, not against 50.<br>";
+      + "a fraud score is the blend's output, and the blend was fit with fraud and honest payments weighted equally, so read the score against the line, not against 50.<br>";
   lines.push(`<div class="rc-foot">${footVerdict}surprise = how much worse than usual the VAE predicted a field, compared with normal ${esc(r.source === "generic" ? "traffic" : r.source + " traffic")}, in standard deviations; "exp" is what it expected.${sup ? "<br>pushes are the booster's SHAP contributions, in log-odds; a field that is unknown can still push, because a missing value tells a decision tree something too." : ""}</div>`);
   box.innerHTML = lines.join("");
   wireCopy(box, v, r);
