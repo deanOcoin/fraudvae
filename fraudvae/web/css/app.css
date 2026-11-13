@@ -394,6 +394,9 @@ pre, .explain pre { overflow-x: auto; max-width: 100%; }
 .story-switch .btn.active { background: var(--accent-soft); border-color: var(--accent); }
 .explain .callout { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 0.6rem 0.9rem; margin: 1rem 0; border-radius: 4px; }
 .explain table.metric-table td, .explain table.metric-table th { vertical-align: top; }
+/* the story's and the explainer's tables hold sentences, left-aligned: tabular figures would also space out
+   this font's commas and full stops ("history , entities ,"), so they keep the text's own spacing */
+.explain .metric-table td, .explain .metric-table th { font-variant-numeric: normal; }
 
 /* right / wrong against a labelled example */
 .receipt .call.ok { color: var(--calm); font-weight: 600; }
