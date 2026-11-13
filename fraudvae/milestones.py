@@ -8,21 +8,21 @@ from __future__ import annotations
 MILESTONES = {
     "cpu_small-8src": {
         "version": "v3", "label": "on a laptop", "order": 0,
-        "hardware": "2 x86-64 CPU cores, no GPU", "corpus": "8 datasets, capped at 1.5M rows each (4M rows)",
+        "hardware": "2 x86-64 CPU cores, no GPU", "corpus": "8 datasets, at most 500,000 training rows each (3.5M)",
         "what": "The first complete model: a variational autoencoder over the shared schema, scoring novelty alone. "
                 "No labels used at all. Calibration picks a score type and freezes per-bank thresholds on validation.",
         "changed": "The starting point: the normal-payments model alone, no fraud labels used anywhere.",
     },
     "gpu_full-4090": {
         "version": "v3", "label": "on all the data", "order": 1,
-        "hardware": "1x NVIDIA RTX 4090 (rented), 16 CPU cores", "corpus": "8 datasets, every row (29M)",
+        "hardware": "1x NVIDIA RTX 4090 (rented), 16 CPU cores", "corpus": "8 datasets, every row (25.6M training rows)",
         "what": "The same VAE on seven times the rows. It did not change what the density model sees: 0.833 against 0.829 "
                 "mean AUROC. The lesson that the feature set, not the row count, was the ceiling.",
         "changed": "The same model on seven times the data. It barely moved: the fields it could see, not the number of rows, were the limit.",
     },
     "gpu_full-4090-v4": {
         "version": "v4", "label": "labels, context and the blend", "order": 2,
-        "hardware": "1x NVIDIA RTX 4090 (rented), 16 CPU cores", "corpus": "9 datasets (AMLworld added), every row (29M)",
+        "hardware": "1x NVIDIA RTX 4090 (rented), 16 CPU cores", "corpus": "9 datasets (AMLworld added), every row (29.2M training rows)",
         "what": "A gradient-boosted classifier on the labelled fraud next to the VAE, the customer-context block (velocity, "
                 "typical amounts, first-time flags), the merchant block, and a per-bank logistic blend of the two scores. "
                 "The step change: 0.83 to 0.92 mean AUROC.",

@@ -345,7 +345,7 @@ time and numbers.
 
 | generation | schema | trained on | time | mean AUROC, 9 shared banks |
 |---|---|---|---|---|
-| `cpu_small-8src` | v3 | 2 CPU cores, 8 sources capped at 1.5M rows | 33 min | 0.829 (its 8) |
+| `cpu_small-8src` | v3 | 2 CPU cores, 8 sources, at most 500k training rows each | 33 min | 0.829 (its 8) |
 | `gpu_full-4090` | v3 | 1× RTX 4090, 8 sources, every row | 19 min | 0.833 (its 8) |
 | `gpu_full-4090-v4` | v4 | 1× RTX 4090, 9 sources, every row | 18 min + 8 min post | 0.916 |
 | `v5-h200-e` | v5 | 1× H200 NVL, 11 sources, every row | 2.9 h + 40 min post | 0.936 |
