@@ -83,8 +83,8 @@ function updateLede() {
   const vae = `${m.params ? `a ${(m.params / 1e6).toFixed(1)}-million-parameter` : "a"} VAE that learnt honest payments from ${n} dataset${n === 1 ? "" : "s"}`;
   // v6 on: the trees also read a pretrained model of payment histories; v7: the blend leaves the VAE out
   const enc = m.encoder ? ` and read a pretrained model of payment histories${m.encoder.sources ? ` for ${m.encoder.sources.join(" and ")}` : ""}` : "";
-  const blend = m.blend_without_vae ? "and a per-bank blend of the fraud-trained models that the verdict is read from (the VAE explains a payment, it does not vote)"
-    : "and a per-bank blend of the two that the verdict is read from";
+  const blend = m.blend_without_vae ? "and a per-bank blend of the fraud-trained models' scores that the verdict is read from (the VAE explains the payment and has no weight in the verdict)"
+    : "and a per-bank blend of their scores that the verdict is read from";
   const parts = m.has_booster
     ? `${vae}, ${m.booster_trees ? m.booster_trees.toLocaleString("en-US") + " decision trees" : "boosted decision trees"} that learnt the labelled fraud${enc}, ${blend}`
     : `${vae}, on its own: this version has no fraud-trained model, so the verdict is the novelty score, and it knows an older, smaller set of fields`;
