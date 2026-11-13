@@ -12,10 +12,10 @@
     }
    },
    "version": "v3",
-   "label": "on a laptop",
+   "label": "on two CPU cores",
    "hardware": "2 x86-64 CPU cores, no GPU",
    "corpus": "8 datasets, at most 500,000 training rows each (3.5M)",
-   "changed": "The starting point: the normal-payments model alone, no fraud labels used anywhere.",
+   "changed": "The starting point: the model of normal payments (a VAE) alone. It learns only from legitimate payments and never from a fraud label.",
    "schema_version": 3,
    "params": 635179
   },
@@ -32,7 +32,7 @@
    "label": "on all the data",
    "hardware": "1x NVIDIA RTX 4090 (rented), 16 CPU cores",
    "corpus": "8 datasets, every row (25.6M training rows)",
-   "changed": "The same model on seven times the data. It barely moved: the fields it could see, not the number of rows, were the limit.",
+   "changed": "The same design, 3.4 times larger, on seven times the data. The mean AUROC moved only from 0.829 to 0.833: the fields the model could see, not the number of rows, were the limit.",
    "schema_version": 3,
    "params": 2188715
   },
@@ -49,7 +49,7 @@
    "label": "labels, context and the blend",
    "hardware": "1x NVIDIA RTX 4090 (rented), 16 CPU cores",
    "corpus": "9 datasets (AMLworld added), every row (29.2M training rows)",
-   "changed": "Added decision trees trained on the labelled fraud, the customer's and merchant's recent history as inputs, and a per-bank blend of the two models. The big step: 0.83 to 0.92.",
+   "changed": "Added decision trees trained on the labelled fraud, facts about the customer's and the merchant's recent history as their inputs, and a blend of the two models with weights for each bank. On the eight datasets v3 had, the mean AUROC rose from 0.833 to 0.907.",
    "schema_version": 4,
    "params": 2254204
   },
@@ -69,10 +69,10 @@
     }
    },
    "version": "v5",
-   "label": "customer history, entities, extra models",
+   "label": "history, entities, supporting models",
    "hardware": "1x NVIDIA H200 NVL (rented), 64 CPU cores, 188 GB RAM",
-   "corpus": "11 datasets (BAF, fraudecom added), every row (30M train / 4.3M validation / 8.6M test)",
-   "changed": "The model now reads the customer's previous payments; new facts about the merchant, card, device, e-mail and address around each payment; two more datasets; five extra models. 0.916 to 0.936.",
+   "corpus": "11 datasets (BAF and fraudecom added), every row (30.0M training / 4.3M validation / 8.6M test rows)",
+   "changed": "The VAE now reads the customer's previous 32 payments; new facts about the counterparty, card, device, e-mail domain and address of each payment; two more datasets; six kinds of supporting model. On v4's nine datasets the mean AUROC rose from 0.916 to 0.936.",
    "schema_version": 5,
    "params": 3011714
   },
@@ -92,10 +92,10 @@
     }
    },
    "version": "v5",
-   "label": "fresher fraud history",
-   "hardware": "the VAE checkpoint of e; booster side refit on the H200 box (64 CPU cores)",
-   "corpus": "as e",
-   "changed": "Counts fraud confirmed a week ago instead of a month ago, where a bank's labels arrive that fast. The terminal-compromise dataset went from 0.69 to 0.89.",
+   "label": "one-week fraud labels",
+   "hardware": "the VAE of v5-h200-e; booster side refit on the same rented H200 box",
+   "corpus": "the same as v5-h200-e",
+   "changed": "Counts the fraud confirmed against each merchant, card and device after a one-week delay as well as after a month, for banks whose labels arrive that fast. The terminal-compromise dataset went from 0.69 to 0.89.",
    "schema_version": 5,
    "params": 3011714
   },
@@ -115,10 +115,10 @@
     }
    },
    "version": "v5",
-   "label": "recent fraud, label timing as a setting",
-   "hardware": "the VAE checkpoint of e; booster side refit on the H200 box (64 CPU cores)",
-   "corpus": "as e",
-   "changed": "Looks at a merchant's fraud over the last 7 and 30 days rather than its whole lifetime, and copes whether or not fresh labels are available. 0.963 average over the nine shared datasets; what shipped until v7.",
+   "label": "recent fraud, label delay as a setting",
+   "hardware": "the VAE of v5-h200-e; booster side refit on the same rented H200 box",
+   "corpus": "the same as v5-h200-e",
+   "changed": "Counts the fraud at each merchant, card and device over the last 7 and 30 days instead of over their whole history, and trains the trees both for banks whose labels take a week and for banks whose labels take a month. 0.963 mean AUROC over the nine shared datasets; shipped until v7.",
    "schema_version": 5,
    "params": 3011714
   },
@@ -139,9 +139,9 @@
    },
    "version": "v6",
    "label": "a pretrained model of payment histories",
-   "hardware": "the encoder on a rented node of 8 NVIDIA B200 GPUs (60,000 steps, four and a half hours); the VAE checkpoint of e; booster side refit on one of them",
-   "corpus": "the encoder: 16 datasets (five more AMLworld variants), 328M training rows, no labels; the booster as e",
-   "changed": "A large model that read 328 million payments with no fraud labels and learnt what a customer's next payment looks like. What it makes of a customer's history goes to the decision trees. A big gain for the bank with long card histories (86% to 94% of its fraud caught), a small loss for three others.",
+   "hardware": "the encoder pretrained on a rented node with 8 NVIDIA B200 GPUs (60,000 steps, 4.5 hours); the VAE of v5-h200-e; booster side refit on the same node",
+   "corpus": "the encoder: 16 datasets (the 11 plus five AMLworld variants), 328M training rows, no labels; the booster: the same as v5-h200-e",
+   "changed": "Adds a 128-million-parameter model that learnt, from 328 million payments and without fraud labels, to predict a customer's next payment. Its reading of the customer's history goes to the decision trees as 888 extra inputs. One bank gained a lot (86% to 94% of its fraud caught at a 1% false-positive rate) and three lost slightly.",
    "schema_version": 5,
    "params": 3011714
   },
@@ -161,10 +161,10 @@
     }
    },
    "version": "v7",
-   "label": "the history model where it helps",
-   "hardware": "the encoder of v6, unchanged; the VAE checkpoint of e; booster side refit on a rented box with 2x NVIDIA H200 NVL",
-   "corpus": "as v6",
-   "changed": "Uses the history model only for the two banks where it earned its place, adds a small model trained on fraud labels on top of it, and lets the verdict rest on the models that learnt fraud. More fraud caught at the same false-alarm rate on average, 86% to 95% for the bank with long card histories, and no bank worse; what ships.",
+   "label": "the history model for two banks",
+   "hardware": "the encoder of v6 and the VAE of v5-h200-e, unchanged; booster side refit on a rented box with 2 NVIDIA H200 NVL GPUs",
+   "corpus": "the same as v6",
+   "changed": "Gives the history model's inputs to the trees for two banks only (TabFormer and the Fraud Detection Handbook simulator), adds a small model trained on fraud labels on top of them, and fits the blend without the VAE. More fraud caught on average at a 1% false-positive rate (86% to 95% on TabFormer), and no bank worse by more than a few millionths of AUROC. The version that ships.",
    "schema_version": 5,
    "params": 3011714
   }
