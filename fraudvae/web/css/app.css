@@ -329,6 +329,9 @@ pre, .explain pre { overflow-x: auto; max-width: 100%; }
 /* a wide results table scrolls inside its own box at any width (the small-screen rule below
    does the same for every table in the prose) */
 .explain .metric-table, .run-detail .metric-table { display: block; overflow-x: auto; max-width: 100%; }
+/* the results table has eighteen columns: at the page's full measure it was 20px wider than its box and
+   scrolled sideways on any screen; a little less padding between columns and it fits there */
+.run-detail .metric-table th, .run-detail .metric-table td { padding-left: 0.5rem; padding-right: 0.5rem; }
 .explain .toc a { display: inline; padding: 0.1rem 0; }   /* inline, so a wrapped entry keeps its number on its first line */
 .katex-display { overflow-x: auto; overflow-y: hidden; padding: 0.2rem 0; }
 .explain h1 { margin-bottom: 0.4rem; }
