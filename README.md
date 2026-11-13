@@ -96,7 +96,8 @@ A faster machine gives you the same model sooner, not a better one: the
 configuration that ships (`gpu_full`) is fixed, and a CPU gets there in days
 where the rented H200 took three hours. `cpu_small` is a different, smaller
 configuration (0.6M parameters on a capped corpus) that a laptop finishes in
-half an hour - within 0.003 mean AUROC of the full run for v3 and v4, and
+about an hour with the recipe above (32 minutes measured on two CPU cores at
+500,000 rows per dataset) - within 0.003 mean AUROC of the full run for v3 and v4, and
 clearly below it for v5, whose history encoder needs the full corpus's long
 customer sequences. `docs/TRAINING_NOTES.md` has every run's hardware and time;
 the site's story page has the same as a table.
