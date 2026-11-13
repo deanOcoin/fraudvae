@@ -72,6 +72,9 @@ function wireSubdomainLinks() {
 
 // AUROC in words: the chance that a fraud, set beside an honest payment, gets the higher score
 export const picksFraud = (auc) => (auc == null || Number.isNaN(auc) ? null : Math.round(100 * auc));
+// how versions rank against each other: on the like-for-like number, the nine datasets every version since
+// v4 shares; a version without it (v3, eight datasets) ranks below all that have it, by its own mean
+export const rank = (m) => (m.mean_shared9 != null ? m.mean_shared9 : (m.mean_test_auroc ?? 0) - 1);
 
 const inited = {};
 const initers = { score: initScore, data: initData, model: initModel, compute: initCompute, explain: initExplain, story: initStory };

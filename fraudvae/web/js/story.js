@@ -44,7 +44,7 @@ async function fillTimeline(body) {
     el("thead", {}, el("tr", {}, ...["generation", "what it is", "trained on", "time", "mean AUROC, 9 shared banks", "generic", "status"].map((h) => el("th", {}, h)))),
     el("tbody", {}, ...items.map((m) => {
       const mins = m.train_minutes != null ? (m.train_minutes < 90 ? `${Math.round(m.train_minutes)} min` : `${(m.train_minutes / 60).toFixed(1)} h`) : "–";
-      const post = m.post_minutes != null ? ` + ${Math.round(m.post_minutes)} min post` : "";
+      const post = m.post_minutes != null ? ` + ${Math.round(m.post_minutes)} min ${m.has_booster ? "for the booster side" : "of calibration and evaluation"}` : "";
       return el("tr", {},
         el("td", {}, el("b", {}, m.version), " · ", m.label),
         el("td", {}, m.changed || ""),

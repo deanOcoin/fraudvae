@@ -1,6 +1,6 @@
 // score tab: the form, the receipt, the latent map
 import { get, post, fmt, el, esc, palette, glide } from "./api.js";
-import { getSelectedRun, setSelectedRun, selectedModel, refreshModels } from "./app.js";
+import { getSelectedRun, setSelectedRun, selectedModel, refreshModels, rank } from "./app.js";
 
 let schema, state;
 let latentChart = null;
@@ -98,9 +98,11 @@ async function buildRunSelect() {
   const active = state.meta?.active_run?.name;
   sel.innerHTML = "";
   const shown = models.filter((m) => m.milestone || m.name === active);
-  const best = shown.reduce((a, b) => (b.mean_test_auroc ?? -1) > (a?.mean_test_auroc ?? -1) ? b : a, null);
+  // newest by the timeline's order; best on the nine shared datasets (the model tab's ranking)
+  const newest = shown[shown.length - 1];
+  const best = shown.reduce((a, b) => (a == null || rank(b) > rank(a) ? b : a), null);
   for (const m of [...shown].reverse()) {
-    const tag = m.name === best?.name ? "  — newest, best" : (m.schema_version < 5 ? `  — older field set (v${m.schema_version})` : "");
+    const tag = m === newest ? (m === best ? "  — newest, best" : "  — newest") : m === best ? "  — best" : (m.schema_version < 5 ? `  — older field set (v${m.schema_version})` : "");
     sel.append(el("option", { value: m.name }, `${m.version} · ${m.label}${tag}`));
   }
   // the version selected on the model tab (kept across tabs and hosts), else the default

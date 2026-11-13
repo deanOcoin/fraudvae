@@ -1,6 +1,6 @@
 // model & training tab: the versions (newest first, one selected), the selected run's record, local training
 import { get, post, pollTask, fmt, el, esc, palette, glide } from "./api.js";
-import { refreshMeta, refreshModels, scoreHref, rememberRun, getSelectedRun, setSelectedRun, picksFraud, state as appState } from "./app.js";
+import { refreshMeta, refreshModels, scoreHref, rememberRun, getSelectedRun, setSelectedRun, picksFraud, rank, state as appState } from "./app.js";
 
 let runs = [];
 let timelineItems = [];
@@ -38,7 +38,8 @@ async function loadTimeline() {
   timelineItems = all.filter((m) => m.milestone);
 }
 
-const best = () => timelineItems.reduce((a, b) => (b.mean_test_auroc ?? -1) > (a?.mean_test_auroc ?? -1) ? b : a, null);
+const best = () => timelineItems.reduce((a, b) => (a == null || rank(b) > rank(a) ? b : a), null);
+const newest = () => timelineItems[timelineItems.length - 1] || null;
 
 // the link that opens the score tab with this version chosen (the url carries it across hosts)
 function scoreLink(name) {
@@ -47,12 +48,13 @@ function scoreLink(name) {
 
 function card(m, r, { compact = false } = {}) {
   const sel = m.name === selected;
-  const b = best();
+  const b = best(), n = newest();
   const legacy = m.schema_version != null && schemaVersion != null && m.schema_version < schemaVersion;
   const st = r?.status?.state;
   const running = st && st !== "finished";
   const tags = [];
-  if (b && m.name === b.name) tags.push(el("span", { class: "tl-tag" }, "newest · best"));
+  if (n && m.name === n.name) tags.push(el("span", { class: "tl-tag" }, b && b.name === n.name ? "newest · best" : "newest"));
+  else if (b && m.name === b.name) tags.push(el("span", { class: "tl-tag" }, "best on the nine shared datasets"));
   if (legacy) tags.push(el("span", { class: "tl-tag legacy", title: "scores today's payments with the fields it knows; the receipt says what it could not see" }, `older field set (v${m.schema_version})`));
   if (m.name === active && !isPublic) tags.push(el("span", { class: "tl-tag outline" }, "default scorer"));
   if (running) tags.push(el("span", { class: "tl-tag running" }, st));
@@ -62,7 +64,7 @@ function card(m, r, { compact = false } = {}) {
   const plain = pf != null ? el("div", { class: "tl-plain" }, "Shown a fraud and an honest payment, it picks the fraud ", el("b", {}, `${pf} times in 100`),
     m.generic_test_auroc != null ? ` (${picksFraud(m.generic_test_auroc)} for a bank it has never seen)` : "", ".") : null;
   const mins = m.train_minutes != null ? `${m.train_minutes < 90 ? Math.round(m.train_minutes) + " min" : (m.train_minutes / 60).toFixed(1) + " h"} of training` : "";
-  const post = m.post_minutes != null ? ` + ${Math.round(m.post_minutes)} min for the booster side` : "";
+  const post = m.post_minutes != null ? ` + ${Math.round(m.post_minutes)} min ${m.has_booster ? "for the booster side" : "of calibration and evaluation"}` : "";
   const pick = () => selectRun(m.name, { scroll: true });
   return el("div", { class: "gen-card" + (sel ? " selected" : ""), role: "button", tabindex: 0, "aria-pressed": sel ? "true" : "false",
                      onclick: pick, onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } } },
