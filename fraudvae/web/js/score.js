@@ -891,8 +891,8 @@ function renderReceipt(r, label, { fresh = false, reveal = false } = {}) {
     lines.push(`<div class="rc-sub">HISTORY MODEL  <span class="dim">a transformer pretrained on unlabelled payments${sm.used ? `, ${sm.n_history} of up to ${sm.window - 1} previous payments read` : ""}</span></div>`);
     if (!sm.used) {
       // left out: a bank its block is not for, or a payment that came without the past its own fields speak of
-      const why = sm.skipped === "bank" ? `not read for this bank: this version uses it for ${esc(banks || "some banks")} only, where it earned its place`
-        : sm.past_in_fields ? "left out: this payment's own fields say the customer has earlier payments, and none came with it. read alone it would pass for a new customer's and raise false alarms, so this version judges it without the history model, the way the version before it would. add the earlier payments below to bring it in"
+      const why = sm.skipped === "bank" ? `not read for this bank: this version uses it only for ${esc(banks || "some banks")}, the banks where it improved the results`
+        : sm.past_in_fields ? "left out: this payment's own fields say the customer has earlier payments, and none came with it. read alone it would pass for a new customer's and raise false alarms, so this version judges it without the history model's columns, a case its decision trees were trained on. add the earlier payments below to bring it in"
         : "left out: no earlier payments came with this one";
       lines.push(`<div class="rc-line dim"><span>${why}</span></div>`);
     } else {
