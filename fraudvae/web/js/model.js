@@ -63,8 +63,11 @@ function card(m, r, { compact = false } = {}) {
   const pf = picksFraud(m.mean_shared9 ?? m.mean_test_auroc);
   const plain = pf != null ? el("div", { class: "tl-plain" }, "Shown a fraud and an honest payment, it picks the fraud ", el("b", {}, `${pf} times in 100`),
     m.generic_test_auroc != null ? ` (${picksFraud(m.generic_test_auroc)} for a bank it has never seen)` : "", ".") : null;
-  const mins = m.train_minutes != null ? `${m.train_minutes < 90 ? Math.round(m.train_minutes) + " min" : (m.train_minutes / 60).toFixed(1) + " h"} of training` : "";
-  const post = m.post_minutes != null ? ` + ${Math.round(m.post_minutes)} min ${m.has_booster ? "for the booster side" : "of calibration and evaluation"}` : "";
+  const span = m.train_minutes != null ? (m.train_minutes < 90 ? Math.round(m.train_minutes) + " min" : (m.train_minutes / 60).toFixed(1) + " h") : null;
+  const after = m.post_minutes != null ? `${Math.round(m.post_minutes)} min ${m.has_booster ? "for the booster side" : "of calibration and evaluation"}` : "";
+  // a refit trains only the booster side, on another version's VAE (its hardware line names which): its own time is the booster side's
+  const mins = m.vae_from && after ? after : (span ? `${span} of training` : "");
+  const post = m.vae_from && after ? "" : (after ? ` + ${after}` : "");
   const pick = () => selectRun(m.name, { scroll: true });
   return el("div", { class: "gen-card" + (sel ? " selected" : ""), role: "button", tabindex: 0, "aria-pressed": sel ? "true" : "false",
                      onclick: pick, onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } } },

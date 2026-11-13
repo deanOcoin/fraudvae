@@ -43,8 +43,11 @@ async function fillTimeline(body) {
   const t = el("table", { class: "metric-table" },
     el("thead", {}, el("tr", {}, ...["generation", "what it is", "trained on", "time", "mean AUROC, 9 shared banks", "generic", "status"].map((h) => el("th", {}, h)))),
     el("tbody", {}, ...items.map((m) => {
-      const mins = m.train_minutes != null ? (m.train_minutes < 90 ? `${Math.round(m.train_minutes)} min` : `${(m.train_minutes / 60).toFixed(1)} h`) : "–";
-      const post = m.post_minutes != null ? ` + ${Math.round(m.post_minutes)} min ${m.has_booster ? "for the booster side" : "of calibration and evaluation"}` : "";
+      const span = m.train_minutes != null ? (m.train_minutes < 90 ? `${Math.round(m.train_minutes)} min` : `${(m.train_minutes / 60).toFixed(1)} h`) : "–";
+      const after = m.post_minutes != null ? `${Math.round(m.post_minutes)} min ${m.has_booster ? "for the booster side" : "of calibration and evaluation"}` : "";
+      // a refit trains only the booster side, on another version's VAE (its hardware cell names which): its own time is the booster side's
+      const mins = m.vae_from && after ? after : span;
+      const post = m.vae_from && after ? "" : (after ? ` + ${after}` : "");
       return el("tr", {},
         el("td", {}, el("b", {}, m.version), " · ", m.label),
         el("td", {}, m.changed || ""),
