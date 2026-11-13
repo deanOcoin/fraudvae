@@ -19,6 +19,11 @@ async def main():
         b = await p.chromium.launch()
         pg = await b.new_page()
         await pg.goto("file://" + src)
+        # the versions table is filled in by the app from the runs it has; a file has none, so the
+        # pdf points to the live table instead of printing "Loading the timeline"
+        await pg.evaluate("""() => { const t = document.getElementById("story-timeline");
+          if (t) t.innerHTML = '<p>The table of versions is generated from the runs on the live site: '
+            + '<a href="https://finfraud.dev/#model">finfraud.dev, Model &amp; training</a>. The sections below describe each version.</p>'; }""")
         await pg.emulate_media(media="print", color_scheme="light")
         await pg.add_style_tag(content=PRINT_CSS)
         await pg.pdf(path=out, format="A4", print_background=True, display_header_footer=True,
