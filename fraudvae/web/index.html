@@ -207,7 +207,7 @@
     <section id="tab-model" class="tab hidden">
       <header class="page-head">
         <h1>Model &amp; training</h1>
-        <p class="lede">Every version of the model that was trained, newest first: what it was trained on, how long it took, and how it scores on data it never saw. Select a version to see its full record below the list; <i>score a payment with it</i> opens the Score tab with that version chosen.</p>
+        <p class="lede">Each published version of the model, newest first: what it was trained on, how long training took, and how it scores on test data it never saw. Select a version to see its full record below the list; <i>score a payment with it</i> opens the Score tab with that version chosen.</p>
       </header>
       <section class="timeline-section">
         <div class="card-head"><h2>The <span id="timeline-count">eight</span> versions</h2><span class="dim">newest first · the same payment can be scored on any of them</span></div>
@@ -227,7 +227,7 @@
           <label class="inline-field">run name <input name="name" placeholder="auto" size="18"></label>
           <button type="submit" class="btn primary">Start training</button>
         </form>
-        <p class="dim">For the full 30-million-row training set use the <a href="#compute">Compute</a> tab instead; a laptop takes days for what a rented GPU does in an hour.</p>
+        <p class="dim">For the full 30-million-row training set, use the <a href="#compute">Compute</a> tab instead: the full v4 configuration takes about two days on a laptop CPU and 18 minutes on a rented RTX 4090.</p>
         <pre id="train-log" class="log"></pre>
       </section>
     </section>

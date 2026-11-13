@@ -39,9 +39,9 @@ async function fillTimeline(body) {
   if (!slot) return;
   const d = await get("/api/models");
   const items = d.models.filter((m) => m.milestone);
-  if (!items.length) { slot.innerHTML = `<p class="dim">No milestone runs on this server yet.</p>`; return; }
+  if (!items.length) { slot.innerHTML = `<p class="dim">No versions on the timeline are on this server yet.</p>`; return; }
   const t = el("table", { class: "metric-table" },
-    el("thead", {}, el("tr", {}, ...["generation", "what it is", "trained on", "time", "mean AUROC, 9 shared banks", "generic", "status"].map((h) => el("th", {}, h)))),
+    el("thead", {}, el("tr", {}, ...["version", "what changed", "trained on", "time", "mean AUROC, 9 shared banks", "generic", "status"].map((h) => el("th", {}, h)))),
     el("tbody", {}, ...items.map((m) => {
       const span = m.train_minutes != null ? (m.train_minutes < 90 ? `${Math.round(m.train_minutes)} min` : `${(m.train_minutes / 60).toFixed(1)} h`) : "–";
       const after = m.post_minutes != null ? `${Math.round(m.post_minutes)} min ${m.has_booster ? "for the booster side" : "of calibration and evaluation"}` : "";
