@@ -44,10 +44,10 @@ function renderSummary() {
     <div class="stat"><b>${built.length} / ${data.sources.length}</b><span>sources ${data.public ? "in the corpus" : "built"}, ${real} with real transactions</span></div>
     <div class="stat"><b>${span.length ? fmt.date(lo).slice(0, 4) + "–" + fmt.date(hi).slice(0, 4) : "–"}</b><span>calendar span of dated sources</span></div>
     ${data.public
-      ? `<div class="stat"><b>statistics only</b><span>the datasets themselves are not on this server; these are the counts of the build the models were trained on, and each source below says where to get it</span></div>`
+      ? `<div class="stat"><b>statistics only</b><span>the datasets themselves are not on this server; these are the counts from the build the models were trained on, and each dataset below says where to download it</span></div>`
       : `<div class="stat"><b>${data.prepared.length}</b><span>prepared set${data.prepared.length === 1 ? "" : "s"}${data.prepared.length ? ": " + data.prepared.map((p) => p.name).join(", ") : ""}</span></div>`}`;
-  document.getElementById("data-lede").textContent = `${data.sources.length} public transaction datasets mapped onto one schema of ${schema.numeric.length} numeric and ${schema.categorical.length} categorical fields. Where a source has no notion of a field, the field is marked unobserved and the model's likelihood skips it.`
-    + (data.public ? " None of the data is redistributed here; six sources ship example rows, the rest link to their own pages." : "");
+  document.getElementById("data-lede").textContent = `${data.sources.length} public datasets of payments, mapped onto one schema of ${schema.numeric.length} numeric and ${schema.categorical.length} categorical fields. Where a dataset lacks a field, the field is marked unobserved: the VAE leaves it out and the booster treats it as missing, so no value is ever invented.`
+    + (data.public ? " None of the data is redistributed here. Six datasets ship example rows; each of the others links to the page where it can be downloaded." : "");
   // a public site cannot rebuild anything
   const pipeline = document.querySelector("#tab-data .pipeline-section");
   if (pipeline) pipeline.classList.toggle("hidden", !!data.public);
