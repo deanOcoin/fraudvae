@@ -157,7 +157,10 @@ function defOf(word) {
   return GLOSSARY[word] || LOOKUP[word.toLowerCase()] || LOOKUP[word.toLowerCase().replace(/s$/, "")] || null;
 }
 
-function wrapTextNode(node) {
+// a term is marked where a section first uses it, not at every use: the story page had 542 marked
+// words, most of them the tenth "label" or "blend" of a section that had already explained it.
+// `seen` holds the definitions the current section has marked; annotate() empties it at each heading
+function wrapTextNode(node, seen) {
   const text = node.nodeValue;
   if (!text || text.length < 3) return;
   PATTERN.lastIndex = 0;
@@ -167,7 +170,8 @@ function wrapTextNode(node) {
   let last = 0, m;
   while ((m = PATTERN.exec(text))) {
     const def = defOf(m[1]);
-    if (!def) continue;
+    if (!def || seen.has(def)) continue;
+    seen.add(def);
     if (m.index > last) frag.append(document.createTextNode(text.slice(last, m.index)));
     const span = document.createElement("span");
     span.className = "term";
@@ -187,7 +191,7 @@ export function annotate(root) {
     acceptNode(n) {
       let p = n.parentNode;
       while (p && p !== root) {
-        if (SKIP.has(p.nodeName) || (p.classList && (p.classList.contains("term") || p.classList.contains("no-terms") || p.classList.contains("rc-verdict") || p.classList.contains("rs-word")))) return NodeFilter.FILTER_REJECT;
+        if (SKIP.has(p.nodeName) || (p.classList && (p.classList.contains("no-terms") || p.classList.contains("rc-verdict") || p.classList.contains("rs-word")))) return NodeFilter.FILTER_REJECT;
         p = p.parentNode;
       }
       return NodeFilter.FILTER_ACCEPT;
@@ -195,7 +199,17 @@ export function annotate(root) {
   });
   const nodes = [];
   while (walker.nextNode()) nodes.push(walker.currentNode);
-  nodes.forEach(wrapTextNode);
+  // in page order: a heading (or a receipt block's title) starts a new section, and a term an earlier
+  // pass already marked counts as used in its section
+  const seen = new Set();
+  for (const n of nodes) {
+    const el = n.parentElement;
+    if (!el) continue;
+    if (el.closest("h2, h3, h4, summary, .rc-sub, .card-head")) seen.clear();
+    const marked = el.closest(".term");
+    if (marked) { seen.add(marked.dataset.def); continue; }
+    wrapTextNode(n, seen);
+  }
 }
 
 // ---- the box ----
